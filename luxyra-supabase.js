@@ -4,7 +4,8 @@
 // BUILD: 20260426-04 — fix CSS options dropdown lisibles
 window.__LUXYRA_BUILD = "20260426-04";
 // 2026-10-14 : version de la couche donnees, comparee par app.html (evite un melange ancienne/nouvelle version via le cache)
-window.LX_DATA_VERSION = "20261028-3"; // 2026-10-28 (-3, Luxyra 6.8.1 : version de l'application transmise dans chaque ticket (raw_data.lxVersion, contrôlée par le serveur), série de n° imprimés propre au serveur (meta.tkNumServeur), copies serveur jamais réécrites, refus LX_APP_OBSOLETE / LX_TKNUM_SERIE_SERVEUR / LX_CC_DEJA_EN_CAISSE)
+window.LX_DATA_VERSION = "20261028-4"; // 2026-10-28 (-4, Luxyra 6.8.2 : un ticket encaissé n'est JAMAIS abandonné par la file de secours — refus « journée déjà clôturée » = enregistrement de REPORT sur la journée ouverte (date réelle de vente en mention, raw_data.dateVente) ; clôture forcée = ticket consigné ET gardé en file ; Z de l'appareil : tickets reportés comptés le jour de leur enregistrement)
+// (historique) "20261028-3"; // 2026-10-28 (-3, Luxyra 6.8.1 : version de l'application transmise dans chaque ticket (raw_data.lxVersion, contrôlée par le serveur), série de n° imprimés propre au serveur (meta.tkNumServeur), copies serveur jamais réécrites, refus LX_APP_OBSOLETE / LX_TKNUM_SERIE_SERVEUR / LX_CC_DEJA_EN_CAISSE)
 // (historique) "20261028-2"; // 2026-10-28 (-2, Luxyra 6.8.0 : recettes en ligne enregistrées en caisse par le serveur — champs meta serveur / recetteKey…, refus définitif LX_CC_DEJA_EN_CAISSE)
 // (historique) "20261028-1"; // 2026-10-28 (-1 : bons cadeaux à usage unique / multiple — qualification TVA du bon (usage_tva, qualif_tva, repli historique), ticket v2 HT/TVA par ventilation de l'app, taux_tva 0 pour une vente de BUM seule, bonsUtil conservé dans appointments.meta) ; 2026-10-27 (-3 : rapport du mois en vrai PDF + correctifs d’exports comptables, app.html seulement ; -2 : envoi au comptable — FEC + pack Excel + rapport par défaut, ZIP en option, app.html seulement ; -1 : envoi automatique au comptable — changement dans app.html seulement, couche données inchangée) ; 2026-10-17 (-2 : audit réglages — taux TVA produits brut (tvaProduitsColonne), familles produit sans produit (pcats), ancien saveSalonConfig renommé ; -1 : retour / remboursement partiel — champs du ticket de retour conservés dans appointments.meta, refus définitif LX_RETOUR_REFUSE jamais rejoué, ticket de retour refusé au rejeu écarté de la caisse) ; 2026-10-16 (-1 : incident Z n°128 — 1 réservation en ligne = 1 entrée, Z refusée par la base si différente du journal, annotations correctives) ; 2026-10-15 (-3 : multi-appareils, champs modifiés seulement + lignes supprimées ailleurs jamais recréées ; -2 : plus aucun enregistrement muet, lxEcritureVerifiee ; -1 : « Prix à partir de » + sur devis sur les forfaits) ; 2026-10-14 (-8 : correctifs revue d intégration) intégration des audits (données, sécurité, planning, clients, caisse, site, réglages)
 // Ce fichier remplace le stockage en mémoire par Supabase.
@@ -466,6 +467,7 @@ async function _walResync(walId, force){
         if (!e || e.synced || e.id === entry.id || e.salon_id !== entry.salon_id) return false;
         var _tk = e.type === "ticket" || (e.type === "appointment" && e.data && (e.data.st === "done" || e.data.tkNum));
         if (!_tk) return false;
+        if (e.horsZJusqua && _jourZ && _jourZ <= e.horsZJusqua) return false; // 2026-10-28 (-4) : ticket consigné par une clôture forcée (gardé en file, hors de cette Z)
         var _j = e.data && e.data.date ? String(e.data.date).slice(0, 10) : null;
         return (e.ts && entry.ts && e.ts <= entry.ts) || (_j && _jourZ && _j <= _jourZ);
       });
@@ -537,11 +539,15 @@ async function _walResync(walId, force){
       _walMarkSynced(walId);
       return { ok: true, doublon: true };
     }
-    var _msg = (r && r.error && (r.error.message || r.error.code)) || (r && r.reason) || "échec non confirmé par le serveur";
+    var _msg = (r && r.error && (r.error.message || r.error.code)) || (r && r.reason) || (entry.type === "ticket" && entry.data && entry.data._dbError && entry.data._dbError.msg) || "échec non confirmé par le serveur";
     // 2026-10-14 (NF525) : refus DÉFINITIFS (journée déjà clôturée, ticket scellé inaltérable) ou trop d'essais :
     // l'entrée sort de la file (sinon rejouée et signalée à chaque démarrage), avec une trace d'audit explicite.
-    var _ticketOuRdv = (entry.type === "ticket" || entry.type === "appointment");
-    var _definitif = _ticketOuRdv && /d[eé]j[aà] cl[oô]tur[eé]e|inalt[eé]rable|LX_RETOUR_REFUSE/i.test(String(_msg)); // 2026-10-17 retour partiel : refus du garde-fou des retours = définitif
+    // 2026-10-28 (-4, v6.8.2, contre-audit BLOQUANT) : un TICKET n'est JAMAIS sorti de la file par cette règle. Refus « journée
+    // déjà clôturée » : saveTicketToDb enregistre la vente sur la journée ouverte (report, date réelle de vente en mention) ; si
+    // la journée du jour est elle aussi close, l'entrée attend le lendemain. Les refus réellement définitifs d'un ticket (retour
+    // refusé, commande déjà en caisse) sont traités dans saveTicketToDb (la recette n'est pas perdue : déjà au journal / pas une
+    // vente). Rendez-vous (copie de gestion, le ticket a sa propre entrée) : règle inchangée (inaltérable / retour refusé).
+    var _definitif = entry.type === "appointment" && /d[eé]j[aà] cl[oô]tur[eé]e|inalt[eé]rable|LX_RETOUR_REFUSE/i.test(String(_msg)); // 2026-10-17 retour partiel : refus du garde-fou des retours = définitif
     var _e2 = _walNoterEssai(walId, _msg, _lxEstHorsLigne(_msg));
     var _rdvScelle = entry.type === "appointment" && entry.data && (entry.data.st === "done" || entry.data.tkNum); // 2026-10-14 : ticket encaissé = jamais abandonné pour erreur passagère
     if (_definitif || (entry.type === "appointment" && !_rdvScelle && _e2 && (Number(_e2.tries) || 0) >= 20)) { // un ticket ou une clôture Z n'est JAMAIS abandonné pour des erreurs passagères
@@ -642,6 +648,9 @@ function lxWalTicketsNonTransmis(jour){
     if (!e || e.synced || e.salon_id !== _salonId) return false;
     var tk = e.type === "ticket" || (e.type === "appointment" && e.data && (e.data.st === "done" || e.data.tkNum));
     if (!tk) return false;
+    // 2026-10-28 (-4) : ticket consigné par une clôture forcée de cette journée : toujours en file (transmis dès que possible,
+    // reporté sur la journée ouverte si sa journée est close), mais ne bloque plus la Z de la journée déjà forcée
+    if (jour && e.horsZJusqua && jour <= e.horsZJusqua) return false;
     var j = e.data && e.data.date ? String(e.data.date).slice(0, 10) : null;
     return !jour || !j || j <= jour;
   });
@@ -700,26 +709,27 @@ window.lxWalSignalerSupport = async function(){
   if (ok1 || ok2) { try { if (typeof toast === "function") toast("Signalement envoyé au support Luxyra", "success"); } catch(_t) {} }
   else if (msg) msg.textContent = "Le signalement n'a pas pu être envoyé (connexion ?). Écrivez-nous depuis l'onglet Support.";
 };
-// Clôture forcée : chaque ticket bloqué est consigné INTÉGRALEMENT dans le journal (WAL_ABANDON, trace NF525) AVANT
-// d'être marqué « abandonné » dans la file (conservé sur l'appareil, jamais effacé). Sans trace écrite en base,
-// rien n'est abandonné.
+// Clôture forcée : chaque ticket bloqué est consigné INTÉGRALEMENT dans le journal (WAL_CONSIGNE, trace NF525) puis
+// GARDÉ dans la file (2026-10-28 -4, v6.8.2 : plus jamais « abandonné ») : il ne bloque plus la Z de cette journée
+// (horsZJusqua), il continue d'être transmis automatiquement et, sa journée étant close, il est enregistré sur la journée
+// ouverte suivante avec la date réelle de vente en mention (saveTicketToDb). Sans trace écrite en base, rien n'est consigné.
 window.lxWalForcerCloture = function(){
   var bloques = lxWalTicketsNonTransmis(window._lxZWalJour || null).filter(function(e){ return e.bloque; });
   if (!bloques.length) return;
   var txt = "Forcer la clôture sans " + (bloques.length > 1 ? "ces " + bloques.length + " tickets" : "ce ticket") + " ?\n\n" +
     bloques.map(_lxWalLibTicket).join("\n") +
-    "\n\n" + (bloques.length > 1 ? "Ils ne seront pas inclus" : "Il ne sera pas inclus") + " dans la clôture Z. Le contenu complet est consigné dans le journal des événements (trace NF525) et conservé sur cet appareil ; le support pourra le régulariser. Cette action est tracée à votre nom.";
+    "\n\n" + (bloques.length > 1 ? "Ils ne seront pas inclus" : "Il ne sera pas inclus") + " dans cette clôture Z. Le contenu complet est consigné dans le journal des événements (trace NF525) et " + (bloques.length > 1 ? "ils restent" : "il reste") + " en attente sur cet appareil : dès que le serveur l'accepte, la vente est enregistrée sur la journée ouverte avec sa date réelle de vente (jamais perdue). Cette action est tracée à votre nom.";
   var go = async function(){
     var msg = document.getElementById("lxZWalMsg"), nOk = 0, nKo = 0;
     for (var i = 0; i < bloques.length; i++) {
       var e = bloques[i], d = Object.assign({}, e.data || {}); delete d.ticketHtml;
-      var trace = { wal_id: e.id, type: e.type, raison: "clôture Z forcée : ticket refusé durablement par le serveur", essais: e.echecsServeur || e.tries || 0, derniere_erreur: e.lastError || null, ts: e.ts, mode_caisse: e.mode_caisse || null, tk_num: d.tkNum || null, tk_id: d.id || null, data: d };
+      var trace = { wal_id: e.id, type: e.type, raison: "clôture Z forcée : ticket refusé durablement par le serveur, GARDÉ en file (enregistré dès que le serveur l'accepte, sur la journée ouverte si sa journée est close)", jour_z: window._lxZWalJour || null, essais: e.echecsServeur || e.tries || 0, derniere_erreur: e.lastError || null, ts: e.ts, mode_caisse: e.mode_caisse || null, tk_num: d.tkNum || null, tk_id: d.id || null, data: d };
       var ok = false;
-      try { if (typeof saveAuditEntry === "function") ok = await saveAuditEntry("WAL_ABANDON", JSON.stringify(trace)); } catch(_a) { ok = false; }
-      if (!ok) { nKo++; continue; } // jamais abandonné sans trace en base
+      try { if (typeof saveAuditEntry === "function") ok = await saveAuditEntry("WAL_CONSIGNE", JSON.stringify(trace)); } catch(_a) { ok = false; }
+      if (!ok) { nKo++; continue; } // jamais consigné sans trace en base
       try {
-        var wal = JSON.parse(localStorage.getItem(_WAL_KEY) || "[]"), now = new Date().toISOString();
-        for (var k = 0; k < wal.length; k++) { if (wal[k] && wal[k].id === e.id) { wal[k].synced = true; wal[k].syncedAt = now; wal[k].abandonne = true; wal[k].abandonneAt = now; break; } }
+        var wal = JSON.parse(localStorage.getItem(_WAL_KEY) || "[]"), now = new Date().toISOString(), jz = window._lxZWalJour || (d.date ? String(d.date).slice(0, 10) : null);
+        for (var k = 0; k < wal.length; k++) { if (wal[k] && wal[k].id === e.id) { wal[k].horsZJusqua = (wal[k].horsZJusqua && jz && wal[k].horsZJusqua > jz) ? wal[k].horsZJusqua : jz; wal[k].consigneAt = now; wal[k].bloque = false; wal[k].echecsServeur = 0; break; } }
         localStorage.setItem(_WAL_KEY, JSON.stringify(wal));
         nOk++;
       } catch(_s) { nKo++; }
@@ -731,7 +741,7 @@ window.lxWalForcerCloture = function(){
       try { if (typeof toast === "function") toast("Consignation impossible pour " + nKo + " ticket(s) : clôture toujours bloquée", "error"); } catch(_t) {}
       return;
     }
-    try { if (typeof toast === "function") toast(nOk + " ticket(s) non transmis consigné(s) dans le journal", "warning"); } catch(_t2) {}
+    try { if (typeof toast === "function") toast(nOk + " ticket(s) non transmis consigné(s) dans le journal et gardé(s) sur l'appareil : ils seront enregistrés automatiquement (journée suivante si besoin)", "warning"); } catch(_t2) {}
     try { if (typeof cM === "function") cM(); } catch(_c) {}
     if (!lxWalTicketsNonTransmis(window._lxZWalJour || null).length) { try { if (typeof doCloture === "function") doCloture(); } catch(_d) {} }
     else { try { window.lxClotureBloqueeParWal(window._lxZWalJour || null); } catch(_r) {} }
@@ -3500,7 +3510,8 @@ var _LX_APPT_META_KEYS = ["operator_id","operator_name","poste","ts","extraClien
   "isAcompteEnLigne","acompteKey","acompteRdv","datePaiement","dateRemboursement","refundId", // 2026-10-14 (NF525 acompte en ligne)
   "lxEffets","lxEffetsAnnules","lxEffetsInverses","lxDoublonDe", // 2026-10-14 audit : effets de gestion d'un ticket (inversés à l'annulation), doublon d'acompte écarté
   "isRetour","retourRefId","retourRefTk","retourRefDate","retourMotif","lxEffetsRetour", // 2026-10-17 retour partiel
-  "serveur","recetteKey","recetteType","ccCommandeId","ccNumero","bonCode","bonId","carteAboId","recetteRef","isRembEnLigne", "tkNumServeur"]; // 2026-10-28 (-3, v6.8.1) : n° de la série serveur ; (-2, v6.8.0) : tickets créés par le serveur (paiements en ligne) — ticket de retour partiel ci-dessus : ticket de retour (référence du ticket d'origine, motif, effets de gestion)
+  "serveur","recetteKey","recetteType","ccCommandeId","ccNumero","bonCode","bonId","carteAboId","recetteRef","isRembEnLigne", "tkNumServeur",
+  "reportJourClos","dateJournal","dateVente"]; // 2026-10-28 (-4, v6.8.2) : ticket reporté sur la journée ouverte (journée de vente déjà close) // 2026-10-28 (-3, v6.8.1) : n° de la série serveur ; (-2, v6.8.0) : tickets créés par le serveur (paiements en ligne) — ticket de retour partiel ci-dessus : ticket de retour (référence du ticket d'origine, motif, effets de gestion)
 function _lxApptMetaDepuis(appt) {
   try {
     if (!appt || typeof appt !== "object") return null;
@@ -4111,6 +4122,17 @@ async function saveTicketToDb(tk) {
       try { if (typeof window._lxRetourRefuseEcarter === "function") window._lxRetourRefuseEcarter(tk, String(res.error.message || "")); } catch(_eRe){}
       return { ok: false, refusDefinitif: true, error: { message: String(res.error.message || ""), code: res.error.code || "P0001" } };
     }
+    // 2026-10-28 (-4, v6.8.2, contre-audit BLOQUANT) : journée de VENTE déjà clôturée (Z faite par un autre poste ou par la
+    // clôture de nuit pendant que ce ticket attendait : réseau, ancienne version refusée LX_APP_OBSOLETE…). La Z scellée n'est
+    // jamais rouverte ni modifiée (BOI-TVA-DECLA-30-10-30 § 80-100, § 170) et la vente ne doit jamais être perdue (§ 50, § 75) :
+    // elle est enregistrée sur la journée OUVERTE (jour de sa transmission), sa date et son heure réelles de vente en mention
+    // (raw_data.dateVente / heureVente, notes), comme les paiements en ligne reportés par le serveur. Une seule fois (même
+    // identifiant raw_data.id : index d'unicité). Journée du jour elle aussi close -> l'entrée reste en file (jour suivant).
+    if (res.error && /cl[oô]tur[eé]e/i.test(String(res.error.message || "")) && /NF525|LX_JOUR_CLOS/.test(String(res.error.message || ""))) {
+      var _rep = await _lxTicketReporter(tk, data, dateStr, timeStr, res.error, _walId);
+      if (_rep && _rep.data) return _rep.data;
+      if (_rep && _rep.error) res = { error: _rep.error };
+    }
     if (res.error) {
       console.warn("[saveTicketToDb] insert error", res.error);
       // 2026-10-14 (NF525) : l'opérateur est prévenu (avant : simple console.warn, invisible en caisse)
@@ -4172,6 +4194,47 @@ async function saveTicketToDb(tk) {
     return null;
   }
 }
+
+// 2026-10-28 (-4, v6.8.2) : enregistrement de REPORT d'un ticket dont la journée de vente est déjà clôturée (voir saveTicketToDb).
+// Retourne {data} (enregistré, ou déjà enregistré par un essai précédent), {error} (refus d'une autre nature) ou null (journée
+// du jour close aussi : nouvel essai le lendemain). Le ticket imprimé n'est jamais renuméroté (même n° imprimé tkNum).
+function _lxJourLocal(){ var d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
+function _lxDateFr(j){ var p = String(j || "").slice(0, 10).split("-"); return p.length === 3 ? p[2] + "/" + p[1] + "/" + p[0] : String(j || ""); }
+async function _lxTicketReporter(tk, data, dateStr, timeStr, err, walId) {
+  try {
+    var jr = _lxJourLocal();
+    if (!(jr > String(dateStr).slice(0, 10))) {
+      try { tk._dbError = { at: new Date().toISOString(), msg: String(err && err.message || ""), code: "LX_JOUR_CLOS_ATTENTE" }; } catch(_e0) {}
+      return null; // la journée du jour est elle-même close : on attend la journée suivante (l'entrée reste en file)
+    }
+    var hv = String(timeStr || "").slice(0, 5);
+    var mention = "Vente du " + _lxDateFr(dateStr) + (hv ? " à " + hv : "") + " (ticket n°" + (tk.tkNum || "?") + ") enregistrée le " + _lxDateFr(jr) +
+      " : journée de vente déjà clôturée (Z) lors de sa transmission";
+    var raw = Object.assign({}, tk);
+    delete raw._dbError; delete raw.ticketHtml;
+    raw.reportJourClos = true; raw.dateVente = String(dateStr).slice(0, 10); raw.heureVente = hv || null; raw.dateEnregistrement = jr; raw.reportMention = mention;
+    var d2 = Object.assign({}, data, { date_ticket: jr, heure_ticket: new Date().toTimeString().slice(0, 8), notes: (data.notes ? String(data.notes) + " — " : "") + mention, raw_data: raw });
+    var r2 = await _sb.from("tickets").insert(d2).select().single();
+    if (r2.error && r2.error.code === "23505") {
+      // déjà enregistré (essai précédent dont la réponse a été perdue) : on reprend la ligne existante
+      try { var ex = await _sb.from("tickets").select("id, num, hash, hash_prev, date_ticket").eq("salon_id", _salonId).eq("raw_data->>id", tk.id).limit(1).maybeSingle(); if (ex && ex.data && ex.data.id) r2 = { data: ex.data, error: null }; } catch(_eX) {}
+    }
+    if (r2.error) {
+      if (/cl[oô]tur[eé]e/i.test(String(r2.error.message || ""))) return null; // journée du jour close entre-temps : demain
+      return { error: r2.error };
+    }
+    tk.dbId = r2.data.id; if (r2.data.hash) tk.hash = r2.data.hash; if (r2.data.hash_prev !== undefined) tk.hashPrev = r2.data.hash_prev;
+    tk.reportJourClos = true; tk.dateJournal = jr; tk.dateVente = String(dateStr).slice(0, 10);
+    delete tk._dbError;
+    _walMarkSynced(walId);
+    try { var _l = (typeof AP !== "undefined" && Array.isArray(AP)) ? AP : null; if (_l) for (var i = 0; i < _l.length; i++) { if (_l[i] && _l[i].id === tk.id) { _l[i].reportJourClos = true; _l[i].dateJournal = jr; _l[i].dateVente = tk.dateVente; } } } catch(_eA) {}
+    try { _lxApptMetaPatch(tk.id, { reportJourClos: true, dateJournal: jr, dateVente: tk.dateVente }); } catch(_eP) {}
+    try { if (typeof saveAuditEntry === "function") saveAuditEntry("TICKET_REPORTE_JOUR_CLOS", JSON.stringify({ tk_num: tk.tkNum || null, tk_id: tk.id || null, num_serveur: r2.data.num, date_vente: tk.dateVente, heure_vente: hv, date_enregistrement: jr, total: Number(tk.pr || 0), motif: String(err && err.message || "").slice(0, 200) }).slice(0, 2000)); } catch(_eS) {}
+    try { if (typeof toast === "function") toast("Ticket #" + (tk.tkNum || "?") + " du " + _lxDateFr(dateStr) + " enregistré aujourd'hui : sa journée était déjà clôturée (date réelle de vente conservée).", "warning"); } catch(_eT) {}
+    return { data: r2.data };
+  } catch (e) { return { error: { message: (e && e.message) || String(e) } }; }
+}
+if (typeof window !== "undefined") window._lxTicketReporter = _lxTicketReporter;
 
 // Marque un ticket comme annulé (status=cancelled) — alternative au DELETE interdit
 async function cancelTicketDb(ticketDbId, reason) {
