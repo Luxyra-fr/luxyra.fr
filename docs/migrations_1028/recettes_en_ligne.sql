@@ -1,6 +1,6 @@
 -- =====================================================================================================================
 -- 2026-10-28 (-2) — RECETTES ENCAISSÉES EN LIGNE = TICKET DE CAISSE SCELLÉ CRÉÉ PAR LE SERVEUR AU PAIEMENT CONFIRMÉ
--- Luxyra 6.8.2 (version MINEURE ; 6.8.0 et 6.8.1 jamais publiées) — NON APPLIQUÉ. À passer par Alexandre dans l'éditeur SQL (ordre en bas de fichier).
+-- Luxyra 6.8.3 (version MINEURE ; 6.8.0, 6.8.1 et 6.8.2 jamais publiées) — NON APPLIQUÉ. À passer par Alexandre dans l'éditeur SQL (ordre en bas de fichier).
 -- 2026-10-28 (-3) : corrections de l'audit de la 6.8.0 (registre NF525, intervention -3) : série de n° imprimés propre au serveur
 -- (900001+), version minimale de l'application, déclencheurs réservés aux écritures du serveur + gardes des colonnes de paiement,
 -- remboursements vérifiés (re_…) et plafonnés, clé partagée d'annulation Click & Collect, filet sans date de départ (sources à
@@ -12,6 +12,13 @@
 -- ligne ; retour arrière : seules les recettes que l'application sait reprendre sont écartées, la file est traitée même
 -- interrupteur éteint (seul le filet de création s'éteint), annulation Click & Collect d'une commande déjà en caisse traitée
 -- même interrupteur éteint ; rattrapage : bail daté dans une table (plus de verrou de session) ; version minimale par défaut 6.8.2.
+-- 2026-10-28 (-5) : corrections du contre-audit final — Luxyra 6.8.3 (registre NF525, intervention -5) : journées RETENUES
+-- (sans Z : tickets au journal ou ventes encaissées non transmises) : Z refusée tant qu'une journée antérieure est retenue ou
+-- que des ventes du jour manquent au journal (forçage tracé par un administrateur : lx_z_forcer), clôtures mensuelle / annuelle /
+-- d'exercice refusées (tracé + alerte, nouvel essai quotidien) ; date réelle d'une vente reportée SCELLÉE dans les lignes du
+-- ticket (items[0].lxRep, garde LX_REPORT_NON_SCELLE) ; remboursement fait sur Stripe avant la première activation : aucun
+-- ticket, consigné et ticketé à l'activation (attente_activation) ; alertes de caisse de l'établissement
+-- (lx_caisse_alertes) ; version minimale par défaut 6.8.3. PRÉREQUIS OBLIGATOIRE : docs/migrations_1027/bons_cadeaux_tva.sql.
 -- Idempotent (create or replace / if not exists / drop trigger if exists). Ne crée AUCUN ticket tant que
 -- app_config.config.recettes_en_ligne_serveur <> true (interrupteur, posé en DERNIER, après publication des pages).
 --
@@ -72,7 +79,9 @@
 --                                  sur l'évènement charge.refunded : ticket négatif (ou entrée de remboursement d'acompte)
 --
 -- CE QUE CE SQL NE FAIT PAS : aucun ticket, clôture, signature, JET existant n'est modifié ; ticket_nf525_insert,
--- tickets_block_post_cloture, nf525_marquer_mode, _nf525_seal_row, clotures_controle_journal, nf525-sign : INCHANGÉS.
+-- tickets_block_post_cloture, nf525_marquer_mode, _nf525_seal_row, nf525-sign : INCHANGÉS. clotures_controle_journal : verrou
+-- (-3) et contrôle des journées retenues (-5) ajoutés ; cloturer_mois / _annee / _exercice et leurs tâches : contrôle des
+-- journées retenues ajouté (-5), calculs et empreintes inchangés.
 -- =====================================================================================================================
 
 begin;
@@ -84,37 +93,45 @@ begin;
 -- PostgreSQL 17 (en-tête RETURNS / LANGUAGE / SECURITY / SET search_path + corps entre $function$), relu en lecture seule dans
 -- l'éditeur SQL du tableau de bord le 28/10/2026 (7 valeurs retrouvées à l'identique) et recalculé sur PostgreSQL 17.6 à partir
 -- des définitions recopiées (/tmp/pgreal/md5chk.cjs : 14/14 identiques). Toute différence (même un commentaire) arrête le script.
--- lx_prive.clotures_controle_journal est remplacée plus bas (verrou de l'établissement) : sur une seconde exécution, sa définition
--- est acceptée si, une fois retirées EXACTEMENT les deux lignes ajoutées ici (marque LX_VERROU_Z_2026_10_28), elle redonne
--- l'empreinte de production.
+-- 2026-10-28 (-5) : garde étendue aux fonctions de clôture périodique remplacées par ce SQL (§11) et à leurs tâches. Valeurs
+-- acceptées par fonction : empreinte de PRODUCTION relevée le 28/10/2026 (lecture seule, éditeur SQL : md5(pg_get_functiondef))
+-- OU empreinte de la définition posée par CE fichier (seconde exécution). cloturer_mois : seule la version posée par
+-- docs/migrations_1027/bons_cadeaux_tva.sql (prérequis OBLIGATOIRE, empreinte calculée sur PostgreSQL 17.6) est acceptée.
+-- Recalcul des empreintes « ce fichier » : /tmp/pgreal/md5_nouveaux.cjs (embedded-postgres 17.6).
 do $$
 declare
   v_attendu constant jsonb := jsonb_build_object(
-    'public.ticket_nf525_insert()',            '3219a36f2892dfb5287aa258e7afb0fa',
-    'public.tickets_block_post_cloture()',     '59714d7eaadabdfab295f52e23376950',
-    'public.nf525_marquer_mode()',             '8b26e30b07f5957ad64126208a241eaa',
-    'public._nf525_seal_row()',                'd9a16f5a25ceda362a3bde86e8b22c84',
-    'public.appointments_nf525_protect()',     'ac1d644f6672a78c805845de2c386009',
-    'lx_prive.tickets_retour_controle()',      'e10116728f108070fb8dd710cd5f66eb',
-    'lx_prive.clotures_controle_journal()',    '3688061418cabdbaa209134689196361');
-  v_ajout constant text := E'  -- LX_VERROU_Z_2026_10_28 : même verrou que ticket_nf525_insert / recette_tk_inserer (réentrant dans la transaction)\n'
-                        || E'  perform pg_advisory_xact_lock(hashtext(NEW.salon_id::text));\n';
-  k text; v_def text; v_md5 text;
+    'public.ticket_nf525_insert()',            jsonb_build_array('3219a36f2892dfb5287aa258e7afb0fa'),
+    'public.tickets_block_post_cloture()',     jsonb_build_array('59714d7eaadabdfab295f52e23376950'),
+    'public.nf525_marquer_mode()',             jsonb_build_array('8b26e30b07f5957ad64126208a241eaa'),
+    'public._nf525_seal_row()',                jsonb_build_array('d9a16f5a25ceda362a3bde86e8b22c84'),
+    'public.appointments_nf525_protect()',     jsonb_build_array('ac1d644f6672a78c805845de2c386009'),
+    'lx_prive.tickets_retour_controle()',      jsonb_build_array('e10116728f108070fb8dd710cd5f66eb'),
+    'lx_prive.clotures_controle_journal()',    jsonb_build_array('3688061418cabdbaa209134689196361', 'f60dd43a409593d75f31f229ae4e0994'),
+    'public.cloturer_mois(uuid,integer,integer)', jsonb_build_array('6bc6c186c012501fcea1380e86b5e853', '10fb2481b3ece62961d0a014f26a9d92'),
+    'public.run_cloture_mensuelle_pour_tous()',  jsonb_build_array('68b020ba8012a2bf412327d2428450f3', '11feddf48ee998950610064242c92fc1'),
+    'public.cloturer_annee(uuid,integer)',       jsonb_build_array('1bcf301bca958cd8936cbbd6236479e6', '76636cd247de920d3f696f6aa0ca0b00'),
+    'public.run_cloture_annuelle_pour_tous()',   jsonb_build_array('9f148f33c69b975eabfe74d240220f58', '25cae68979fdde09ddefc42c611674ab'),
+    'public.cloturer_exercice(uuid,date)',       jsonb_build_array('6b2ba5edb7e47b9427d4b541c786608d', '9c30504431a8026729e6266b907bcd70'),
+    'public.run_cloture_exercice_pour_tous()',   jsonb_build_array('1050b00baa4feee0300990aea7312409', 'a454d21e8ec86c5fed83a0de1b886c13'),
+    'public.lx_fin_exercice(integer,integer)',   jsonb_build_array('5343f54c7f811af98672e25778065d23'));
+  k text; v_md5 text;
 begin
   for k in select jsonb_object_keys(v_attendu) loop
     if to_regprocedure(k) is null then
       raise exception 'Garde 28/10/2026 : fonction % absente en base — relire avant d''appliquer', k;
     end if;
-    v_def := pg_get_functiondef(to_regprocedure(k));
-    if k = 'lx_prive.clotures_controle_journal()' and position('LX_VERROU_Z_2026_10_28' in v_def) > 0 then
-      v_def := replace(v_def, v_ajout, '');
-    end if;
-    v_md5 := md5(v_def);
-    if v_md5 <> v_attendu->>k then
-      raise exception 'Garde 28/10/2026 : % différente de la version relue en production (md5 % au lieu de %) — relire avant d''appliquer', k, v_md5, v_attendu->>k;
+    v_md5 := md5(pg_get_functiondef(to_regprocedure(k)));
+    if not (v_attendu->k) ? v_md5 then
+      raise exception 'Garde 28/10/2026 : % différente de la version relue en production (md5 %, attendu %) — relire avant d''appliquer%', k, v_md5, v_attendu->k,
+        case when k = 'public.cloturer_mois(uuid,integer,integer)' then ' (prérequis : docs/migrations_1027/bons_cadeaux_tva.sql appliqué AVANT ce fichier)' else '' end;
     end if;
   end loop;
   if to_regprocedure('auth.role()') is null then raise exception 'auth.role() absente'; end if;
+  -- tâches planifiées de clôture périodique : celles relevées en production (ou posées par ce fichier)
+  if (select count(*) from cron.job where jobname in ('cloture_mensuelle_auto', 'cloture_annuelle_auto', 'cloture_exercice_auto')) <> 3 then
+    raise exception 'Garde 28/10/2026 : tâches cloture_mensuelle_auto / cloture_annuelle_auto / cloture_exercice_auto attendues — relire avant d''appliquer';
+  end if;
 end $$;
 
 -- ===================================================================================================================== §1
@@ -149,7 +166,7 @@ create table if not exists public.recettes_en_ligne (
   payment_intent text,
   refund_id text,
   details jsonb not null default '{}'::jsonb,
-  statut text not null default 'a_ticketer' check (statut in ('a_ticketer','tickete','ignore')),
+  statut text not null default 'a_ticketer' check (statut in ('a_ticketer','tickete','ignore','attente_activation')),
   ticket_id uuid,
   ticket_num integer,
   tk_num integer,
@@ -160,6 +177,10 @@ create table if not exists public.recettes_en_ligne (
   traite_at timestamptz,
   constraint recettes_en_ligne_cle_unique unique (salon_id, cle)
 );
+-- 2026-10-28 (-5) : statut « attente_activation » (remboursement Stripe reçu avant la toute première activation : ticket créé à
+-- l'activation, jamais avant — voir lx_recette_remboursement_externe). Idempotent pour une seconde exécution.
+alter table public.recettes_en_ligne drop constraint if exists recettes_en_ligne_statut_check;
+alter table public.recettes_en_ligne add constraint recettes_en_ligne_statut_check check (statut in ('a_ticketer','tickete','ignore','attente_activation'));
 create index if not exists recettes_en_ligne_attente on public.recettes_en_ligne (created_at) where statut = 'a_ticketer';
 create index if not exists recettes_en_ligne_pi on public.recettes_en_ligne (payment_intent) where payment_intent is not null;
 alter table public.recettes_en_ligne enable row level security;
@@ -192,6 +213,13 @@ create or replace function lx_prive.recettes_serveur_actif()
 returns boolean language sql stable security definer set search_path = public, pg_temp as $$
   select coalesce((select (config->>'recettes_en_ligne_serveur')::boolean from public.app_config where id = 1), false)
 $$;
+-- 2026-10-28 (-5) : l'interrupteur a-t-il déjà été allumé (date d'activation conservée par recettes_desactiver) ? Tant que non,
+-- AUCUN ticket ne peut être créé par le serveur (étapes 1 à 5 du déploiement) ; ensuite, l'application 6.8.3 reprend les copies
+-- des tickets du serveur même interrupteur éteint (lxRecettesServeurReprise).
+create or replace function lx_prive.recettes_serveur_deja_active()
+returns boolean language sql stable security definer set search_path = public, pg_temp as $$
+  select coalesce((select config ? 'recettes_en_ligne_serveur_depuis' from public.app_config where id = 1), false)
+$$;
 -- Arrondi au centime IDENTIQUE à l'application (Math.round(x*100)/100 : demi vers +infini)
 create or replace function lx_prive.r2(x numeric)
 returns numeric language sql immutable as $$ select floor(coalesce(x,0) * 100 + 0.5) / 100 $$;
@@ -221,9 +249,11 @@ $$;
 -- un ticket encaissé sortir de sa file de secours : report sur la journée ouverte) si la clé est absente. MISE EN SERVICE :
 -- la clé est posée à '0' (neutre : version_num('0') = 0, aucun refus) à l'activation, puis relevée à '6.8.2' quand tous les
 -- postes actifs ont remonté 6.8.2 (requête de contrôle : registre NF525, intervention -4).
+-- 2026-10-28 (-5) : défaut 6.8.3 (date réelle d'une vente reportée scellée dans le ticket, refus de clôture des journées
+-- retenues compris par l'application, forçage tracé) ; même procédure (activation à '0', relevé à '6.8.3').
 create or replace function lx_prive.recettes_version_min()
 returns text language sql stable security definer set search_path = public, pg_temp as $$
-  select coalesce(nullif((select config->>'recettes_en_ligne_version_min' from public.app_config where id = 1), ''), '6.8.2')
+  select coalesce(nullif((select config->>'recettes_en_ligne_version_min' from public.app_config where id = 1), ''), '6.8.3')
 $$;
 -- Début de la série des n° imprimés du serveur (n° 900001, 900002, … par établissement)
 create or replace function lx_prive.recette_serie_base()
@@ -321,7 +351,7 @@ create or replace function lx_prive.recette_tk_inserer(
   p_collab integer, p_sid integer, p_comment text, p_extra jsonb, p_ht_tva jsonb default null)
 returns jsonb language plpgsql security definer set search_path = public, pg_temp as $$
 declare v_now timestamptz := clock_timestamp(); v_date date; v_heure time; v_hm text; v_tk int; v_id uuid := gen_random_uuid();
-  v_t record; v_calc jsonb; v_raw jsonb; v_meta jsonb; v_pay jsonb; v_poste text; v_coll_nom text; v_coll int; k text;
+  v_t record; v_calc jsonb; v_raw jsonb; v_meta jsonb; v_pay jsonb; v_poste text; v_coll_nom text; v_coll int; k text; v_dreel date;
   v_meta_cles text[] := array['operator_name','poste','ts','clientNom','clientPrenom','isAcompte','isAcompteCancel','apptId','isRetenue',
     'retenueKey','retenueRdv','origTkNum','origTkNums','dbNum','isAcompteEnLigne','acompteKey','acompteRdv','datePaiement',
     'dateRemboursement','refundId','serveur','recetteKey','recetteType','ccCommandeId','ccNumero','bonCode','bonId','carteAboId','recetteRef'];
@@ -343,6 +373,13 @@ begin
   end loop;
   v_date := (v_now at time zone 'Europe/Paris')::date;
   v_heure := date_trunc('second', (v_now at time zone 'Europe/Paris')::time);
+  -- LX_REPORT_SCELLE_2026_10_28 (-5) : règlement d'une journée ANTÉRIEURE (journée close, file de rattrapage) -> sa date réelle
+  -- est scellée dans les lignes du ticket (items[0].lxRep, couvert par l'empreinte num|date|heure|ttc|ht|items|prev|salon), en
+  -- plus de raw_data.datePaiement / dateRemboursement (hors empreinte). Tickets du jour même : lignes inchangées.
+  begin v_dreel := nullif(coalesce(p_extra->>'datePaiement', p_extra->>'dateRemboursement'), '')::date; exception when others then v_dreel := null; end;
+  if v_dreel is not null and v_dreel < v_date and jsonb_typeof(p_items) = 'array' and jsonb_array_length(p_items) > 0 then
+    p_items := jsonb_set(p_items, '{0,lxRep}', jsonb_build_object('v', 1, 'type', case when nullif(p_extra->>'datePaiement', '') is not null then 'paiement' else 'remboursement' end, 'dateVente', v_dreel, 'dateEnr', v_date));
+  end if;
   v_hm := to_char(v_heure, 'HH24:MI');
   if exists (select 1 from public.clotures where salon_id = p_salon and date_cloture = v_date) then
     raise exception 'LX_JOUR_CLOS : journée du % déjà clôturée, ticket reporté à la journée suivante', v_date using errcode = 'P0001';
@@ -1038,6 +1075,31 @@ end $$;
 drop trigger if exists a_lx_tickets_a_version on public.tickets;
 create trigger a_lx_tickets_a_version before insert on public.tickets for each row execute function lx_prive.tickets_version_controle();
 
+-- 2026-10-28 (-5, contre-audit final constat 4) : VENTE REPORTÉE (journée de vente déjà close lors de sa transmission,
+-- application 6.8.3 : _lxTicketReporter) : la date et l'heure réelles de vente doivent être SCELLÉES — elles sont portées par
+-- la 1re ligne du ticket (items[0].lxRep = {v:1, type:"vente", dateVente, heureVente, dateEnr}), champ couvert par l'empreinte
+-- (num|date|heure|ttc|ht|items|prev|salon, format inchangé) et par le sceau ; raw_data (hors empreinte) n'en est que la copie.
+-- Refus (LX_REPORT_NON_SCELLE) d'un ticket reporté sans cette ligne cohérente, et d'une marque lxRep posée par un appareil hors
+-- report. Tickets existants et tickets non reportés : inchangés (aucune clé lxRep).
+create or replace function lx_prive.tickets_report_controle()
+returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
+declare v_r jsonb := case when jsonb_typeof(NEW.items) = 'array' and jsonb_array_length(NEW.items) > 0 then NEW.items->0->'lxRep' else null end;
+begin
+  if coalesce(NEW.raw_data->>'serveur', '') = 'true' then return NEW; end if; -- tickets du serveur : posée par recette_tk_inserer
+  if coalesce(NEW.raw_data->>'reportJourClos', '') = 'true' then
+    if v_r is null or coalesce(v_r->>'v', '') <> '1' or v_r->>'dateVente' is distinct from (NEW.raw_data->>'dateVente')
+       or v_r->>'dateEnr' is distinct from NEW.date_ticket::text or not (v_r->>'dateVente' ~ '^\d{4}-\d{2}-\d{2}$')
+       or (v_r->>'dateVente')::date >= NEW.date_ticket then
+      raise exception 'LX_REPORT_NON_SCELLE : vente reportée sans date réelle de vente scellée dans le ticket (mettez l''application à jour).' using errcode = 'P0001';
+    end if;
+  elsif v_r is not null then
+    raise exception 'LX_REPORT_NON_SCELLE : marque de report (lxRep) sur un ticket qui n''est pas reporté.' using errcode = 'P0001';
+  end if;
+  return NEW;
+end $$;
+drop trigger if exists a_lx_tickets_report_scelle on public.tickets;
+create trigger a_lx_tickets_report_scelle before insert on public.tickets for each row execute function lx_prive.tickets_report_controle();
+
 -- Garde-fou : une ANCIENNE version de l'application (appareil non rechargé) ne doit jamais sceller une 2e fois une commande
 -- Click & Collect déjà en caisse par le serveur (remise « Payé en ligne (Click & Collect) »). Refus définitif LX_CC_DEJA_EN_CAISSE.
 create or replace function lx_prive.tickets_cc_doublon_controle()
@@ -1099,6 +1161,8 @@ returns integer language plpgsql security definer set search_path = public, pg_t
 declare v_depuis timestamptz; x record; v_n int := 0;
 begin
   if not lx_prive.recettes_serveur_actif() then return 0; end if;
+  -- 2026-10-28 (-5) : remboursements Stripe reçus avant la première activation -> ticketés maintenant (date réelle scellée)
+  update public.recettes_en_ligne set statut = 'a_ticketer', derniere_erreur = null where statut = 'attente_activation';
   select coalesce((config->>'recettes_en_ligne_serveur_depuis')::timestamptz, now()) into v_depuis from public.app_config where id = 1;
   for x in select * from public.rdv_online where acompte_modele = 'ticket' and acompte_paye and acompte_tk_num is null and coalesce(acompte_montant,0) > 0
             and coalesce(status,'') <> 'done' and ticket_num is null and retenue_tk_num is null
@@ -1398,6 +1462,26 @@ begin
     if v_cle is not null then
       -- acompte conservé / empreinte encaissée : ticket négatif référençant le ticket d'origine (serveur OU application)
       select * into v_tk from public.tickets where salon_id = v_rdv.salon_id and raw_data->>v_cle = v_val order by num limit 1;
+      -- 2026-10-28 (-5, contre-audit final constat 5) : AVANT LA PREMIÈRE ACTIVATION (étapes 1 à 5 : interrupteur jamais allumé)
+      -- AUCUN ticket n'est créé par le serveur (une application 6.6 ne reprend pas les copies du serveur : sa Z différerait du
+      -- journal ; rien ne doit être créé avant l'étape 6). Le remboursement n'est pas perdu : il est consigné dans la file
+      -- (statut « attente_activation », date du remboursement conservée) et son ticket négatif est créé par le serveur DÈS
+      -- l'activation (recettes_filet), date réelle du remboursement scellée (items[0].lxRep) et signalée dans les exports
+      -- (ventes reportées) ; administrateur alerté, établissement prévenu (carte « Caisse » : rien à saisir — un retour saisi en
+      -- caisse ferait double emploi ; le retour partiel d'un ticket d'acompte conservé est d'ailleurs refusé par la base).
+      -- Interrupteur déjà allumé une fois (retour arrière ensuite) : ticket négatif du serveur tout de suite, comme avant
+      -- (l'application 6.8.3 reprend les copies : lxRecettesServeurReprise).
+      if not lx_prive.recettes_serveur_actif() and not lx_prive.recettes_serveur_deja_active() then
+        q := lx_prive.recette_enfiler(v_rdv.salon_id, 'remb_externe', v_rdv.id, 'remb:' || p_refund_id, v_m, p_at, p_pi, p_refund_id,
+               jsonb_build_object('ticket_id', v_tk.id, 'tk_origine', coalesce(v_tk.raw_data->>'tkNum', v_tk.num::text), 'origine', case when v_val like 'empreinte:%' then 'empreinte' else 'retenue' end,
+                 'orig_cle', v_cle, 'orig_val', v_val, 'differe', true));
+        update public.recettes_en_ligne set statut = 'attente_activation',
+               derniere_erreur = 'Remboursement Stripe reçu avant l''activation : ticket négatif créé par le serveur à l''activation (ticket d''origine n° ' || coalesce(v_tk.raw_data->>'tkNum', v_tk.num::text, '?') || ')'
+         where id = q.id and statut = 'a_ticketer';
+        begin perform public.report_server_error(p_source := 'sql:recettes_en_ligne', p_message := 'Remboursement Stripe de ' || to_char(v_m, 'FM999999990.00') || ' EUR (acompte conservé / empreinte, ticket n° ' || coalesce(v_tk.raw_data->>'tkNum', v_tk.num::text, '?') || ') reçu avant l''activation : ticket négatif créé à l''activation (étape 6) — rien à saisir en caisse',
+          p_severity := 'warning', p_context := jsonb_build_object('salon_id', v_rdv.salon_id, 'rdv', v_rdv.id, 'refund', p_refund_id, 'montant', v_m, 'ticket_origine', v_tk.id)); exception when others then null; end;
+        return jsonb_build_object('ok', false, 'attente_activation', true, 'montant', v_m, 'ticket_origine', coalesce(v_tk.raw_data->>'tkNum', v_tk.num::text));
+      end if;
       q := lx_prive.recette_enfiler(v_rdv.salon_id, 'remb_externe', v_rdv.id, 'remb:' || p_refund_id, v_m, p_at, p_pi, p_refund_id,
              jsonb_build_object('ticket_id', v_tk.id, 'origine', case when v_val like 'empreinte:%' then 'empreinte' else 'retenue' end, 'orig_cle', v_cle, 'orig_val', v_val));
       if v_tk.id is null then return jsonb_build_object('ok', false, 'attente', true, 'erreur', 'ticket d''origine pas encore créé : traité par le rattrapage'); end if;
@@ -1494,8 +1578,105 @@ end $$;
 -- en ligne) pouvait s'insérer entre la lecture du journal par la Z et l'enregistrement de la Z : Z juste au moment du contrôle
 -- mais journal du jour complété ensuite. Avec le verrou (le même que ticket_nf525_insert), la Z et les tickets de
 -- l'établissement sont sérialisés : un ticket qui attend la Z voit ensuite la journée close (tickets_block_post_cloture,
--- LX_JOUR_CLOS -> report au lendemain par le serveur). Définition relue en base le 28/10/2026 (pg_get_functiondef), seule la
--- ligne du verrou est ajoutée (marque LX_VERROU_Z_2026_10_28).
+-- LX_JOUR_CLOS -> report au lendemain par le serveur).
+-- 2026-10-28 (-5, contre-audit final, constats 1 à 3) : JOURNÉES RETENUES. Une journée « retenue » est une journée sans Z qui
+-- a des tickets au journal, ou des rendez-vous ENCAISSÉS (status done + n° de ticket, hors copies des tickets du serveur) dont
+-- le ticket est ABSENT du journal (recherche par identifiant raw_data.id, avec et sans préfixe « online_ », sur toutes les
+-- dates : un ticket reporté sur une journée ouverte est retrouvé), sauf ventes consignées par un forçage tracé
+-- (public.clotures_forcages). Règles : (a) la Z d'une journée est refusée tant qu'une journée ANTÉRIEURE (60 jours) est retenue
+-- (LX_Z_JOURNEE_ANTERIEURE_OUVERTE) : les Z restent numérotées dans l'ordre des dates et leurs cumuls (mois, année, grand
+-- total) n'incluent jamais une journée postérieure ; (b) la Z d'une journée est refusée si des ventes encaissées de cette
+-- journée ne sont pas au journal (LX_Z_VENTES_NON_TRANSMISES), sauf forçage tracé par un administrateur (lx_z_forcer) après
+-- tentative de renvoi ; (c) aucune clôture mensuelle, annuelle ou d'exercice tant qu'une journée de la période est retenue
+-- (refus tracé + alerte, nouvel essai automatique chaque jour). Définitions de production relues le 28/10/2026, seules les
+-- lignes marquées LX_JOURNEES_2026_10_28 sont ajoutées.
+
+-- Forçage tracé d'une clôture Z malgré des ventes non transmises (jamais modifié ni supprimé)
+create table if not exists public.clotures_forcages (
+  id uuid primary key default gen_random_uuid(),
+  salon_id uuid not null,
+  date_journee date not null,
+  rdv jsonb not null,
+  nb integer not null,
+  montant numeric not null,
+  motif text not null,
+  operateur text,
+  renvoi jsonb not null default '{}'::jsonb,
+  cree_par uuid,
+  created_at timestamptz not null default now()
+);
+create index if not exists clotures_forcages_jour on public.clotures_forcages (salon_id, date_journee);
+alter table public.clotures_forcages enable row level security;
+drop policy if exists clotures_forcages_lecture on public.clotures_forcages;
+create policy clotures_forcages_lecture on public.clotures_forcages for select to authenticated
+  using (exists (select 1 from public.salons s where s.id = clotures_forcages.salon_id and s.user_id = auth.uid()) or public.is_admin());
+revoke all on public.clotures_forcages from anon, authenticated;
+grant select on public.clotures_forcages to authenticated;
+grant select on public.clotures_forcages to service_role;
+create or replace function lx_prive.clotures_forcages_inalterables()
+returns trigger language plpgsql set search_path = public, pg_temp as $$
+begin
+  raise exception 'NF525 : un forçage de clôture est inaltérable (% impossible).', TG_OP using errcode = 'P0001';
+end $$;
+drop trigger if exists clotures_forcages_inalterables on public.clotures_forcages;
+create trigger clotures_forcages_inalterables before update or delete on public.clotures_forcages for each row execute function lx_prive.clotures_forcages_inalterables();
+
+-- Jour courant (heure de Paris)
+create or replace function lx_prive.jour_paris()
+returns date language sql stable as $$ select (now() at time zone 'Europe/Paris')::date $$;
+
+-- Rendez-vous ENCAISSÉS du jour dont le ticket est absent du journal (p_hors_forces : hors ventes déjà consignées par un forçage)
+create or replace function lx_prive.z_rdv_hors_journal(p_salon uuid, p_date date, p_hors_forces boolean default true)
+returns jsonb language sql stable security definer set search_path = public, pg_temp as $$
+  select coalesce(jsonb_agg(jsonb_build_object('id', a.id::text, 'ticket_num', coalesce(a.ticket_num::text, a.meta->>'tkNum', a.meta->>'tkNumServeur'),
+           'heure', a.heure, 'prix', lx_prive.r2(a.prix)) order by a.heure, a.id), '[]'::jsonb)
+    from public.appointments a
+   where a.salon_id = p_salon and a.date_rdv = p_date and a.status = 'done' and not coalesce(a.cancelled, false)
+     and coalesce(a.meta->>'serveur', '') <> 'true'
+     and (a.ticket_num is not null or a.meta->>'tkNum' is not null or a.meta->>'tkNumServeur' is not null)
+     and not exists (select 1 from public.tickets t where t.salon_id = p_salon and t.raw_data->>'id' in (a.id::text, 'online_' || a.id::text))
+     and (not p_hors_forces or not exists (select 1 from public.clotures_forcages f where f.salon_id = p_salon and f.date_journee = p_date
+                                             and f.rdv @> jsonb_build_array(jsonb_build_object('id', a.id::text))))
+$$;
+
+-- Journées RETENUES (sans Z) d'une période : [{date, tickets, montant, rdv_hors_journal:[…]}] par date croissante
+create or replace function lx_prive.journees_non_closes(p_salon uuid, p_debut date, p_fin date)
+returns jsonb language sql stable security definer set search_path = public, pg_temp as $$
+  with m as (select mode_caisse from public.salons where id = p_salon),
+  d as (
+    select t.date_ticket j from public.tickets t, m
+     where t.salon_id = p_salon and t.date_ticket between p_debut and p_fin and t.status <> 'cancelled'
+       and (t.mode_caisse is null or m.mode_caisse is null or t.mode_caisse = m.mode_caisse)
+    union
+    select a.date_rdv from public.appointments a
+     where a.salon_id = p_salon and a.date_rdv between p_debut and p_fin and a.status = 'done' and not coalesce(a.cancelled, false)
+       and coalesce(a.meta->>'serveur', '') <> 'true'
+       and (a.ticket_num is not null or a.meta->>'tkNum' is not null or a.meta->>'tkNumServeur' is not null)),
+  c as (
+    select x.j, (select count(*) from public.tickets t, m where t.salon_id = p_salon and t.date_ticket = x.j and t.status <> 'cancelled'
+                   and (t.mode_caisse is null or m.mode_caisse is null or t.mode_caisse = m.mode_caisse)) nb,
+           (select coalesce(sum(t.total_ttc), 0) from public.tickets t, m where t.salon_id = p_salon and t.date_ticket = x.j and t.status <> 'cancelled'
+                   and (t.mode_caisse is null or m.mode_caisse is null or t.mode_caisse = m.mode_caisse)) mt,
+           lx_prive.z_rdv_hors_journal(p_salon, x.j, true) rh
+      from (select distinct j from d) x
+     where not exists (select 1 from public.clotures z where z.salon_id = p_salon and z.date_cloture = x.j))
+  select coalesce(jsonb_agg(jsonb_build_object('date', j, 'tickets', nb, 'montant', lx_prive.r2(mt), 'rdv_hors_journal', rh) order by j), '[]'::jsonb)
+    from c where nb > 0 or jsonb_array_length(rh) > 0
+$$;
+
+-- Alerte (administrateur Luxyra : server_errors ; établissement : carte « Caisse » de l'application, lx_caisse_alertes)
+create or replace function lx_prive.periode_alerter(p_salon uuid, p_action text, p_message text, p_contexte jsonb)
+returns void language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  begin
+    insert into public.audit_log (salon_id, action, details, operator_name) values (p_salon, p_action, left(p_message, 1900), 'Serveur Luxyra');
+  exception when others then null; end;
+  begin
+    perform public.report_server_error(p_source := 'sql:clotures', p_message := p_message, p_severity := 'critical',
+      p_context := coalesce(p_contexte, '{}'::jsonb) || jsonb_build_object('salon_id', p_salon, 'action', p_action));
+  exception when others then null; end;
+end $$;
+
 CREATE OR REPLACE FUNCTION lx_prive.clotures_controle_journal()
  RETURNS trigger
  LANGUAGE plpgsql
@@ -1503,10 +1684,28 @@ CREATE OR REPLACE FUNCTION lx_prive.clotures_controle_journal()
  SET search_path TO 'public', 'pg_temp'
 AS $function$
 declare v_somme numeric; v_nb int; v_bypass text; v_d record; v_auto boolean;
+  v_ant jsonb; v_rdv jsonb; -- LX_JOURNEES_2026_10_28
 begin
   -- LX_VERROU_Z_2026_10_28 : même verrou que ticket_nf525_insert / recette_tk_inserer (réentrant dans la transaction)
   perform pg_advisory_xact_lock(hashtext(NEW.salon_id::text));
   begin v_bypass := current_setting('luxyra.allow_nf525_unlock', true); exception when others then v_bypass := null; end;
+  -- LX_JOURNEES_2026_10_28 : (a) journée antérieure retenue ; (b) ventes encaissées du jour absentes du journal (hors forçage)
+  v_ant := lx_prive.journees_non_closes(NEW.salon_id, NEW.date_cloture - 60, NEW.date_cloture - 1);
+  v_rdv := lx_prive.z_rdv_hors_journal(NEW.salon_id, NEW.date_cloture, true);
+  if (jsonb_array_length(v_ant) > 0 or jsonb_array_length(v_rdv) > 0) and v_bypass = 'true' then
+    insert into public.audit_log (salon_id, action, details, operator_name)
+    values (NEW.salon_id, 'NF525_INALTERABILITE_BYPASSEE', left('INSERT clotures Z n°' || NEW.num || ' du ' || NEW.date_cloture || ' malgré journées retenues ' || v_ant::text || ' / ventes non transmises ' || v_rdv::text || ' user=' || current_user, 1900), 'BYPASS_EXPLICITE');
+  elsif jsonb_array_length(v_ant) > 0 then
+    raise exception 'LX_Z_JOURNEE_ANTERIEURE_OUVERTE : clôture Z du % refusée — la journée du % n''est pas clôturée (% ticket(s) au journal, % vente(s) encaissée(s) non transmise(s)). Les clôtures se font dans l''ordre des dates : faites transmettre les ventes en attente (appareil à mettre à jour ou à reconnecter) ; la clôture automatique de nuit clôturera ensuite les journées dans l''ordre.',
+      to_char(NEW.date_cloture, 'DD/MM/YYYY'), to_char((v_ant->0->>'date')::date, 'DD/MM/YYYY'), v_ant->0->>'tickets', jsonb_array_length(v_ant->0->'rdv_hors_journal')
+      using errcode = 'P0001';
+  elsif jsonb_array_length(v_rdv) > 0 then
+    raise exception 'LX_Z_VENTES_NON_TRANSMISES : clôture Z du % refusée — % vente(s) encaissée(s) ce jour (ticket(s) n° %, % EUR) ne sont pas au journal des tickets. Faites transmettre les tickets en attente (appareil à mettre à jour ou à reconnecter) puis relancez la clôture ; à défaut, un administrateur peut forcer la clôture (forçage tracé).',
+      to_char(NEW.date_cloture, 'DD/MM/YYYY'), jsonb_array_length(v_rdv),
+      (select string_agg(coalesce(e->>'ticket_num', '?'), ', ') from jsonb_array_elements(v_rdv) e),
+      (select to_char(coalesce(sum((e->>'prix')::numeric), 0), 'FM999999990.00') from jsonb_array_elements(v_rdv) e)
+      using errcode = 'P0001';
+  end if;
   select coalesce(sum(t.total_ttc), 0), count(*) into v_somme, v_nb from public.tickets t
    where t.salon_id = NEW.salon_id and t.date_ticket = NEW.date_cloture and t.status <> 'cancelled'
      and (t.mode_caisse is null or NEW.mode_caisse is null or t.mode_caisse = NEW.mode_caisse);
@@ -1530,6 +1729,94 @@ begin
   return NEW;
 end $function$;
 
+-- Contrôle AVANT la Z (application) : ventes du jour non transmises, journées antérieures retenues, forçages existants.
+-- Chaque contrôle qui trouve des ventes non transmises est tracé (CLOTURE_Z_VENTES_NON_TRANSMISES) : le forçage exige deux
+-- contrôles successifs (avant et après la tentative de renvoi des tickets en attente).
+create or replace function public.lx_z_controle_ventes(p_salon uuid, p_date date)
+returns jsonb language plpgsql security definer set search_path = public, pg_temp as $$
+declare v_rdv jsonb; v_ant jsonb; v_f jsonb;
+begin
+  if not exists (select 1 from public.salons s where s.id = p_salon and (s.user_id = auth.uid() or public.is_admin())) then
+    return jsonb_build_object('ok', false, 'erreur', 'acces');
+  end if;
+  v_rdv := lx_prive.z_rdv_hors_journal(p_salon, p_date, true);
+  v_ant := lx_prive.journees_non_closes(p_salon, p_date - 60, p_date - 1);
+  select coalesce(jsonb_agg(jsonb_build_object('at', f.created_at, 'nb', f.nb, 'montant', f.montant, 'operateur', f.operateur) order by f.created_at), '[]'::jsonb)
+    into v_f from public.clotures_forcages f where f.salon_id = p_salon and f.date_journee = p_date;
+  if jsonb_array_length(v_rdv) > 0 then
+    insert into public.audit_log (salon_id, action, details, operator_name)
+    values (p_salon, 'CLOTURE_Z_VENTES_NON_TRANSMISES', left(p_date::text || ' - contrôle avant clôture : ' || jsonb_array_length(v_rdv) || ' vente(s) encaissée(s) absente(s) du journal ' || v_rdv::text, 1900), 'Contrôle de clôture');
+  end if;
+  return jsonb_build_object('ok', true, 'date', p_date, 'ventes_non_transmises', v_rdv, 'journees_anterieures', v_ant, 'forcages', v_f);
+end $$;
+
+-- FORÇAGE TRACÉ d'une clôture malgré des ventes non transmises : administrateur de l'établissement (code PIN administrateur
+-- demandé par l'application ; le serveur exige le compte de l'établissement ou un administrateur Luxyra), seulement après
+-- tentative de renvoi (deux contrôles successifs tracés au journal dans les 2 dernières heures + compte rendu du renvoi transmis
+-- par l'application), motif obligatoire. Consigne la liste exacte des ventes concernées (inaltérable), le JET (code 900,
+-- opération exceptionnelle) et le journal des événements ; alerte l'administrateur Luxyra. Ne crée ni ne modifie aucun ticket :
+-- une vente transmise plus tard est enregistrée sur la journée ouverte (report, date réelle de vente scellée).
+create or replace function public.lx_z_forcer(p_salon uuid, p_date date, p_motif text, p_operateur text, p_renvoi jsonb default '{}'::jsonb)
+returns jsonb language plpgsql security definer set search_path = public, pg_temp as $$
+declare v_rdv jsonb; v_nb int; v_mt numeric; v_ctl int; v_id uuid; v_lib text; v_tks text;
+begin
+  if not exists (select 1 from public.salons s where s.id = p_salon and (s.user_id = auth.uid() or public.is_admin())) then
+    return jsonb_build_object('ok', false, 'erreur', 'Accès refusé');
+  end if;
+  if p_date is null or p_date > lx_prive.jour_paris() or p_date < lx_prive.jour_paris() - 60 then
+    return jsonb_build_object('ok', false, 'erreur', 'Date hors période (60 derniers jours)');
+  end if;
+  if exists (select 1 from public.clotures where salon_id = p_salon and date_cloture = p_date) then
+    return jsonb_build_object('ok', false, 'erreur', 'Journée déjà clôturée');
+  end if;
+  if length(trim(coalesce(p_motif, ''))) < 15 then
+    return jsonb_build_object('ok', false, 'erreur', 'Motif obligatoire (15 caractères au moins)');
+  end if;
+  if length(trim(coalesce(p_operateur, ''))) < 2 then
+    return jsonb_build_object('ok', false, 'erreur', 'Administrateur non identifié');
+  end if;
+  select count(*) into v_ctl from public.audit_log where salon_id = p_salon and action = 'CLOTURE_Z_VENTES_NON_TRANSMISES'
+     and details like p_date::text || ' - %' and timestamp_action > now() - interval '2 hours';
+  if v_ctl < 2 or coalesce(p_renvoi->>'tente_at', '') = '' then
+    return jsonb_build_object('ok', false, 'erreur', 'Tentative de renvoi des tickets en attente non constatée : relancez la transmission puis la clôture avant de forcer', 'controles', v_ctl);
+  end if;
+  v_rdv := lx_prive.z_rdv_hors_journal(p_salon, p_date, false);
+  v_nb := jsonb_array_length(v_rdv);
+  if v_nb = 0 then return jsonb_build_object('ok', true, 'inutile', true); end if;
+  select coalesce(sum((e->>'prix')::numeric), 0), string_agg(coalesce(e->>'ticket_num', '?'), ', ') into v_mt, v_tks from jsonb_array_elements(v_rdv) e;
+  insert into public.clotures_forcages (salon_id, date_journee, rdv, nb, montant, motif, operateur, renvoi, cree_par)
+  values (p_salon, p_date, v_rdv, v_nb, lx_prive.r2(v_mt), trim(p_motif), trim(p_operateur), coalesce(p_renvoi, '{}'::jsonb), auth.uid())
+  returning id into v_id;
+  v_lib := 'Clôture Z du ' || to_char(p_date, 'DD/MM/YYYY') || ' FORCÉE par ' || trim(p_operateur) || ' : ' || v_nb || ' vente(s) encaissée(s) non transmise(s) au journal (ticket(s) n° '
+           || coalesce(v_tks, '?') || ', ' || to_char(v_mt, 'FM999999990.00') || ' EUR) — motif : ' || trim(p_motif);
+  insert into public.audit_log (salon_id, action, details, operator_name) values (p_salon, 'CLOTURE_Z_FORCEE', left(v_lib || ' — forçage ' || v_id || ' ' || v_rdv::text, 1900), trim(p_operateur));
+  begin perform public.nf525_jet_ajouter(p_salon, 900, left(v_lib, 900), trim(p_operateur)); exception when others then null; end;
+  begin perform public.report_server_error(p_source := 'sql:clotures', p_message := left(v_lib, 900), p_severity := 'warning',
+    p_context := jsonb_build_object('salon_id', p_salon, 'date', p_date, 'forcage', v_id, 'rdv', v_rdv, 'renvoi', p_renvoi)); exception when others then null; end;
+  return jsonb_build_object('ok', true, 'id', v_id, 'nb', v_nb, 'montant', lx_prive.r2(v_mt), 'rdv', v_rdv);
+end $$;
+
+-- Alertes de caisse pour l'ÉTABLISSEMENT (carte de l'accueil de l'application) : journées retenues, mois non clôturés,
+-- remboursements faits sur Stripe reçus avant l'activation (ticket négatif créé automatiquement à l'activation : rien à saisir)
+create or replace function public.lx_caisse_alertes(p_salon uuid)
+returns jsonb language plpgsql stable security definer set search_path = public, pg_temp as $$
+declare v_j jsonb; v_m jsonb; v_r jsonb; v_auj date := lx_prive.jour_paris();
+begin
+  if not exists (select 1 from public.salons s where s.id = p_salon and (s.user_id = auth.uid() or public.is_admin())) then
+    return jsonb_build_object('ok', false);
+  end if;
+  v_j := lx_prive.journees_non_closes(p_salon, v_auj - 60, v_auj - 1);
+  select coalesce(jsonb_agg(to_char(x.m, 'YYYY-MM') order by x.m), '[]'::jsonb) into v_m from (
+    select distinct date_trunc('month', c.date_cloture)::date m from public.clotures c
+     where c.salon_id = p_salon and c.date_cloture >= v_auj - 400 and c.date_cloture < date_trunc('month', v_auj)::date) x
+   where (v_auj - (x.m + interval '1 month')::date) >= 2
+     and not exists (select 1 from public.clotures_mensuelles cm where cm.salon_id = p_salon and cm.annee = extract(year from x.m)::int and cm.mois = extract(month from x.m)::int);
+  select coalesce(jsonb_agg(jsonb_build_object('le', q.paye_at, 'montant', q.montant, 'ticket_origine', q.details->>'tk_origine', 'refund', q.refund_id) order by q.created_at), '[]'::jsonb)
+    into v_r from public.recettes_en_ligne q
+   where q.salon_id = p_salon and q.source = 'remb_externe' and q.statut = 'attente_activation';
+  return jsonb_build_object('ok', true, 'journees_retenues', v_j, 'mois_non_clotures', v_m, 'remboursements_en_attente', v_r);
+end $$;
+
 -- « À réparer » (admin) : la série du serveur (900001+) n'est pas un « saut » de la numérotation imprimée des appareils
 do $$ declare d text; a text := $q$from tickets t where t.raw_data->>'tkNum' ~ '^[0-9]+$'$q$; begin
   if to_regprocedure('lx_prive.a_reparer_brut(integer)') is null then return; end if;
@@ -1539,8 +1826,381 @@ do $$ declare d text; a text := $q$from tickets t where t.raw_data->>'tkNum' ~ '
   execute replace(d, a, a || $q$ and coalesce(t.raw_data->>'serveur', '') <> 'true'$q$);
 end $$;
 
+-- ===================================================================================================================== §11
+-- 2026-10-28 (-5, contre-audit final, constat 1) : CLÔTURES MENSUELLE, ANNUELLE ET D'EXERCICE — jamais scellées tant qu'une
+-- journée de la période est retenue (sans Z : tickets au journal ou ventes encaissées non transmises, voir §8 bis). Refus
+-- TRACÉ (journal des événements CLOTURE_*_REPORTEE) + alerte critique (server_errors, source sql:clotures) + carte de
+-- l'établissement (lx_caisse_alertes) ; nouvel essai automatique CHAQUE JOUR (tâches cloture_mensuelle_auto /
+-- cloture_annuelle_auto passées en quotidien ; cloture_exercice_auto l'était déjà), toujours dans l'ordre chronologique.
+-- Définitions relues en production le 28/10/2026 (cloturer_mois : version de docs/migrations_1027/bons_cadeaux_tva.sql,
+-- prérequis), seules les lignes marquées LX_JOURNEES_2026_10_28 sont ajoutées ; calculs et empreintes (ZM / ZA / ZE) inchangés.
+CREATE OR REPLACE FUNCTION public.cloturer_mois(p_salon_id uuid, p_annee integer, p_mois integer)
+ RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public', 'extensions'
+AS $function$
+DECLARE
+  v_user_id uuid; v_existing uuid; v_siret text; v_nb_jours int; v_nb_tickets int := 0; v_nb_annul int := 0;
+  v_ca numeric := 0; v_ht numeric := 0; v_tva numeric := 0; v_cloture_ids uuid[]; v_detail_paiements jsonb := '{}'::jsonb;
+  v_hash text; v_hash_prev text; v_id uuid; v_pay_keys text[]; v_k text; v_sum_pay numeric; v_d record; v_raw jsonb := null;
+  v_hc numeric := 0;
+  v_fin date; v_ouv jsonb; -- LX_JOURNEES_2026_10_28
+BEGIN
+  v_user_id := auth.uid();
+  IF v_user_id IS NOT NULL THEN
+    IF NOT EXISTS (SELECT 1 FROM salons WHERE id = p_salon_id AND user_id = v_user_id) AND NOT is_admin() THEN
+      RAISE EXCEPTION 'Vous ne gérez pas ce salon';
+    END IF;
+  END IF;
+  SELECT id INTO v_existing FROM clotures_mensuelles WHERE salon_id = p_salon_id AND annee = p_annee AND mois = p_mois;
+  IF v_existing IS NOT NULL THEN RETURN jsonb_build_object('ok', true, 'already_exists', true, 'id', v_existing); END IF;
+  SELECT siret INTO v_siret FROM salons WHERE id = p_salon_id;
+  -- LX_JOURNEES_2026_10_28 (-5) : jamais de clôture mensuelle d'un mois non terminé ni d'un mois dont une journée est retenue
+  -- (sans Z, avec tickets ou ventes encaissées non transmises) : refus TRACÉ + alerte, nouvel essai chaque jour (cron quotidien)
+  v_fin := (make_date(p_annee, p_mois, 1) + interval '1 month - 1 day')::date;
+  IF v_fin >= lx_prive.jour_paris() THEN
+    RETURN jsonb_build_object('ok', false, 'refus', 'LX_MOIS_EN_COURS', 'annee', p_annee, 'mois', p_mois);
+  END IF;
+  v_ouv := lx_prive.journees_non_closes(p_salon_id, make_date(p_annee, p_mois, 1), v_fin);
+  IF jsonb_array_length(v_ouv) > 0 THEN
+    PERFORM lx_prive.periode_alerter(p_salon_id, 'CLOTURE_MOIS_REPORTEE', 'Clôture mensuelle ' || p_annee || '-' || LPAD(p_mois::text, 2, '0') || ' NON faite : ' ||
+      jsonb_array_length(v_ouv) || ' journée(s) non clôturée(s) (' || (SELECT string_agg(to_char((e->>'date')::date, 'DD/MM'), ', ') FROM jsonb_array_elements(v_ouv) e) ||
+      ') ; nouvel essai automatique chaque jour', jsonb_build_object('annee', p_annee, 'mois', p_mois, 'journees', v_ouv));
+    RETURN jsonb_build_object('ok', false, 'refus', 'LX_MOIS_JOURNEES_OUVERTES', 'annee', p_annee, 'mois', p_mois, 'journees', v_ouv);
+  END IF;
+  SELECT COUNT(*), COALESCE(SUM(nb_tickets),0), COALESCE(SUM(nb_annulations),0),
+         COALESCE(SUM(total_ca),0), COALESCE(SUM(total_ht),0), array_agg(id ORDER BY date_cloture)
+    INTO v_nb_jours, v_nb_tickets, v_nb_annul, v_ca, v_ht, v_cloture_ids
+  FROM clotures WHERE salon_id = p_salon_id
+    AND EXTRACT(YEAR FROM date_cloture)::int = p_annee
+    AND EXTRACT(MONTH FROM date_cloture)::int = p_mois;
+  IF v_nb_jours = 0 OR v_nb_jours IS NULL THEN
+    RAISE EXCEPTION 'Aucune clôture journalière trouvée pour %-%, mois ne peut pas être clôturé', p_annee, p_mois;
+  END IF;
+  v_pay_keys := ARRAY(SELECT DISTINCT jsonb_object_keys(c.detail_paiements) FROM clotures c
+    WHERE c.salon_id = p_salon_id AND EXTRACT(YEAR FROM c.date_cloture)::int = p_annee
+      AND EXTRACT(MONTH FROM c.date_cloture)::int = p_mois AND c.detail_paiements IS NOT NULL);
+  IF v_pay_keys IS NOT NULL THEN
+    FOREACH v_k IN ARRAY v_pay_keys LOOP
+      SELECT COALESCE(SUM((c.detail_paiements->>v_k)::numeric), 0) INTO v_sum_pay
+      FROM clotures c WHERE c.salon_id = p_salon_id
+        AND EXTRACT(YEAR FROM c.date_cloture)::int = p_annee
+        AND EXTRACT(MONTH FROM c.date_cloture)::int = p_mois
+        AND c.detail_paiements ? v_k;
+      v_detail_paiements := v_detail_paiements || jsonb_build_object(v_k, v_sum_pay);
+    END LOOP;
+  END IF;
+  -- 2026-10-16 : Z annotées (annotation corrective signée) -> montants corrigés
+  SELECT * INTO v_d FROM nf525_z_annotation_delta(p_salon_id, make_date(p_annee, p_mois, 1), (make_date(p_annee, p_mois, 1) + interval '1 month - 1 day')::date);
+  IF coalesce(v_d.d_ca,0) <> 0 OR coalesce(v_d.d_nb,0) <> 0 OR coalesce(v_d.d_ht,0) <> 0 THEN
+    v_ca := v_ca + v_d.d_ca; v_ht := v_ht + v_d.d_ht; v_nb_tickets := v_nb_tickets + v_d.d_nb;
+    FOR v_k IN SELECT jsonb_object_keys(v_d.d_det) LOOP
+      v_detail_paiements := v_detail_paiements || jsonb_build_object(v_k, COALESCE((v_detail_paiements->>v_k)::numeric, 0) + (v_d.d_det->>v_k)::numeric);
+    END LOOP;
+    v_raw := jsonb_build_object('annotations', (SELECT jsonb_agg(jsonb_build_object('num', a.num, 'z', a.cloture_num, 'hash', a.hash, 'ecart_ca', a.correct_total_ca - a.wrong_total_ca))
+      FROM clotures_annotations a WHERE a.salon_id = p_salon_id AND EXTRACT(YEAR FROM a.cloture_date)::int = p_annee AND EXTRACT(MONTH FROM a.cloture_date)::int = p_mois));
+  END IF;
+  -- 2026-10-28 (Luxyra 6.7.0) : ventes de bons à usage multiple (hors CA, TVA 0) comprises dans total_ca -> détaillées à part
+  SELECT round(COALESCE(SUM(CASE WHEN jsonb_typeof(c.raw_data->'totalHorsCa') = 'number' THEN (c.raw_data->>'totalHorsCa')::numeric ELSE 0 END), 0), 2) INTO v_hc
+    FROM clotures c WHERE c.salon_id = p_salon_id AND EXTRACT(YEAR FROM c.date_cloture)::int = p_annee AND EXTRACT(MONTH FROM c.date_cloture)::int = p_mois;
+  IF coalesce(v_hc, 0) <> 0 THEN
+    v_raw := coalesce(v_raw, '{}'::jsonb) || jsonb_build_object('hors_ca_bum', v_hc, 'ca_hors_bum', round(v_ca - v_hc, 2));
+  END IF;
+  v_tva := v_ca - v_ht;
+  SELECT hash INTO v_hash_prev FROM clotures_mensuelles WHERE salon_id = p_salon_id ORDER BY annee DESC, mois DESC LIMIT 1;
+  v_hash := encode(extensions.digest(
+    'ZM|' || p_annee || '-' || p_mois || '|' || to_char(v_ca, 'FM9999999.99') || '|' || v_nb_tickets || '|' ||
+    COALESCE(v_hash_prev, '') || '|' || COALESCE(v_siret, ''), 'sha256'), 'hex');
+  INSERT INTO clotures_mensuelles (salon_id, annee, mois, nb_jours_clotures, nb_tickets, nb_annulations,
+    total_ca, total_ht, total_tva, detail_paiements, cloture_ids, hash, hash_algo, hash_prev, operator_name, raw_data)
+  VALUES (p_salon_id, p_annee, p_mois, v_nb_jours, v_nb_tickets, v_nb_annul,
+    v_ca, v_ht, v_tva, v_detail_paiements, v_cloture_ids, v_hash, 'SHA-256', v_hash_prev, 'auto_cron', v_raw)
+  RETURNING id INTO v_id;
+  INSERT INTO audit_log (salon_id, action, details, operator_name)
+  VALUES (p_salon_id, 'CLOTURE_MOIS', p_annee || '-' || LPAD(p_mois::text, 2, '0') || ' : ' || v_nb_jours || ' jours, ' ||
+    v_nb_tickets || ' tickets, ' || to_char(v_ca, 'FM9999999.99') || ' EUR' || CASE WHEN v_raw ? 'annotations' THEN ' (Z annotées : montants corrigés)' ELSE '' END ||
+    CASE WHEN coalesce(v_hc,0) <> 0 THEN ' (dont ' || to_char(v_hc, 'FM9999999.99') || ' EUR de bons à usage multiple vendus, hors CA)' ELSE '' END, 'auto_cron');
+  RETURN jsonb_build_object('ok', true, 'id', v_id, 'annee', p_annee, 'mois', p_mois,
+    'nb_jours', v_nb_jours, 'nb_tickets', v_nb_tickets, 'total_ca', v_ca, 'total_ht', v_ht, 'total_tva', v_tva, 'hash', v_hash,
+    'hors_ca_bum', coalesce(v_hc, 0));
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.run_cloture_mensuelle_pour_tous()
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+-- LX_JOURNEES_2026_10_28 (-5) : tous les mois TERMINÉS non encore clôturés (et non plus seulement le mois précédent), dans
+-- l'ordre chronologique par établissement (chaînage hash_prev) ; au premier mois refusé (journée retenue), on s'arrête pour
+-- cet établissement (jamais un mois postérieur clôturé avant). Tâche quotidienne : nouvel essai chaque jour.
+DECLARE
+  r record; v_auj date := lx_prive.jour_paris(); v_bloque uuid := NULL;
+  v_results jsonb := '[]'::jsonb; v_one jsonb; v_nb_ok int := 0; v_nb_err int := 0; v_nb_att int := 0;
+BEGIN
+  FOR r IN
+    SELECT x.salon_id, x.annee, x.mois FROM (
+      SELECT DISTINCT c.salon_id, EXTRACT(YEAR FROM c.date_cloture)::int annee, EXTRACT(MONTH FROM c.date_cloture)::int mois
+        FROM clotures c WHERE c.date_cloture < date_trunc('month', v_auj)::date
+      UNION
+      SELECT DISTINCT t.salon_id, EXTRACT(YEAR FROM t.date_ticket)::int, EXTRACT(MONTH FROM t.date_ticket)::int
+        FROM tickets t JOIN salons s ON s.id = t.salon_id AND s.status IN ('active', 'trial')
+       WHERE t.status <> 'cancelled' AND t.date_ticket < date_trunc('month', v_auj)::date AND t.date_ticket >= v_auj - 400
+    ) x
+    WHERE NOT EXISTS (SELECT 1 FROM clotures_mensuelles m WHERE m.salon_id = x.salon_id AND m.annee = x.annee AND m.mois = x.mois)
+    ORDER BY x.salon_id, x.annee, x.mois
+  LOOP
+    IF r.salon_id = v_bloque THEN
+      v_nb_att := v_nb_att + 1;
+      v_results := v_results || jsonb_build_object('salon_id', r.salon_id, 'periode', r.annee || '-' || LPAD(r.mois::text, 2, '0'), 'attente', 'mois antérieur non clôturé');
+      CONTINUE;
+    END IF;
+    BEGIN
+      v_one := public.cloturer_mois(r.salon_id, r.annee, r.mois);
+    EXCEPTION WHEN OTHERS THEN
+      v_one := jsonb_build_object('ok', false, 'error', SQLERRM);
+    END;
+    v_results := v_results || jsonb_build_object('salon_id', r.salon_id, 'periode', r.annee || '-' || LPAD(r.mois::text, 2, '0'), 'result', v_one);
+    IF coalesce((v_one->>'ok')::boolean, false) THEN v_nb_ok := v_nb_ok + 1;
+    ELSE v_nb_err := v_nb_err + 1; v_bloque := r.salon_id; END IF;
+  END LOOP;
+  RETURN jsonb_build_object('jour', v_auj, 'nb_ok', v_nb_ok, 'nb_err', v_nb_err, 'nb_attente', v_nb_att, 'results', v_results);
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.cloturer_annee(p_salon_id uuid, p_annee integer)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'extensions'
+AS $function$
+DECLARE
+  v_user_id uuid; v_existing uuid; v_siret text;
+  v_nb_mois int; v_nb_tickets int := 0; v_nb_annul int := 0;
+  v_ca numeric := 0; v_ht numeric := 0; v_tva numeric := 0;
+  v_mens_ids uuid[]; v_detail_paiements jsonb := '{}'::jsonb;
+  v_hash text; v_hash_prev text; v_id uuid;
+  v_pay_keys text[]; v_k text; v_sum_pay numeric;
+  v_ouv jsonb; v_manq jsonb; -- LX_JOURNEES_2026_10_28
+BEGIN
+  v_user_id := auth.uid();
+  IF v_user_id IS NOT NULL THEN
+    IF NOT EXISTS (SELECT 1 FROM salons WHERE id = p_salon_id AND user_id = v_user_id) AND NOT is_admin() THEN
+      RAISE EXCEPTION 'Vous ne gérez pas ce salon';
+    END IF;
+  END IF;
+  SELECT id INTO v_existing FROM clotures_annuelles WHERE salon_id = p_salon_id AND annee = p_annee;
+  IF v_existing IS NOT NULL THEN RETURN jsonb_build_object('ok', true, 'already_exists', true, 'id', v_existing); END IF;
+  SELECT siret INTO v_siret FROM salons WHERE id = p_salon_id;
+  -- LX_JOURNEES_2026_10_28 (-5) : jamais de clôture annuelle d'une année en cours, ni si un mois de l'année (avec Z ou
+  -- tickets) n'a pas sa clôture mensuelle, ni si une journée de l'année est retenue : refus TRACÉ + alerte, nouvel essai chaque jour
+  IF make_date(p_annee, 12, 31) >= lx_prive.jour_paris() THEN
+    RETURN jsonb_build_object('ok', false, 'refus', 'LX_ANNEE_EN_COURS', 'annee', p_annee);
+  END IF;
+  SELECT coalesce(jsonb_agg(x.m ORDER BY x.m), '[]'::jsonb) INTO v_manq FROM (
+    SELECT DISTINCT EXTRACT(MONTH FROM c.date_cloture)::int m FROM clotures c WHERE c.salon_id = p_salon_id AND EXTRACT(YEAR FROM c.date_cloture)::int = p_annee
+    UNION SELECT DISTINCT EXTRACT(MONTH FROM t.date_ticket)::int FROM tickets t WHERE t.salon_id = p_salon_id AND t.status <> 'cancelled' AND EXTRACT(YEAR FROM t.date_ticket)::int = p_annee) x
+   WHERE NOT EXISTS (SELECT 1 FROM clotures_mensuelles cm WHERE cm.salon_id = p_salon_id AND cm.annee = p_annee AND cm.mois = x.m);
+  v_ouv := lx_prive.journees_non_closes(p_salon_id, make_date(p_annee, 1, 1), make_date(p_annee, 12, 31));
+  IF jsonb_array_length(v_manq) > 0 OR jsonb_array_length(v_ouv) > 0 THEN
+    PERFORM lx_prive.periode_alerter(p_salon_id, 'CLOTURE_ANNEE_REPORTEE', 'Clôture annuelle ' || p_annee || ' NON faite : ' || jsonb_array_length(v_manq) ||
+      ' mois sans clôture mensuelle, ' || jsonb_array_length(v_ouv) || ' journée(s) non clôturée(s) ; nouvel essai automatique chaque jour',
+      jsonb_build_object('annee', p_annee, 'mois_manquants', v_manq, 'journees', v_ouv));
+    RETURN jsonb_build_object('ok', false, 'refus', 'LX_ANNEE_PERIODES_OUVERTES', 'annee', p_annee, 'mois_manquants', v_manq, 'journees', v_ouv);
+  END IF;
+  SELECT COUNT(*), COALESCE(SUM(nb_tickets),0), COALESCE(SUM(nb_annulations),0),
+         COALESCE(SUM(total_ca),0), COALESCE(SUM(total_ht),0), array_agg(id ORDER BY mois)
+    INTO v_nb_mois, v_nb_tickets, v_nb_annul, v_ca, v_ht, v_mens_ids
+  FROM clotures_mensuelles WHERE salon_id = p_salon_id AND annee = p_annee;
+  v_tva := v_ca - v_ht;
+  IF v_nb_mois = 0 OR v_nb_mois IS NULL THEN
+    RAISE EXCEPTION 'Aucune clôture mensuelle pour %, l''année ne peut être clôturée', p_annee;
+  END IF;
+  v_pay_keys := ARRAY(SELECT DISTINCT jsonb_object_keys(cm.detail_paiements) FROM clotures_mensuelles cm
+    WHERE cm.salon_id = p_salon_id AND cm.annee = p_annee AND cm.detail_paiements IS NOT NULL);
+  IF v_pay_keys IS NOT NULL THEN
+    FOREACH v_k IN ARRAY v_pay_keys LOOP
+      SELECT COALESCE(SUM((cm.detail_paiements->>v_k)::numeric), 0) INTO v_sum_pay
+      FROM clotures_mensuelles cm WHERE cm.salon_id = p_salon_id AND cm.annee = p_annee AND cm.detail_paiements ? v_k;
+      v_detail_paiements := v_detail_paiements || jsonb_build_object(v_k, v_sum_pay);
+    END LOOP;
+  END IF;
+  SELECT hash INTO v_hash_prev FROM clotures_annuelles WHERE salon_id = p_salon_id ORDER BY annee DESC LIMIT 1;
+  v_hash := encode(extensions.digest(
+    'ZA|' || p_annee || '|' || to_char(v_ca, 'FM9999999.99') || '|' || v_nb_tickets || '|' ||
+    COALESCE(v_hash_prev, '') || '|' || COALESCE(v_siret, ''), 'sha256'), 'hex');
+  INSERT INTO clotures_annuelles (salon_id, annee, nb_mois_clotures, nb_tickets, nb_annulations,
+    total_ca, total_ht, total_tva, detail_paiements, cloture_mens_ids, hash, hash_algo, hash_prev, operator_name)
+  VALUES (p_salon_id, p_annee, v_nb_mois, v_nb_tickets, v_nb_annul,
+    v_ca, v_ht, v_tva, v_detail_paiements, v_mens_ids, v_hash, 'SHA-256', v_hash_prev, 'auto_cron')
+  RETURNING id INTO v_id;
+  INSERT INTO audit_log (salon_id, action, details, operator_name)
+  VALUES (p_salon_id, 'CLOTURE_ANNEE', p_annee || ' : ' || v_nb_mois || ' mois, ' || v_nb_tickets || ' tickets, ' ||
+    to_char(v_ca, 'FM9999999.99') || ' EUR', 'auto_cron');
+  RETURN jsonb_build_object('ok', true, 'id', v_id, 'annee', p_annee,
+    'nb_mois', v_nb_mois, 'nb_tickets', v_nb_tickets, 'total_ca', v_ca, 'hash', v_hash);
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.run_cloture_annuelle_pour_tous()
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+-- LX_JOURNEES_2026_10_28 (-5) : toutes les années TERMINÉES non encore clôturées, dans l'ordre par établissement ; arrêt pour
+-- l'établissement à la première année refusée. Tâche quotidienne : nouvel essai chaque jour.
+DECLARE
+  r record; v_auj date := lx_prive.jour_paris(); v_bloque uuid := NULL;
+  v_results jsonb := '[]'::jsonb; v_one jsonb; v_nb_ok int := 0; v_nb_err int := 0;
+BEGIN
+  FOR r IN
+    SELECT DISTINCT m.salon_id, m.annee FROM clotures_mensuelles m
+     WHERE m.annee < EXTRACT(YEAR FROM v_auj)::int
+       AND NOT EXISTS (SELECT 1 FROM clotures_annuelles a WHERE a.salon_id = m.salon_id AND a.annee = m.annee)
+     ORDER BY m.salon_id, m.annee
+  LOOP
+    IF r.salon_id = v_bloque THEN CONTINUE; END IF;
+    BEGIN
+      v_one := public.cloturer_annee(r.salon_id, r.annee);
+    EXCEPTION WHEN OTHERS THEN
+      v_one := jsonb_build_object('ok', false, 'error', SQLERRM);
+    END;
+    v_results := v_results || jsonb_build_object('salon_id', r.salon_id, 'annee', r.annee, 'result', v_one);
+    IF coalesce((v_one->>'ok')::boolean, false) THEN v_nb_ok := v_nb_ok + 1;
+    ELSE v_nb_err := v_nb_err + 1; v_bloque := r.salon_id; END IF;
+  END LOOP;
+  RETURN jsonb_build_object('jour', v_auj, 'nb_ok', v_nb_ok, 'nb_err', v_nb_err, 'results', v_results);
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.cloturer_exercice(p_salon_id uuid, p_date_fin date)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'extensions'
+AS $function$
+DECLARE
+  v_uid uuid := auth.uid(); v_mois int; v_siret text; v_existing uuid;
+  v_prev_fin date; v_debut date; v_nb int; v_tk int; v_an int; v_ca numeric; v_ht numeric; v_ids uuid[];
+  v_det jsonb := '{}'::jsonb; v_keys text[]; v_k text; v_s numeric;
+  v_cp_ca numeric; v_cp_tk int; v_cp_at timestamptz; v_prev text; v_hash text; v_id uuid; v_d record; v_pca numeric; v_ptk int;
+  v_ouv jsonb; -- LX_JOURNEES_2026_10_28
+BEGIN
+  IF v_uid IS NOT NULL AND NOT EXISTS (SELECT 1 FROM salons WHERE id = p_salon_id AND user_id = v_uid) AND NOT is_admin() THEN
+    RAISE EXCEPTION 'Vous ne gérez pas ce salon';
+  END IF;
+  SELECT exercice_fin_mois, siret INTO v_mois, v_siret FROM salons WHERE id = p_salon_id;
+  IF v_mois IS NULL THEN RAISE EXCEPTION 'Salon introuvable'; END IF;
+  IF p_date_fin IS NULL OR p_date_fin <> lx_fin_exercice(extract(year FROM p_date_fin)::int, v_mois) THEN
+    RAISE EXCEPTION 'Date de fin d''exercice incohérente avec le réglage (fin du mois %)', v_mois;
+  END IF;
+  IF p_date_fin >= (now() AT TIME ZONE 'Europe/Paris')::date THEN
+    RAISE EXCEPTION 'L''exercice n''est pas encore terminé';
+  END IF;
+  SELECT id INTO v_existing FROM clotures_exercices WHERE salon_id = p_salon_id AND date_fin = p_date_fin;
+  IF v_existing IS NOT NULL THEN RETURN jsonb_build_object('ok', true, 'already_exists', true, 'id', v_existing); END IF;
+  SELECT max(date_fin) INTO v_prev_fin FROM clotures_exercices WHERE salon_id = p_salon_id AND date_fin < p_date_fin;
+  v_debut := coalesce(v_prev_fin + 1, (p_date_fin - interval '1 year' + interval '1 day')::date);
+  -- LX_JOURNEES_2026_10_28 (-5) : jamais de clôture d'exercice si une journée de l'exercice est retenue : refus TRACÉ + alerte,
+  -- nouvel essai chaque jour (tâche cloture_exercice_auto quotidienne)
+  v_ouv := lx_prive.journees_non_closes(p_salon_id, v_debut, p_date_fin);
+  IF jsonb_array_length(v_ouv) > 0 THEN
+    PERFORM lx_prive.periode_alerter(p_salon_id, 'CLOTURE_EXERCICE_REPORTEE', 'Clôture de l''exercice du ' || to_char(v_debut,'DD/MM/YYYY') || ' au ' || to_char(p_date_fin,'DD/MM/YYYY') ||
+      ' NON faite : ' || jsonb_array_length(v_ouv) || ' journée(s) non clôturée(s) ; nouvel essai automatique chaque jour', jsonb_build_object('debut', v_debut, 'fin', p_date_fin, 'journees', v_ouv));
+    RETURN jsonb_build_object('ok', false, 'refus', 'LX_EXERCICE_JOURNEES_OUVERTES', 'debut', v_debut, 'fin', p_date_fin, 'journees', v_ouv);
+  END IF;
+  SELECT count(*), coalesce(sum(nb_tickets),0), coalesce(sum(nb_annulations),0), round(coalesce(sum(total_ca),0),2), round(coalesce(sum(total_ht),0),2),
+         array_agg(id ORDER BY date_cloture)
+    INTO v_nb, v_tk, v_an, v_ca, v_ht, v_ids
+  FROM clotures WHERE salon_id = p_salon_id AND date_cloture BETWEEN v_debut AND p_date_fin;
+  IF coalesce(v_nb,0) = 0 THEN
+    RETURN jsonb_build_object('ok', true, 'skipped', 'aucune clôture journalière sur l''exercice', 'debut', v_debut, 'fin', p_date_fin);
+  END IF;
+  v_keys := ARRAY(SELECT DISTINCT jsonb_object_keys(c.detail_paiements) FROM clotures c
+                  WHERE c.salon_id = p_salon_id AND c.date_cloture BETWEEN v_debut AND p_date_fin
+                    AND c.detail_paiements IS NOT NULL AND jsonb_typeof(c.detail_paiements) = 'object');
+  IF v_keys IS NOT NULL THEN
+    FOREACH v_k IN ARRAY v_keys LOOP
+      SELECT coalesce(sum(CASE WHEN jsonb_typeof(c.detail_paiements->v_k) = 'number' THEN (c.detail_paiements->>v_k)::numeric ELSE 0 END),0) INTO v_s
+      FROM clotures c WHERE c.salon_id = p_salon_id AND c.date_cloture BETWEEN v_debut AND p_date_fin
+        AND jsonb_typeof(c.detail_paiements) = 'object' AND c.detail_paiements ? v_k;
+      v_det := v_det || jsonb_build_object(v_k, round(v_s,2));
+    END LOOP;
+  END IF;
+  -- 2026-10-16 : Z annotées -> montants corrigés
+  SELECT * INTO v_d FROM nf525_z_annotation_delta(p_salon_id, v_debut, p_date_fin);
+  IF coalesce(v_d.d_ca,0) <> 0 OR coalesce(v_d.d_nb,0) <> 0 OR coalesce(v_d.d_ht,0) <> 0 THEN
+    v_ca := round(v_ca + v_d.d_ca, 2); v_ht := round(v_ht + v_d.d_ht, 2); v_tk := v_tk + v_d.d_nb;
+    FOR v_k IN SELECT jsonb_object_keys(v_d.d_det) LOOP
+      v_det := v_det || jsonb_build_object(v_k, round(COALESCE((v_det->>v_k)::numeric, 0) + (v_d.d_det->>v_k)::numeric, 2));
+    END LOOP;
+  END IF;
+  SELECT cumul_perpetuel_ca, cumul_perpetuel_tickets, created_at INTO v_cp_ca, v_cp_tk, v_cp_at
+  FROM clotures WHERE salon_id = p_salon_id AND date_cloture BETWEEN v_debut AND p_date_fin
+  ORDER BY date_cloture DESC, num DESC LIMIT 1;
+  -- grand total : annotations (Z de l'exercice) créées après la dernière Z de l'exercice
+  SELECT coalesce(sum(correct_total_ca - wrong_total_ca),0), coalesce(sum(correct_nb_tickets - wrong_nb_tickets),0) INTO v_pca, v_ptk
+    FROM clotures_annotations WHERE salon_id = p_salon_id AND cloture_date <= p_date_fin AND created_at > v_cp_at;
+  v_cp_ca := v_cp_ca + coalesce(v_pca,0); v_cp_tk := v_cp_tk + coalesce(v_ptk,0);
+  SELECT hash INTO v_prev FROM clotures_exercices WHERE salon_id = p_salon_id ORDER BY date_fin DESC LIMIT 1;
+  v_hash := encode(extensions.digest(
+    'ZE|' || v_debut || '|' || p_date_fin || '|' || to_char(v_ca, 'FM999999990.00') || '|' || v_tk || '|' ||
+    coalesce(v_prev, '') || '|' || coalesce(v_siret, ''), 'sha256'), 'hex');
+  INSERT INTO clotures_exercices (salon_id, date_debut, date_fin, nb_jours_clotures, nb_tickets, nb_annulations,
+    total_ca, total_ht, total_tva, detail_paiements, cloture_ids, cumul_perpetuel_ca, cumul_perpetuel_tickets,
+    hash, hash_algo, hash_prev, operator_name)
+  VALUES (p_salon_id, v_debut, p_date_fin, v_nb, v_tk, v_an, v_ca, v_ht, v_ca - v_ht, v_det, v_ids, round(v_cp_ca,2), v_cp_tk,
+    v_hash, 'SHA-256', v_prev, CASE WHEN v_uid IS NULL THEN 'auto_cron' ELSE 'utilisateur' END)
+  RETURNING id INTO v_id;
+  INSERT INTO audit_log (salon_id, action, details, operator_name)
+  VALUES (p_salon_id, 'CLOTURE_EXERCICE', 'Exercice du ' || to_char(v_debut,'DD/MM/YYYY') || ' au ' || to_char(p_date_fin,'DD/MM/YYYY') || ' : ' ||
+    v_nb || ' jours, ' || v_tk || ' tickets, ' || to_char(v_ca, 'FM999999990.00') || ' EUR', 'auto_cron');
+  RETURN jsonb_build_object('ok', true, 'id', v_id, 'debut', v_debut, 'fin', p_date_fin, 'nb_jours', v_nb,
+    'nb_tickets', v_tk, 'total_ca', v_ca, 'hash', v_hash);
+END $function$;
+
+CREATE OR REPLACE FUNCTION public.run_cloture_exercice_pour_tous()
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+-- LX_JOURNEES_2026_10_28 (-5) : arrêt pour l'établissement au premier exercice refusé (jamais un exercice postérieur clôturé avant)
+DECLARE
+  r record; v_today date := (now() AT TIME ZONE 'Europe/Paris')::date; v_first date; v_y int; v_fin date;
+  v_res jsonb := '[]'::jsonb; v_one jsonb;
+BEGIN
+  FOR r IN SELECT id, exercice_fin_mois FROM salons WHERE exercice_fin_mois <> 12 LOOP
+    SELECT min(date_cloture) INTO v_first FROM clotures WHERE salon_id = r.id;
+    IF v_first IS NULL THEN CONTINUE; END IF;
+    FOR v_y IN extract(year FROM v_first)::int .. extract(year FROM v_today)::int LOOP
+      v_fin := lx_fin_exercice(v_y, r.exercice_fin_mois);
+      IF v_fin < v_first OR v_fin >= v_today THEN CONTINUE; END IF;
+      IF EXISTS (SELECT 1 FROM clotures_exercices WHERE salon_id = r.id AND date_fin = v_fin) THEN CONTINUE; END IF;
+      BEGIN
+        v_one := cloturer_exercice(r.id, v_fin);
+        v_res := v_res || jsonb_build_object('salon_id', r.id, 'fin', v_fin, 'result', v_one);
+      EXCEPTION WHEN OTHERS THEN
+        v_one := jsonb_build_object('ok', false, 'error', SQLERRM);
+        v_res := v_res || jsonb_build_object('salon_id', r.id, 'fin', v_fin, 'error', SQLERRM);
+      END;
+      EXIT WHEN NOT coalesce((v_one->>'ok')::boolean, false); -- LX_JOURNEES_2026_10_28
+    END LOOP;
+  END LOOP;
+  RETURN jsonb_build_object('ok', true, 'results', v_res);
+END $function$;
+
+-- Tâches planifiées : mensuelle et annuelle QUOTIDIENNES (même heure ; nouvel essai chaque jour tant qu'une période est retenue)
+do $$ begin
+  if exists (select 1 from cron.job where jobname = 'cloture_mensuelle_auto') then perform cron.unschedule('cloture_mensuelle_auto'); end if;
+  perform cron.schedule('cloture_mensuelle_auto', '15 3 * * *', 'SELECT public.run_cloture_mensuelle_pour_tous();');
+  if exists (select 1 from cron.job where jobname = 'cloture_annuelle_auto') then perform cron.unschedule('cloture_annuelle_auto'); end if;
+  perform cron.schedule('cloture_annuelle_auto', '30 3 * * *', 'SELECT public.run_cloture_annuelle_pour_tous();');
+end $$;
+
 -- ===================================================================================================================== §9 droits
 revoke all on function lx_prive.recettes_serveur_actif() from public, anon, authenticated;
+revoke all on function lx_prive.recettes_serveur_deja_active() from public, anon, authenticated;
 revoke all on function lx_prive.recette_poste(uuid) from public, anon, authenticated;
 revoke all on function lx_prive.recette_ht_tva(uuid, jsonb, numeric) from public, anon, authenticated;
 revoke all on function lx_prive.recette_client(uuid, uuid) from public, anon, authenticated;
@@ -1564,6 +2224,20 @@ revoke all on function lx_prive.remb_tk_justifies(uuid, uuid, jsonb, jsonb) from
 revoke all on function lx_prive.tickets_cc_doublon_controle() from public, anon, authenticated;
 revoke all on function lx_prive.appointments_cc_doublon_controle() from public, anon, authenticated;
 revoke all on function lx_prive.tickets_version_controle() from public, anon, authenticated;
+revoke all on function lx_prive.tickets_report_controle() from public, anon, authenticated;
+revoke all on function lx_prive.clotures_forcages_inalterables() from public, anon, authenticated;
+revoke all on function lx_prive.z_rdv_hors_journal(uuid, date, boolean) from public, anon, authenticated;
+revoke all on function lx_prive.journees_non_closes(uuid, date, date) from public, anon, authenticated;
+revoke all on function lx_prive.periode_alerter(uuid, text, text, jsonb) from public, anon, authenticated;
+revoke all on function public.lx_z_controle_ventes(uuid, date) from public, anon;
+grant execute on function public.lx_z_controle_ventes(uuid, date) to authenticated, service_role;
+revoke all on function public.lx_z_forcer(uuid, date, text, text, jsonb) from public, anon;
+grant execute on function public.lx_z_forcer(uuid, date, text, text, jsonb) to authenticated, service_role;
+revoke all on function public.lx_caisse_alertes(uuid) from public, anon;
+grant execute on function public.lx_caisse_alertes(uuid) to authenticated, service_role;
+revoke all on function public.run_cloture_mensuelle_pour_tous() from public, anon, authenticated;
+revoke all on function public.run_cloture_annuelle_pour_tous() from public, anon, authenticated;
+revoke all on function public.run_cloture_exercice_pour_tous() from public, anon, authenticated;
 revoke all on function lx_prive.garde_paiements_rdv_online() from public, anon, authenticated;
 revoke all on function lx_prive.garde_paiements_commandes_online() from public, anon, authenticated;
 revoke all on function lx_prive.garde_paiements_cartes_cadeaux() from public, anon, authenticated;
@@ -1590,12 +2264,12 @@ end $$;
 commit;
 
 -- =====================================================================================================================
--- ORDRE DE MISE EN SERVICE : voir docs/registre-interventions-nf525.md, intervention du 28/10/2026 (-4) — ordre complet pas à
+-- ORDRE DE MISE EN SERVICE : voir docs/registre-interventions-nf525.md, intervention du 28/10/2026 (-5) — ordre complet pas à
 -- pas, verify_jwt de chaque edge function, contrôles et RETOUR ARRIÈRE. Résumé :
---  0. docs/migrations_1027/bons_cadeaux_tva.sql (conseillé)   1. CE FICHIER (interrupteur éteint : rien n'est créé)
---  2. edge functions docs/edge_1028/* (lx-cloture-auto v3.2)   3. worker (+ cocher charge.refunded)   4. pages (6.8.2, données
---  20261028-4) et recharger les appareils   5. activation avec recettes_en_ligne_version_min = '0' (heure au registre)
---  5 bis. relever recettes_en_ligne_version_min à '6.8.2' quand TOUS les postes actifs ont remonté 6.8.2 (requête de contrôle
+--  0. docs/migrations_1027/bons_cadeaux_tva.sql (OBLIGATOIRE, avant)   1. CE FICHIER (interrupteur éteint : rien n'est créé)
+--  2. edge functions docs/edge_1028/* (lx-cloture-auto v3.3)   3. worker (+ cocher charge.refunded)   4. pages (6.8.2, données
+--  20261028-5) et recharger les appareils   5. activation avec recettes_en_ligne_version_min = '0' (heure au registre)
+--  5 bis. relever recettes_en_ligne_version_min à '6.8.3' quand TOUS les postes actifs ont remonté 6.8.3 (requête de contrôle
 --  au registre)   6. bot   7. CGV art. 12 ter   8. bons en ligne.
 --
 -- RETOUR ARRIÈRE (les tickets déjà créés restent : ils sont scellés et exacts) :
@@ -1612,7 +2286,8 @@ commit;
 --     drop trigger if exists a_lx_tickets_cc_doublon on public.tickets;
 --     drop trigger if exists a_lx_tickets_a_version on public.tickets;
 --     drop trigger if exists a_lx_appointments_cc_doublon on public.appointments;
---     -- les gardes a0_lx_garde_paiements (4 tables) et le verrou de la Z sont INDÉPENDANTS de l'interrupteur : à garder.
+--     -- les gardes a0_lx_garde_paiements (4 tables), a_lx_tickets_report_scelle, le contrôle de la Z (verrou, journées
+--     -- retenues) et les clôtures périodiques (§11) sont INDÉPENDANTS de l'interrupteur : à garder.
 --     drop function if exists public.lx_recette_remboursement_externe(text, text, bigint, timestamptz, jsonb);
 --     -- garder la table public.recettes_en_ligne, les index et les colonnes : trace des tickets créés.
 -- =====================================================================================================================

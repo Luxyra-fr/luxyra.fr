@@ -98,6 +98,11 @@ do $$ begin
   if position('nf525_z_annotation_delta' in pg_get_functiondef('public.cloturer_mois(uuid,integer,integer)'::regprocedure)) = 0 then
     raise exception 'cloturer_mois : version en base différente de celle du 16/10/2026 — relire avant de remplacer';
   end if;
+  -- 2026-10-28 (-5) : ce fichier est un PRÉREQUIS de docs/migrations_1028/recettes_en_ligne.sql, qui remplace ensuite cloturer_mois
+  -- (contrôle des journées retenues, hors_ca_bum conservé). Ne jamais le rejouer après : il retirerait ce contrôle.
+  if position('LX_JOURNEES_2026_10_28' in pg_get_functiondef('public.cloturer_mois(uuid,integer,integer)'::regprocedure)) > 0 then
+    raise exception 'cloturer_mois : déjà remplacée par docs/migrations_1028/recettes_en_ligne.sql (journées retenues) — ne pas rejouer ce fichier';
+  end if;
 end $$;
 
 CREATE OR REPLACE FUNCTION public.cloturer_mois(p_salon_id uuid, p_annee integer, p_mois integer)

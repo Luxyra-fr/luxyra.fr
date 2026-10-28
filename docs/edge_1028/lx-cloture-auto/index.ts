@@ -1,4 +1,14 @@
 // @ts-nocheck
+// lx-cloture-auto v3.3 — 2026-10-28 (-5, Luxyra 6.8.3, contre-audit final constat 2) : (a) journées à clore = TOUTE date des
+//    60 derniers jours sans Z ayant des tickets au journal OU des rendez-vous encaissés (avant : seulement les dates postérieures
+//    à la dernière Z — une journée retenue antérieure à une Z disparaissait de la liste, plus d'alerte) ; (b) traitement dans
+//    l'ordre des dates et ARRÊT à la première journée retenue : aucune journée postérieure n'est clôturée tant qu'elle l'est
+//    (sinon Z numérotées hors de l'ordre des dates et cumuls du mois / de l'année faux — la base refuse aussi désormais une Z
+//    quand une journée antérieure est retenue : LX_Z_JOURNEE_ANTERIEURE_OUVERTE) ; les journées suivantes restent ouvertes
+//    (encaissements toujours possibles) et sont clôturées dans l'ordre dès que la journée retenue l'est ; (c) alerte critique
+//    + trace CLOTURE_Z_REPORTEE CHAQUE NUIT tant que la journée reste retenue ; l'établissement la voit dans l'application
+//    (carte « Caisse » : lx_caisse_alertes) ; (d) ventes consignées par un forçage tracé (public.clotures_forcages, lx_z_forcer)
+//    ignorées pour cette journée.
 // lx-cloture-auto v3.2 — 2026-10-28 (-4, Luxyra 6.8.2, contre-audit constat BLOQUANT) : la clôture de nuit NE CLÔT PLUS une
 //    journée s'il existe des rendez-vous ENCAISSÉS de ce jour (status done, n° de ticket ; hors copies des tickets du serveur)
 //    dont le ticket est ABSENT du journal (tickets, recherche par identifiant sur toutes les dates) : la journée reste ouverte et
@@ -475,15 +485,27 @@ function comparer(c, z){
   return { diffs, hashOk: (c.hash===z.hash) };
 }
 
+const FENETRE_JOURS = 60;
+function jourMoins(j, n){ const d = new Date(j+"T12:00:00Z"); d.setUTCDate(d.getUTCDate()-n); return d.toISOString().slice(0,10); }
 async function journeesAClore(base, salonId){
   const auj = aujourdHuiParis();
+  const debut = jourMoins(auj, FENETRE_JOURS);
   const mode = base.s.mode_caisse || null;
-  const tks = await toutLire("tickets","date_ticket,status,mode_caisse",q=>q.eq("salon_id",salonId).neq("status","cancelled").lt("date_ticket",auj));
+  const tks = await toutLire("tickets","date_ticket,status,mode_caisse",q=>q.eq("salon_id",salonId).neq("status","cancelled").gte("date_ticket",debut).lt("date_ticket",auj));
   const avecZ = new Set(base.clos.map(z=>z.date_cloture));
-  // 2026-10-28 (-4) : + journées postérieures à la dernière Z ayant des rendez-vous encaissés (même sans ticket au journal)
-  const derniereZ = base.clos.reduce((m,z)=>(z.date_cloture>m?z.date_cloture:m), "");
-  const rdv = base.appts.filter(a=>rdvEncaisse(a) && a.date_rdv && a.date_rdv < auj && a.date_rdv > derniereZ).map(a=>a.date_rdv);
-  return [...new Set(tks.filter(t=>!t.mode_caisse || !mode || t.mode_caisse===mode).map(t=>t.date_ticket).concat(rdv))].filter(d=>!avecZ.has(d)).sort();
+  // 2026-10-28 (-5) : TOUTE date sans Z de la fenêtre (avant -5 : seulement après la dernière Z), tickets OU rendez-vous encaissés
+  const rdv = base.appts.filter(a=>rdvEncaisse(a) && a.date_rdv && a.date_rdv < auj && a.date_rdv >= debut).map(a=>a.date_rdv);
+  return [...new Set(tks.filter(t=>t.date_ticket >= debut && (!t.mode_caisse || !mode || t.mode_caisse===mode)).map(t=>t.date_ticket).concat(rdv))].filter(d=>!avecZ.has(d)).sort();
+}
+// 2026-10-28 (-5) : ventes consignées par un forçage tracé (lx_z_forcer) : identifiants de rendez-vous par journée
+async function forcages(salonId){
+  const out = {};
+  try {
+    const { data, error } = await sb.from("clotures_forcages").select("date_journee,rdv").eq("salon_id", salonId);
+    if (error) throw new Error(error.message);
+    (data||[]).forEach(f=>{ const s = out[f.date_journee] = out[f.date_journee] || new Set(); (Array.isArray(f.rdv)?f.rdv:[]).forEach(r=>{ if (r && r.id) s.add(String(r.id)); }); });
+  } catch (e) { throw new Error("clotures_forcages : "+String(e?.message||e)); }
+  return out;
 }
 // 2026-10-28 (-4) : rendez-vous ENCAISSÉ par un appareil (status done + n° de ticket), hors copie d'un ticket du serveur
 function rdvEncaisse(a){
@@ -535,7 +557,7 @@ Deno.serve(async (req) => {
         if(!cmp.diffs.length) ok++; if(cmp.hashOk) hashOk++;
         if(cmp.diffs.length || (!cmp.hashOk && !explique)) res.push({ num:z.num, date:z.date_cloture, hash: cmp.hashOk ? true : (explique ? "explique : "+explique : false), diffs: cmp.diffs.slice(0,8) });
       }
-      return J(200, { version: 3.2, salon: base.s.nom, z_verifiees: n, totaux_identiques: ok, hash_identiques: hashOk, hash_ecarts_expliques: hashExpl, ecarts: res.slice(0,60) });
+      return J(200, { version: 3.3, salon: base.s.nom, z_verifiees: n, totaux_identiques: ok, hash_identiques: hashOk, hash_ecarts_expliques: hashExpl, ecarts: res.slice(0,60) });
     }
     // simulate / run
     const { data: salons } = await sb.from("salons").select("id,nom,status").in("status",["active","trial"]);
@@ -544,16 +566,21 @@ Deno.serve(async (req) => {
     for (const s of cibles){
       const base = await chargerSalon(s.id);
       const dates = await journeesAClore(base, s.id);
+      const forces = await forcages(s.id);
+      let retenue = null; // 2026-10-28 (-5) : première journée retenue -> les journées suivantes attendent (ordre des Z)
       for (const D of dates){
+        if (retenue) { rapport.push({ salon: s.nom, date: D, ecrit: false, raison: "en attente : journée antérieure du "+retenue+" retenue (les clôtures se font dans l'ordre des dates)", attente: retenue }); continue; }
         // 2026-10-28 (-4) : rendez-vous encaissés absents du journal -> journée laissée OUVERTE + alerte critique
-        const manquants = await rdvHorsJournal(base, D);
+        const fD = forces[D] || null;
+        const manquants = (await rdvHorsJournal(base, D)).filter(a=>!(fD && fD.has(String(a.id))));
         if (manquants.length){
+          retenue = D;
           const total = r2(manquants.reduce((t,a)=>t+(Number(a.prix)||0),0));
           const ligneM = { salon: s.nom, date: D, ecrit: false, raison: "rendez-vous encaissés absents du journal des tickets : journée laissée ouverte", rdv_hors_journal: manquants.length, montant_rdv: total,
             tickets: manquants.map(a=>a.ticket_num ?? (a.meta && a.meta.tkNum) ?? null).slice(0,20) };
           if (mode === "run") {
             try {
-              await sb.rpc("report_server_error", { p_source: "lx-cloture-auto", p_message: "Clôture automatique du "+D+" NON faite : "+manquants.length+" rendez-vous encaissé(s) ("+total.toFixed(2)+" EUR) sans ticket au journal (appareil non mis à jour ou non synchronisé). Faire transmettre les tickets (mise à jour / reconnexion de l'appareil) ; la journée sera clôturée ensuite.",
+              await sb.rpc("report_server_error", { p_source: "lx-cloture-auto", p_message: "Clôture automatique du "+D+" NON faite : "+manquants.length+" rendez-vous encaissé(s) ("+total.toFixed(2)+" EUR) sans ticket au journal (appareil non mis à jour ou non synchronisé). Les journées suivantes restent ouvertes (clôtures dans l'ordre des dates). Faire transmettre les tickets (mise à jour / reconnexion de l'appareil) ou, à défaut, forcer la clôture depuis l'application (administrateur, forçage tracé) ; alerte répétée chaque nuit.",
                 p_severity: "critical", p_context: { salon_id: s.id, date: D, rdv: manquants.map(a=>({ id: a.id, ticket_num: a.ticket_num ?? null, prix: Number(a.prix)||0 })).slice(0,50) }, p_salon_id: s.id });
             } catch (_) {}
             try { await sb.from("audit_log").insert({ salon_id: s.id, action: "CLOTURE_Z_REPORTEE", details: (D+" - clôture automatique non faite : "+manquants.length+" rendez-vous encaissé(s) sans ticket au journal ("+total.toFixed(2)+"E)").slice(0,1900), operator_name: "Clôture automatique" }); } catch (_) {}
@@ -565,7 +592,7 @@ Deno.serve(async (req) => {
         c.hash = await sha256Hex(c.hashChaine); delete c.hashChaine;
         c.auto = true; c.operator_name = "Clôture automatique"; c.auto_motif = "Journée non clôturée manuellement"; c.source = "tickets"; c.lxCalcVersion = 3;
         const ligne = { salon: s.nom, date: D, num: c.num, total_ca: r2(c.totalCA), total_ht: r2(c.totalHT), nb_tickets: c.nbTickets, nb_annul: c.nbAnnul, hors_ca_bum: c.totalHorsCa || 0, hash: c.hash.slice(0,12)+"..." };
-        if (Math.abs(c.totalCA - journalTotal) > 0.005) { rapport.push({ ...ligne, ecrit: false, erreur: "total calculé différent du journal ("+journalTotal+")" }); continue; }
+        if (Math.abs(c.totalCA - journalTotal) > 0.005) { rapport.push({ ...ligne, ecrit: false, erreur: "total calculé différent du journal ("+journalTotal+")" }); retenue = D; continue; }
         if (mode !== "run") { rapport.push({ ...ligne, ecrit: false }); continue; }
         const { data: deja } = await sb.from("clotures").select("id").eq("salon_id", s.id).eq("date_cloture", D).limit(1);
         if (deja && deja.length) { rapport.push({ ...ligne, ecrit: false, raison: "deja close" }); continue; }
@@ -575,14 +602,14 @@ Deno.serve(async (req) => {
           cumul_mois_ca: c.cumulMois || 0, cumul_mois_tickets: c.cumulMoisTk || 0, cumul_annee_ca: c.cumulAnnuel || 0, cumul_annee_tickets: c.cumulAnTk || 0,
           hash: c.hash, hash_algo: c.hashAlgo || "SHA-256", solde_reel: null, ecart_caisse: null, ecart_justification: null, raw_data: raw };
         const ins = await sb.from("clotures").insert(data).select("id,num").single();
-        if (ins.error) { rapport.push({ ...ligne, ecrit: false, erreur: ins.error.message }); continue; }
+        if (ins.error) { rapport.push({ ...ligne, ecrit: false, erreur: ins.error.message }); retenue = D; continue; } // 2026-10-28 (-5) : jamais une journée postérieure après un refus
         const lk = await sb.from("tickets").update({ locked: true, cloture_id: ins.data.id }).eq("salon_id", s.id).eq("date_ticket", D).eq("locked", false).select("id");
         await sb.from("audit_log").insert({ salon_id: s.id, action: "CLOTURE_Z", details: D+" - Z#"+c.num+" - "+c.nbTickets+" tickets - "+r2(c.totalCA).toFixed(2)+"E (cloture automatique : journee non cloturee)", operator_name: "Clôture automatique" });
         base.clos.push({ num: c.num, date_cloture: D, total_ca: c.totalCA, nb_tickets: c.nbTickets, cumul_perpetuel_ca: null });
         rapport.push({ ...ligne, ecrit: true, tickets_verrouilles: (lk.data||[]).length, erreur_verrou: lk.error ? lk.error.message : null });
       }
     }
-    return J(200, { version: 3.2, mode, aujourdhui: aujourdHuiParis(), resultat: rapport });
+    return J(200, { version: 3.3, mode, aujourdhui: aujourdHuiParis(), resultat: rapport });
   } catch (e) {
     return J(500, { error: String(e?.message || e) });
   }

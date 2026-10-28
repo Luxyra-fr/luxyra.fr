@@ -413,12 +413,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261028-4"></script>
+<script src="luxyra-supabase.js?v=20261028-5"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261028-4";
+  var attendu="20261028-5";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -2896,7 +2896,7 @@ function getInvTournantProducts(){
   return sorted.slice(0,5);
 }
 
-var SALON_CONFIG={nom:"Luxyra",sousTitre:"Gestion Beauté",logo:"",adresse:"",cp:"",ville:"",tel:"",email:"",siteWeb:"",siret:"",tva:"",couleurPrimaire:"var(--gold)",couleurSecondaire:"#1a1a1a",devise:"€",tauxTVA:20,version:"v6.8.1",subdomain:"",slug:"",plan:"essential"};
+var SALON_CONFIG={nom:"Luxyra",sousTitre:"Gestion Beauté",logo:"",adresse:"",cp:"",ville:"",tel:"",email:"",siteWeb:"",siret:"",tva:"",couleurPrimaire:"var(--gold)",couleurSecondaire:"#1a1a1a",devise:"€",tauxTVA:20,version:"v6.8.3",subdomain:"",slug:"",plan:"essential"};
 SALON_CONFIG.nomComplet=function(){return this.nom+(this.sousTitre?" - "+this.sousTitre:"Gestion Salon");};
 SALON_CONFIG.adresseComplete=function(){return this.adresse+(this.cp?", "+this.cp:"")+(this.ville?" "+this.ville:"");};
 
@@ -6578,6 +6578,92 @@ function _lxExclCA(a){
 // Avant : l'original était retiré rétroactivement ET le contre-ticket compté -> double déduction.
 function _lxCaOrig(a){ return !a.cancelled || (!!a.cancelDate && String(a.cancelDate)!==String(a.date)); }
 function _lxCaOk(a){ return _lxCaOrig(a) && !_lxExclCA(a); }
+// 2026-10-28 (-5, v6.8.3, contre-audit final constat 4) — VENTES REPORTÉES : tous les exports suivent le JOURNAL DES TICKETS.
+// Une vente d'une journée déjà clôturée lors de sa transmission est enregistrée au journal sur la journée OUVERTE (report :
+// a.dateJournal, date réelle de vente a.dateVente scellée dans le ticket, items[0].lxRep) ; un paiement en ligne reçu après la
+// Z est enregistré par le serveur le lendemain (a.datePaiement < a.date). Les exports (rapport, Excel, ZIP, livre des recettes,
+// URSSAF, récapitulatif TVA, journal, FEC, EBP / Quadratus, envoi au comptable) comptent la vente à sa date d'ENREGISTREMENT
+// (= Z, clôture mensuelle, journal, FEC) et la SIGNALENT (date réelle, date d'enregistrement, période d'origine) : la TVA est
+// exigible à la date réelle (encaissement pour une prestation : CGI art. 269-2-c ; livraison pour un bien : art. 269-2-a) ;
+// si la période d'origine est déjà déclarée, la régularisation se fait comme indiqué au BOI-TVA-DECLA-20-20-20-10 § 240-250
+// (registre NF525, intervention du 28/10/2026 -5). Sans vente reportée : exports strictement identiques.
+function _lxDJ(a){ return (a&&a.dateJournal)?String(a.dateJournal).slice(0,10):String((a&&a.date)||""); }
+window._lxDJ=_lxDJ;
+// {type, dateVente, heure, dateEnr} si l'encaissement est enregistré un jour postérieur à sa date réelle, sinon null
+function _lxVenteReelle(a){
+  try{
+    if(!a) return null;
+    if(a.reportJourClos && a.dateVente){ var dv=String(a.dateVente).slice(0,10), de=_lxDJ(a); if(dv && de && dv<de) return {type:"vente", dateVente:dv, heure:String(a.heureVente||a.time||"").slice(0,5), dateEnr:de}; }
+    if(a.serveur===true || a.serveur==="true"){
+      var dp=String(a.datePaiement||a.dateRemboursement||"").slice(0,10), dE=String(a.date||"").slice(0,10);
+      if(/^\d{4}-\d{2}-\d{2}$/.test(dp) && dE && dp<dE) return {type:a.dateRemboursement&&!a.datePaiement?"remboursement en ligne":"paiement en ligne", dateVente:dp, heure:"", dateEnr:dE};
+    }
+  }catch(_e){}
+  return null;
+}
+window._lxVenteReelle=_lxVenteReelle;
+// Liste des ventes reportées concernant le mois : enregistrées dans le mois (sens « enr ») ou réalisées dans le mois et
+// enregistrées un mois suivant (sens « orig »). Montants du ticket (TTC, HT, TVA) ; période d'origine = mois de la vente.
+function _lxVentesReportees(mois){
+  var L=[];
+  try{
+    (Array.isArray(AP)?AP:[]).forEach(function(a){
+      if(!a||a.st!=="done"||!_lxCaOk(a)) return;
+      var v=_lxVenteReelle(a); if(!v) return;
+      var enr=v.dateEnr.indexOf(mois)===0, orig=v.dateVente.indexOf(mois)===0;
+      if(!enr && !orig) return;
+      var ttc=Math.round((Number(a.pr)||0)*100)/100, h=(typeof _lxHtTva==="function")?_lxHtTva(a):{ht:ttc,tva:0};
+      if(typeof isMicroEntrepreneur==="function" && isMicroEntrepreneur()) h={ht:ttc,tva:0};
+      L.push({tkNum:a.tkNum||null, type:v.type, dateVente:v.dateVente, heure:v.heure, dateEnr:v.dateEnr, ttc:ttc, ht:Math.round((Number(h.ht)||0)*100)/100, tva:Math.round((Number(h.tva)||0)*100)/100,
+        periodeOrigine:v.dateVente.slice(0,7), periodeEnr:v.dateEnr.slice(0,7), changementPeriode:v.dateVente.slice(0,7)!==v.dateEnr.slice(0,7), sens:enr?"enr":"orig"});
+    });
+  }catch(_e){}
+  return L.sort(function(x,y){ return (x.dateEnr+x.dateVente)<(y.dateEnr+y.dateVente)?-1:1; });
+}
+window._lxVentesReportees=_lxVentesReportees;
+var LX_REPORT_NOTE="Vente enregistrée au journal (et dans la Z, la clôture mensuelle et le FEC) à sa date d'enregistrement ; TVA exigible à la date réelle de la vente (CGI art. 269-2-c / 269-2-a). Période d'origine déjà déclarée : régulariser selon le BOI-TVA-DECLA-20-20-20-10 § 240-250 (montant, TVA par taux et période d'origine à indiquer).";
+function _lxVentesReporteesCsv(L){
+  var rows=[["N° ticket","Nature","Date réelle","Heure","Date d'enregistrement (journal)","Période TVA d'origine","Période d'enregistrement","Changement de période","TTC","HT","TVA"]];
+  L.forEach(function(x){ rows.push([x.tkNum||"", x.type, x.dateVente, x.heure||"", x.dateEnr, x.periodeOrigine, x.periodeEnr, x.changementPeriode?"OUI":"non", x.ttc, x.ht, x.tva]); });
+  rows.push([LX_REPORT_NOTE]);
+  return rows;
+}
+window._lxVentesReporteesCsv=_lxVentesReporteesCsv;
+function _lxVentesReporteesPied(footer, mois){
+  try{ var L=_lxVentesReportees(mois); if(!L.length) return footer;
+    footer.push(["","","","",""]);
+    footer.push(["VENTES REPORT\u00c9ES ("+L.length+")","Vente d'une journ\u00e9e d\u00e9j\u00e0 cl\u00f4tur\u00e9e lors de sa transmission, ou paiement en ligne re\u00e7u apr\u00e8s la cl\u00f4ture : enregistr\u00e9e au journal le jour indiqu\u00e9","","",""]);
+    L.forEach(function(x){ footer.push(["Ticket #"+(x.tkNum||"?")+" ("+x.type+")","R\u00e9elle "+_lxJJMMAAAA(x.dateVente)+(x.heure?" "+x.heure:"")+" \u2014 enregistr\u00e9e "+_lxJJMMAAAA(x.dateEnr),"P\u00e9riode TVA d'origine "+x.periodeOrigine+(x.changementPeriode?" (CHANGEMENT DE P\u00c9RIODE)":""),csvNum(x.ttc)+" \u20ac TTC",csvNum(x.tva)+" \u20ac TVA"]); });
+    footer.push(["R\u00e8gle",LX_REPORT_NOTE,"","",""]);
+  }catch(_e){}
+  return footer;
+}
+window._lxVentesReporteesPied=_lxVentesReporteesPied;
+// Export CSV « Ventes reportées » du mois (pack ZIP, EBP, Quadratus) : seulement s'il y en a
+function expVentesReportees(mois, collecteur){
+  var accM=_lxMoisExport(mois), L=_lxVentesReportees(accM); if(!L.length) return 0;
+  var R=_lxVentesReporteesCsv(L), headers=R[0], rows=R.slice(1,-1).map(function(r){ return r.map(function(v,i){ return (i>=8)?csvNum(v):v; }); });
+  _lxCsvSortie(collecteur, "ventes_reportees_"+accM+".csv", csvBuildPro("Ventes report\u00e9es (enregistr\u00e9es apr\u00e8s la cl\u00f4ture de leur journ\u00e9e)", accM, headers, rows, [["R\u00e8gle", LX_REPORT_NOTE]]));
+  return L.length;
+}
+window.expVentesReportees=expVentesReportees;
+// EBP / Quadratus / FEC sur une période libre : écritures au jour du journal (inchangées) ; ventes reportées SIGNALÉES
+// (message + fichier ventes_reportees_<du>_<au>.csv) pour la régularisation de la TVA sur la période d'origine.
+function _lxVentesReporteesSignaler(du, au, quoi){
+  try{
+    var L=[]; var vu={};
+    for(var d=new Date(String(du).slice(0,7)+"-01T12:00:00Z"); d.toISOString().slice(0,7)<=String(au).slice(0,7); d.setUTCMonth(d.getUTCMonth()+1)){
+      _lxVentesReportees(d.toISOString().slice(0,7)).forEach(function(x){ var k=(x.tkNum||"")+"|"+x.dateEnr; if(vu[k]) return;
+        if((x.dateEnr>=du&&x.dateEnr<=au)||(x.dateVente>=du&&x.dateVente<=au)){ vu[k]=1; L.push(x); } });
+    }
+    if(!L.length) return 0;
+    var R=_lxVentesReporteesCsv(L), rows=R.slice(1,-1).map(function(r){ return r.map(function(v,i){ return (i>=8)?csvNum(v):v; }); });
+    if(typeof csvDownload==="function") csvDownload("ventes_reportees_"+du+"_"+au+".csv", csvBuildPro("Ventes report\u00e9es", du+" au "+au, R[0], rows, [["R\u00e8gle", LX_REPORT_NOTE]]));
+    if(typeof showAlert==="function") showAlert("\u26a0\ufe0f "+L.length+" vente(s) report\u00e9e(s) sur la p\u00e9riode ("+quoi+") :\n"+L.slice(0,8).map(function(x){ return "Ticket #"+(x.tkNum||"?")+" du "+_lxJJMMAAAA(x.dateVente)+" enregistr\u00e9 le "+_lxJJMMAAAA(x.dateEnr)+" \u2014 "+csvNum(x.ttc)+" \u20ac (p\u00e9riode d'origine "+x.periodeOrigine+")"; }).join("\n")+(L.length>8?"\n\u2026":"")+"\n\n"+LX_REPORT_NOTE+"\n\nLa liste compl\u00e8te a \u00e9t\u00e9 t\u00e9l\u00e9charg\u00e9e (ventes_reportees_\u2026.csv) : transmettez-la \u00e0 votre comptable.","warning");
+    return L.length;
+  }catch(_e){ return 0; }
+}
+window._lxVentesReporteesSignaler=_lxVentesReporteesSignaler;
 // 2026-10-14 audit : la clôture AUTOMATIQUE de nuit (serveur, sans tiroir) ne faisait pas la « mise au coffre » que fait la
 // clôture manuelle : les espèces / chèques de la journée restaient comptés nulle part et le solde théorique du lendemain était
 // faux (écart positif inexpliqué). Au premier passage de l'application après une Z automatique, la même mise au coffre est
@@ -6668,7 +6754,7 @@ function _doClotureDo(){
     Promise.resolve(_lxRafraichirClotures()).then(function(ok){
       if(!ok){ window._lxClotRelue=false; if(typeof toast==="function") toast("\u26a0 V\u00e9rification des cl\u00f4tures impossible (connexion) \u2014 r\u00e9essayez","error"); return; }
       // 2026-10-28 (-2, v6.8.0) : tickets créés par le serveur aujourd'hui (paiements en ligne) repris AVANT de calculer la Z
-      var _pRec=(typeof lxRecettesServeur==="function"&&lxRecettesServeur()&&typeof lxRecettesServeurImport==="function")?lxRecettesServeurImport(true):null;
+      var _pRec=(typeof lxRecettesServeurReprise==="function"&&lxRecettesServeurReprise()&&typeof lxRecettesServeurImport==="function")?lxRecettesServeurImport(true):null;
       Promise.resolve(_pRec).catch(function(){}).then(function(){ try{ _doClotureDo(); }finally{ window._lxClotRelue=false; } });
       return;
     },function(){ window._lxClotRelue=false; });
@@ -6757,10 +6843,15 @@ function doConfirmCloture(){
   // 2026-10-16 (incident Z n°128) : AVANT de sceller, la Z calculée sur l'appareil est comparée au journal des tickets
   // enregistrés en base (nombre, total TTC, modes de règlement). Écart -> clôture BLOQUÉE (jamais de Z différente du
   // journal), avec « Recalculer depuis les tickets enregistrés ».
-  Promise.resolve(_lxZControleJournal(TD)).then(function(ctl){
-    if(ctl && ctl.bloque){ window._cloturingInProgress=false; _lxZAfficherEcart(ctl); return; }
-    _lxZFinaliser(null);
-  },function(e){ console.warn("[Z] contrôle journal en erreur",e); window._cloturingInProgress=false; _lxZAfficherEcart({bloque:true,erreur:String((e&&e.message)||e)}); });
+  // 2026-10-28 (-5, v6.8.3) : ventes encaissées du jour non transmises au journal / journée antérieure retenue -> clôture refusée
+  // (renvoi automatique, cause, marche à suivre, forçage tracé par un administrateur) ; la base applique la même règle.
+  Promise.resolve(_lxZVentesAvantCloture(TD)).then(function(cv){
+    if(cv && ((cv.vnt&&cv.vnt.length)||(cv.ant&&cv.ant.length))){ window._cloturingInProgress=false; _lxZVentesModal(TD, cv, true); return; }
+    return Promise.resolve(_lxZControleJournal(TD)).then(function(ctl){
+      if(ctl && ctl.bloque){ window._cloturingInProgress=false; _lxZAfficherEcart(ctl); return; }
+      _lxZFinaliser(null);
+    });
+  }).catch(function(e){ console.warn("[Z] contrôle journal en erreur",e); window._cloturingInProgress=false; _lxZAfficherEcart({bloque:true,erreur:String((e&&e.message)||e)}); });
 }
 function _lxZFinaliser(opts){
   var c;
@@ -10911,6 +11002,8 @@ function rHome(){
   var today=TD;
   // 2026-10-10 : entreprise inscrite « en cours d'immatriculation » -> rappel d'ajouter le SIRET
   var _lxNbBandeaux=0; // 2026-10-10 : un seul bandeau d'information à la fois (priorité : SIRET, attestation, parrainage)
+  // 2026-10-28 (-5, v6.8.3) : alertes de CAISSE (journée retenue, clôture mensuelle en attente, remboursement Stripe à enregistrer) — prioritaires
+  try{ if(typeof _lxCaisseAlertesCarte==="function"){ var _caH=_lxCaisseAlertesCarte(); if(_caH){ _lxNbBandeaux++; h+=_caH; } } }catch(_eCa){}
   if(!window._lxVueAdmin && !String((SALON_CONFIG&&SALON_CONFIG.siret)||"").trim() && (typeof hasPermission!=="function"||hasPermission("settings"))){
     _lxNbBandeaux++;
     h+='<div onclick="window._settTab=\'salon\';go(\'settings\')" style="cursor:pointer;background:#1d1408;border:1.5px solid rgba(255,152,0,.6);box-shadow:0 4px 18px rgba(0,0,0,.5);border-radius:14px;padding:12px 14px;margin-bottom:12px;display:flex;gap:10px;align-items:center"><div style="font-size:26px">\ud83d\udcc4</div><div style="flex:1"><div style="font-weight:800;color:#ffb74d">Entreprise en cours d\u2019immatriculation</div><div style="font-size:12px;color:rgba(255,255,255,.85)">Ajoutez votre SIRET d\u00e8s r\u00e9ception : Param\u00e8tres \u2192 Infos \u00e9tablissement. Il est obligatoire pour activer votre abonnement.</div></div><div style="color:#ffb74d;font-size:18px">\u203a</div></div>';
@@ -14045,6 +14138,7 @@ async function lxRetenuesSync(force){
   // 2026-10-28 (-2, v6.8.0) : recettes en ligne enregistrées en caisse PAR LE SERVEUR au paiement / à la capture
   // (docs/migrations_1028/recettes_en_ligne.sql) -> l'application ne crée plus ces tickets, elle les reprend seulement.
   if(lxRecettesServeur()){ try{ await lxRecettesServeurImport(!!force); }catch(_eI){} return; }
+  if(lxRecettesServeurReprise()){ try{ await lxRecettesServeurImport(!!force); }catch(_eI2){} } // 2026-10-28 (-5) : après un retour arrière, copies du serveur reprises (ancien circuit conservé)
   if(_lxRetenuesEnCours) return;
   if(!force && Date.now()-_lxRetenuesDernier<5*60*1000) return;
   if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId||window._lxVueAdmin) return;
@@ -14139,6 +14233,11 @@ window.lxRetenuesSync=lxRetenuesSync;
 // =====================================================================
 function lxRecettesServeur(){ try{ return !!(window.LX_CONFIG && window.LX_CONFIG.recettes_en_ligne_serveur===true); }catch(_e){ return false; } }
 window.lxRecettesServeur=lxRecettesServeur;
+// 2026-10-28 (-5) : copies des tickets du serveur à reprendre dans la caisse : interrupteur allumé, OU interrupteur éteint après une
+// activation (retour arrière : recettes_en_ligne_serveur_depuis conservé) — le serveur peut encore enregistrer des tickets
+// (annulation C&C, remboursement Stripe d'une recette du serveur, file gardée) : sans reprise, la Z de l'appareil différerait du journal.
+function lxRecettesServeurReprise(){ try{ return lxRecettesServeur() || !!(window.LX_CONFIG && window.LX_CONFIG.recettes_en_ligne_serveur_depuis); }catch(_e){ return false; } }
+window.lxRecettesServeurReprise=lxRecettesServeurReprise;
 // 2026-10-28 (-3, v6.8.1) : le serveur refuse les tickets d'une version trop ancienne (LX_APP_OBSOLETE, seuil
 // app_config.config.recettes_en_ligne_version_min) : bandeau « mettez l'application à jour » ; le ticket reste en file de secours
 // et part après rechargement. Rechargement proposé (jamais imposé pendant un encaissement).
@@ -14304,6 +14403,7 @@ async function lxAcomptesEnLigneSync(force){
   // 2026-10-28 (-2, v6.8.0) : tickets d'acompte en ligne / de remboursement créés PAR LE SERVEUR (même transaction que le
   // paiement Stripe ou le remboursement) -> reprise dans la caisse seulement, jamais de création ici (aucun doublon).
   if(lxRecettesServeur()){ var _nI=0; try{ _nI=await lxRecettesServeurImport(!!force); }catch(_eI){} return _nI>0; }
+  if(lxRecettesServeurReprise()){ try{ await lxRecettesServeurImport(!!force); }catch(_eI2){} } // 2026-10-28 (-5) : voir lxRecettesServeurReprise
   if(_lxAcEnLigneEnCours) return false;
   if(!force && Date.now()-_lxAcEnLigneDernier<2*60*1000) return false;
   if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId||window._lxVueAdmin||window._lxDemo||window._archiveMode) return false;
@@ -24138,7 +24238,7 @@ function _nextMonth(ym){
 // jour calculait le HT au seul taux des prestations (somme des jours ≠ total) ; il ventile désormais prestations / produits
 // comme la synthèse et le récap TVA ; la répartition par collaborateur n'affiche plus de HT/TVA à un taux unique (TTC seul).
 function _lxRapportDonnees(periodM){
-  var dn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(periodM)===0 && _lxCaOk(a);});
+  var dn = AP.filter(function(a){return a.st==="done" && _lxDJ(a).indexOf(periodM)===0 && _lxCaOk(a);});
   var ps2 = PS.filter(function(p){return p.date.indexOf(periodM)===0;});
   var annul = AP.filter(function(a){return a.cancelled && a.cancelDate && a.cancelDate.indexOf(periodM)===0;});
   var txTVA = lxTauxTVA();
@@ -24200,7 +24300,7 @@ function _lxRapportDonnees(periodM){
 
   var byDay = {};
   dn.concat(ps2).forEach(function(x){
-    var d = x.date;
+    var d = _lxDJ(x);
     if(!byDay[d]) byDay[d] = {ttc:0, n:0, prest:0, prod:0};
     byDay[d].ttc += (dn.indexOf(x)>=0)?_lxCaTtc(x):(Number(x.pr)||0); // 2026-10-28 (v6.7.0) : CA (hors bons à usage multiple vendus)
     byDay[d].n++;
@@ -24218,7 +24318,7 @@ function _lxRapportDonnees(periodM){
   // 2026-10-17 retour partiel : remboursements partiels du mois (tickets négatifs, déjà inclus dans le chiffre d'affaires)
   var retours=[];
   try{ dn.filter(function(x){ return _lxEstRetour(x); }).forEach(function(x){ var ri=_lxRetourInfo(x)||{};
-    retours.push({date:x.date, tkNum:x.tkNum||null, refTk:(ri.refTk!=null?ri.refTk:'--'), refDate:ri.refDate||null, motif:String(ri.motif||'').slice(0,60), pr:Number(x.pr||0)}); }); }catch(_eRR){ retours=null; }
+    retours.push({date:_lxDJ(x), tkNum:x.tkNum||null, refTk:(ri.refTk!=null?ri.refTk:'--'), refDate:ri.refDate||null, motif:String(ri.motif||'').slice(0,60), pr:Number(x.pr||0)}); }); }catch(_eRR){ retours=null; }
 
   // 2026-10-28 (v6.7.0) : bons à usage multiple du mois (ventes hors CA, utilisations, soldes expirés) — clé absente sans activité
   var _bum=lxBumMois(periodM), _bumV=_bum.actif?_bum.totVentes:0;
@@ -24230,7 +24330,8 @@ function _lxRapportDonnees(periodM){
     ecartReglements:Math.round((totalCB+totalEsp+totalCheq+totalVir+totalAutre+totalEnL-totalTTC-_bumV)*100)/100,
     collabs:collabs, aCollabs:!!(T && T.length), jours:jours, annulations:annulations, retours:retours,
     salon:{nom:SALON_CONFIG.nom||"", adresse:SALON_CONFIG.adresse||"", cp:SALON_CONFIG.cp||"", ville:SALON_CONFIG.ville||"", siret:SALON_CONFIG.siret||"", forme:lxFormeJurLabel()||"", tva:SALON_CONFIG.tva||""},
-    version:(SALON_CONFIG.version||"v6.8.1") };
+    version:(SALON_CONFIG.version||"v6.8.3") };
+  var _repR=_lxVentesReportees(periodM); if(_repR.length) R.reportees=_repR; // 2026-10-28 (-5) : clé absente sans vente reportée (empreinte du rapport inchangée)
   if(_bum.actif) R.bum={ventes:_bum.totVentes, utilises:_lxR2(_bum.totUtil), expires:_bum.totExp, nbVentes:_bum.ventes.length, nbUtil:_bum.utilisations.length,
     detailExpires:_bum.expires.map(function(x){ return {code:x.code, effet:x.effet, restant:x.restant}; }), encours:lxBumEncours(_lxMoisBornesSimple(periodM).au)};
   return R;
@@ -24388,6 +24489,12 @@ function _buildRapportHTML(periodM){
       html += '</table>';
     } }catch(_eRR){}
 
+  if(D.reportees && D.reportees.length){ // 2026-10-28 (-5) : ventes reportées (date réelle ≠ date d'enregistrement)
+    html += '<h2>5 ter. Ventes report\u00e9es</h2><p style="font-size:9px">'+_lxEsc(LX_REPORT_NOTE)+'</p>';
+    html += '<table><tr><th>N\u00b0 Tk</th><th>Nature</th><th>Date r\u00e9elle</th><th>Enregistr\u00e9e le</th><th>P\u00e9riode TVA d\u2019origine</th><th class="num">TTC</th><th class="num">TVA</th></tr>';
+    D.reportees.forEach(function(x){ html += '<tr><td>'+(x.tkNum||'\u2014')+'</td><td>'+_lxEsc(x.type)+'</td><td>'+fmtDate(x.dateVente)+(x.heure?' '+_lxEsc(x.heure):'')+'</td><td>'+fmtDate(x.dateEnr)+'</td><td>'+_lxEsc(x.periodeOrigine)+(x.changementPeriode?' <b>(changement de p\u00e9riode)</b>':'')+'</td><td class="num">'+fmtMoney(x.ttc)+'</td><td class="num">'+fmtMoney(x.tva)+'</td></tr>'; });
+    html += '</table>';
+  }
   if(D.bum){ // 2026-10-28 (v6.7.0)
     html += '<h2>6. Bons cadeaux \u00e0 usage multiple</h2>';
     html += '<table><tr><th>Op\u00e9ration</th><th class="num">Montant</th><th>Traitement</th></tr>';
@@ -24577,6 +24684,11 @@ async function _lxRapportPDF(mois, opts){
     titre("5 bis. Retours / remboursements partiels");
     table(["Date","N° ticket","Ticket d'origine","Motif","Montant"], D.retours.map(function(x){ return [_lxPdfDate(x.date), x.tkNum?String(x.tkNum):"—", "#"+x.refTk+" du "+_lxJJMMAAAA(x.refDate), x.motif, E(x.pr)]; }), null, ["l","l","l","l","r"]);
   }
+  if(D.reportees && D.reportees.length){ // 2026-10-28 (-5) : ventes reportées
+    titre("5 ter. Ventes reportées");
+    table(["N° ticket","Nature","Date réelle","Enregistrée le","Période TVA d'origine","TTC","TVA"], D.reportees.map(function(x){ return [x.tkNum?String(x.tkNum):"—", x.type, _lxPdfDate(x.dateVente)+(x.heure?" "+x.heure:""), _lxPdfDate(x.dateEnr), x.periodeOrigine+(x.changementPeriode?" (changement)":""), E(x.ttc), E(x.tva)]; }), null, ["l","l","l","l","l","r","r"]);
+    doc.setFont("helvetica","normal"); doc.setFontSize(7.5); doc.setTextColor(GRIS[0],GRIS[1],GRIS[2]); var _ln=doc.splitTextToSize(TX(LX_REPORT_NOTE), W-2*M); if(y+_ln.length*3.4>279){ doc.addPage(); y=M; } _ln.forEach(function(l,i){ doc.text(l, M, y+2+i*3.4); }); y+=_ln.length*3.4+4;
+  }
   if(D.bum){ // 2026-10-28 (v6.7.0)
     titre("6. Bons cadeaux à usage multiple");
     table(["Opération","Montant","Traitement"], [
@@ -24669,7 +24781,7 @@ function getCAYearToDate(){
   var year = new Date().getFullYear();
   var prefix = year + "-";
   var totalSvc = 0, totalProd = 0;
-  AP.filter(function(a){return a.st==="done" && _lxCaOk(a) && a.date.indexOf(prefix)===0;})
+  AP.filter(function(a){return a.st==="done" && _lxCaOk(a) && _lxDJ(a).indexOf(prefix)===0;})
     .forEach(function(a){
       // 2026-10-11 : montant réellement encaissé (remises, bon cadeau utilisé déduits), ventilé prestations / produits
       var sp=_splitPrestProd(a); totalSvc += Number(sp.prest)||0; totalProd += Number(sp.prod)||0;
@@ -24724,7 +24836,7 @@ async function expDeclarationURSSAF(){
     if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
   }
   // P\u00e9riode : mois s\u00e9lectionn\u00e9
-  var dn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(accM)===0 && _lxCaOk(a);});
+  var dn = AP.filter(function(a){return a.st==="done" && _lxDJ(a).indexOf(accM)===0 && _lxCaOk(a);});
   var ps2 = PS.filter(function(p){return p.date.indexOf(accM)===0;});
   var totalSvc = 0, totalProd = 0;
   dn.forEach(function(a){
@@ -24776,6 +24888,7 @@ async function expDeclarationURSSAF(){
   footer.push(["Notes","",""]);
   footer.push(["\u26a0\ufe0f","","Cotisations \u00e0 titre indicatif uniquement","",""]);
   footer.push(["\u2713","","Calcul officiel + d\u00e9claration : autoentrepreneur.urssaf.fr","",""]);
+  _lxVentesReporteesPied(footer, accM); // 2026-10-28 (-5)
   // Alerte seuils
   var seuils = getMicroSeuilsStatus();
   if(seuils && seuils.alerts.length){
@@ -24796,7 +24909,7 @@ function showExportsComptables(){
     if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
   }
   var p = accM.split("-");var mL = MO[parseInt(p[1])-1]+" "+p[0];
-  var dn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(accM)===0 && _lxCaOk(a);});
+  var dn = AP.filter(function(a){return a.st==="done" && _lxDJ(a).indexOf(accM)===0 && _lxCaOk(a);});
   var ps2 = PS.filter(function(p){return p.date.indexOf(accM)===0;});
   var annul = AP.filter(function(a){return a.cancelled && a.cancelDate && a.cancelDate.indexOf(accM)===0;});
   var rdvOnline = (window.RDV_ONLINE||[]).filter(function(r){return r.acomptePaye && String(r.acomptePayeAt?_lxDateParis(r.acomptePayeAt):(r.date||"")).indexOf(accM)===0;});
@@ -24918,7 +25031,7 @@ function showExportsComptables(){
   if(!isMicro || lxTauxTVA()>0) exports.push({id:"enligne", svg:SVG_TVA, color:"#fbbf24", title:"Paiements en ligne \u2014 TVA \u00e0 l\u2019encaissement (CSV)", desc:"Acomptes et commandes pay\u00e9s en ligne : TVA due le mois du paiement (art. 269-2-c CGI). Donne l\u2019ajustement \u00e0 reporter sur la d\u00e9claration de TVA du mois.", fn:"expTvaPaiementsEnLigne", count:""});
 
   exports.forEach(function(e){
-    var disabled = (e.id==="annul"&&!annul.length&&!AP.some(function(x){ return x&&x.st==="done"&&String(x.date||"").indexOf(accM)===0&&(_lxEstRetour(x)||x.isAcompteCancel); })) || /* 2026-10-17 retour partiel : export actif s'il y a des remboursements */ (e.id==="stripe"&&!rdvOnline.length) || (isEmpty && e.id!=="bandez" && e.id!=="recettes" && e.id!=="enligne" && e.id!=="acomptes");
+    var disabled = (e.id==="annul"&&!annul.length&&!AP.some(function(x){ return x&&x.st==="done"&&_lxDJ(x).indexOf(accM)===0&&(_lxEstRetour(x)||x.isAcompteCancel); })) || /* 2026-10-17 retour partiel : export actif s'il y a des remboursements */ (e.id==="stripe"&&!rdvOnline.length) || (isEmpty && e.id!=="bandez" && e.id!=="recettes" && e.id!=="enligne" && e.id!=="acomptes");
     h += '<div style="display:flex;align-items:center;gap:14px;padding:14px;background:rgba(255,255,255,.025);border:1px solid rgba(255,255,255,.05);border-radius:12px;margin-bottom:8px;'+(disabled?'opacity:.4;':'cursor:pointer;')+'transition:all .2s"'+(disabled?'':' onmouseover="this.style.background=\'rgba(212,168,67,.06)\';this.style.borderColor=\'rgba(212,168,67,.25)\'" onmouseout="this.style.background=\'rgba(255,255,255,.025)\';this.style.borderColor=\'rgba(255,255,255,.05)\'" onclick="cM();'+e.fn+'()"')+'>';
     h += '<div style="width:42px;height:42px;flex-shrink:0;border-radius:11px;background:'+e.color+'22;border:1px solid '+e.color+'44;display:flex;align-items:center;justify-content:center;color:'+e.color+'">'+e.svg+'</div>';
     h += '<div style="flex:1;min-width:0">';
@@ -25054,7 +25167,7 @@ function expCSV(){
     if(typeof requireAdmin==="function"){requireAdmin("Exporter le journal de caisse",expCSV);return;}
     if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
   }
-  var dn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(accM)===0;});
+  var dn = AP.filter(function(a){return a.st==="done" && _lxDJ(a).indexOf(accM)===0;});
   var ps2 = PS.filter(function(p){return p.date.indexOf(accM)===0;});
   var txTVA = lxTauxTVA();
 
@@ -25083,7 +25196,7 @@ function expCSV(){
     var tva = _v.tva;
     var src = (a.comment && a.comment.indexOf("Import LS")>=0) ? "LS Coiffure" : "Luxyra";
     rows.push([
-      a.date, a.time||"", a.tkNum||"", clNom, sty?sty.n:"", detail,
+      _lxDJ(a), a.time||"", a.tkNum||"", clNom, sty?sty.n:"", detail,
       csvNum(ht), csvNum(tva), csvNum(ttc), csvNum(a.remise||0),
       _lxModeDetail(a), a.cancelled?"ANNUL\u00C9":(a.isCancel?"Contre-ticket d\u2019annulation":(_lxEstRetour(a)?_lxRetourLibelle(a):"Encaiss\u00e9")), src, (a.hash||"").slice(0,16) // 2026-10-17 retour partiel
     ]);
@@ -25125,6 +25238,7 @@ function expCSV(){
     ["Total remises accord\u00e9es", csvNum(sumRem)+" \u20ac"]
   ];
 
+  _lxVentesReporteesPied(footer, accM); // 2026-10-28 (-5)
   csvDownload("journal_caisse_"+accM+".csv", csvBuildPro("Journal de caisse d\u00e9taill\u00e9", accM, headers, rows, footer));
   if(typeof auditLog==="function") auditLog("EXPORT_JOURNAL_CSV","P\u00e9riode "+accM+" - "+rows.length+" lignes - "+csvNum(sumTTC)+"\u20ac");
 }
@@ -25138,7 +25252,7 @@ async function expRecapTVA(){
     if(typeof requireAdmin==="function"){requireAdmin("Exporter le r\u00e9cap TVA",expRecapTVA);return;}
     if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
   }
-  var dn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(accM)===0 && _lxCaOk(a);});
+  var dn = AP.filter(function(a){return a.st==="done" && _lxDJ(a).indexOf(accM)===0 && _lxCaOk(a);});
   var ps2 = PS.filter(function(p){return p.date.indexOf(accM)===0;});
   var txTVA = lxTauxTVA();
   var _dualTVA=(SALON_CONFIG.tvaProduits!=null && Number(SALON_CONFIG.tvaProduits)!==Number(txTVA));
@@ -25171,14 +25285,14 @@ async function expRecapTVA(){
   // R\u00e9cap par jour pour le footer
   var byDay = {};
   dn.forEach(function(x){
-    var d = x.date;
+    var d = _lxDJ(x);
     if(!byDay[d]) byDay[d] = {ttc:0, prest:0, prod:0, n:0};
     byDay[d].ttc += _lxCaTtc(x); // 2026-10-28 (v6.7.0)
     if(_dualTVA){ var _spd=_splitPrestProd(x); byDay[d].prest+=_spd.prest; byDay[d].prod+=_spd.prod; }
     byDay[d].n++;
   });
   ps2.forEach(function(x){
-    var d = x.date;
+    var d = _lxDJ(x);
     if(!byDay[d]) byDay[d] = {ttc:0, prest:0, prod:0, n:0};
     byDay[d].ttc += (Number(x.pr)||0);
     if(_dualTVA){ byDay[d].prod += (Number(x.pr)||0); }
@@ -25202,6 +25316,7 @@ async function expRecapTVA(){
     footer.push([d, csvNum(h)+" \u20ac", csvNum(tv)+" \u20ac", csvNum(t)+" \u20ac", byDay[d].n]);
   });
   footer.push(["TOTAL", csvNum(totalHT)+" \u20ac", csvNum(totalTVA)+" \u20ac", csvNum(totalTTC)+" \u20ac", nbTickets]);
+  _lxVentesReporteesPied(footer, accM); // 2026-10-28 (-5) : ventes reportées (TVA de la période d'origine)
   // 2026-10-13 : TVA à l'encaissement des acomptes payés en ligne (CGI art. 269-2-c) : ajustement à reporter
   try{
     var _aj=await _lxAjustEnLigneMois(accM), _ajT=Math.round((_aj.svc+_aj.prod)*100)/100;
@@ -25228,7 +25343,7 @@ async function expRecapTVA(){
 // l'annulation), montants négatifs en sens inverse, contrepartie ventilée par mode de règlement réel,
 // 706 prestations / 707 produits, TVA au taux du salon (aucune ligne de TVA en franchise 293 B).
 function _lxJournalVentes(mois){
-  var dn = AP.filter(function(a){return a.st==="done" && String(a.date||"").indexOf(mois)===0 && _lxCaOk(a);});
+  var dn = AP.filter(function(a){return a.st==="done" && _lxDJ(a).indexOf(mois)===0 && _lxCaOk(a);});
   var ps2 = PS.filter(function(p){return String(p.date||"").indexOf(mois)===0;});
   var txTVA = lxTauxTVA();
   var _dualTVA=(SALON_CONFIG.tvaProduits!=null && Number(SALON_CONFIG.tvaProduits)!==Number(txTVA));
@@ -25288,19 +25403,19 @@ function _lxJournalVentes(mois){
     var sp = _splitPrestProd(a);
     if(Math.abs(sp.prest) >= 0.005){
       var ht = Math.round(sp.prest/(1+txTVA/100)*100)/100;
-      ecriture(a.date, "TK"+(a.tkNum||""), libelle, sp.prest, ht, Math.round((sp.prest-ht)*100)/100, a.met, "service", null, bucketsPart(a, sp.prest));
+      ecriture(_lxDJ(a), "TK"+(a.tkNum||""), libelle, sp.prest, ht, Math.round((sp.prest-ht)*100)/100, a.met, "service", null, bucketsPart(a, sp.prest));
     }
     if(Math.abs(sp.prod) >= 0.005){
       var ht2 = Math.round(sp.prod/(1+txTVAprod/100)*100)/100;
-      ecriture(a.date, "TK"+(a.tkNum||"")+"-P", libelle+" (produits)", sp.prod, ht2, Math.round((sp.prod-ht2)*100)/100, a.met, "produit", txTVAprod, bucketsPart(a, sp.prod));
+      ecriture(_lxDJ(a), "TK"+(a.tkNum||"")+"-P", libelle+" (produits)", sp.prod, ht2, Math.round((sp.prod-ht2)*100)/100, a.met, "produit", txTVAprod, bucketsPart(a, sp.prod));
     }
     // 2026-10-28 (v6.7.0) : vente de bons à usage multiple = encaissement hors CA, sans TVA -> dette envers le porteur (419100)
     if(Math.abs(Number(sp.horsCa)||0) >= 0.005){
-      var _bkH=bucketsPart(a, sp.horsCa), _libH="VE"+String(a.date).replace(/-/g,"")+" "+(libelle+" (bon \u00e0 usage multiple)").slice(0,40), _pH=[];
+      var _bkH=bucketsPart(a, sp.horsCa), _libH="VE"+String(_lxDJ(a)).replace(/-/g,"")+" "+(libelle+" (bon \u00e0 usage multiple)").slice(0,40), _pH=[];
       if(_bkH){ Object.keys(_bkH).forEach(function(k){ if(Math.abs(_bkH[k])>=0.005) _pH.push({cpt:CPT[k]||"511000", lib:LIB[k]||k, m:_bkH[k]}); }); }
       if(!_pH.length) _pH.push({cpt:compteContrePartie(a.met), lib:a.met||"", m:sp.horsCa});
-      _pH.forEach(function(x){ ligne(a.date,x.cpt,"Encaissement "+x.lib,"TK"+(a.tkNum||"")+"-B",_libH,x.m,"D",x.lib); });
-      ligne(a.date,"419100","Bons \u00e0 usage multiple (hors TVA)","TK"+(a.tkNum||"")+"-B",_libH,sp.horsCa,"C","");
+      _pH.forEach(function(x){ ligne(_lxDJ(a),x.cpt,"Encaissement "+x.lib,"TK"+(a.tkNum||"")+"-B",_libH,x.m,"D",x.lib); });
+      ligne(_lxDJ(a),"419100","Bons \u00e0 usage multiple (hors TVA)","TK"+(a.tkNum||"")+"-B",_libH,sp.horsCa,"C","");
       ecrNum++;
     }
   });
@@ -25356,8 +25471,8 @@ function expAnnulations(mois, collecteur){
   var accM=_lxMoisExport(mois); // 2026-10-27 : mois explicite (envoi au comptable) sinon mois affich\u00e9
   var annul = AP.filter(function(a){
     return (a.cancelled && a.cancelDate && a.cancelDate.indexOf(accM)===0)
-      || ((a.isAcompteCancel || (a.items||[]).some(function(it){return it&&it.isAcompteCancel;})) && a.st==="done" && String(a.date||"").indexOf(accM)===0) // 2026-10-11 : annulations d'acompte
-      || (_lxEstRetour(a) && a.st==="done" && String(a.date||"").indexOf(accM)===0); // 2026-10-17 retour partiel : remboursements partiels du mois
+      || ((a.isAcompteCancel || (a.items||[]).some(function(it){return it&&it.isAcompteCancel;})) && a.st==="done" && _lxDJ(a).indexOf(accM)===0) // 2026-10-11 : annulations d'acompte
+      || (_lxEstRetour(a) && a.st==="done" && _lxDJ(a).indexOf(accM)===0); // 2026-10-17 retour partiel : remboursements partiels du mois
   });
   var headers = ["Date originale","Heure","N\u00B0 Ticket","Date annulation","Client","Prestation","Montant TTC (\u20AC)","Motif d'annulation","Hash original"];
   var rows = annul.map(function(a){
@@ -25365,14 +25480,14 @@ function expAnnulations(mois, collecteur){
     var clNom = cl ? cName(cl) : (typeof apptClientLabel==="function" ? apptClientLabel(a) : "Passage");
     if(_lxEstRetour(a)){ // 2026-10-17 retour partiel : ticket d'origine -> ticket de retour, date du retour, montant remboursé, motif
       var _riX=_lxRetourInfo(a)||{};
-      return [ _riX.refDate||"", "", "#"+(_riX.refTk!=null?_riX.refTk:"--")+" \u2192 #"+(a.tkNum||""), a.date, clNom, "Retour / remboursement partiel : "+(a.items||[]).filter(function(it){return it&&it.isRetour;}).map(function(it){return (it.name||"")+(Number(it.retourQty)>0?" x"+it.retourQty:"");}).join(" + "),
+      return [ _riX.refDate||"", "", "#"+(_riX.refTk!=null?_riX.refTk:"--")+" \u2192 #"+(a.tkNum||""), _lxDJ(a), clNom, "Retour / remboursement partiel : "+(a.items||[]).filter(function(it){return it&&it.isRetour;}).map(function(it){return (it.name||"")+(Number(it.retourQty)>0?" x"+it.retourQty:"");}).join(" + "),
         csvNum(Math.abs(Number(a.pr)||0)), _riX.motif||"(non pr\u00e9cis\u00e9)", (a.hash||"").slice(0,16) ];
     }
     if(a.isAcompteCancel || (a.items||[]).some(function(it){return it&&it.isAcompteCancel;})){
       // 2026-10-14 (NF525) : après un rechargement, le n° d'origine est lu sur la ligne du ticket (origTkNums / origTkNum)
       var _oTk=a.origTkNum||null;
       try{ if(!_oTk){ (a.items||[]).forEach(function(it){ if(it&&it.isAcompteCancel&&!_oTk){ if(Array.isArray(it.origTkNums)&&it.origTkNums.length) _oTk=it.origTkNums.join(", #"); else if(it.origTkNum) _oTk=it.origTkNum; } }); } if(!_oTk&&Array.isArray(a.origTkNums)&&a.origTkNums.length) _oTk=a.origTkNums.join(", #"); }catch(_eO){}
-      return [ "", "", (_oTk?"#"+_oTk:"")+" \u2192 #"+(a.tkNum||""), a.date, clNom, "Acompte"+(sv?" - "+sv.n:""),
+      return [ "", "", (_oTk?"#"+_oTk:"")+" \u2192 #"+(a.tkNum||""), _lxDJ(a), clNom, "Acompte"+(sv?" - "+sv.n:""),
         csvNum(Math.abs(Number(a.pr)||0)), a.comment||"Annulation d'acompte", (a.hash||"").slice(0,16) ];
     }
     return [
@@ -25646,7 +25761,7 @@ async function expAcomptesNonSoldes(silencieux, mois, collecteur){
   // 2026-10-14 (2e revue) : un ticket est reconnu par son n° IMPRIMÉ (tkNum) OU son n° serveur (dbNum, s'il diffère)
   var _rdvDe=function(ns){ var _eq=function(v){ return ns.indexOf(Number(v))>=0; }; for(var k=0;k<AP.length;k++){ var x=AP[k]; if(!x) continue; if(_eq(x.acompteTkNum)) return x; if((x.items||[]).some(function(it){ return it&&it.isAcompteData&&_eq(it.acompteTkNum); })) return x; } return null; };
   AP.forEach(function(t){
-    if(!_estAc(t)||t.st!=="done"||!le(t.date)) return;
+    if(!_estAc(t)||t.st!=="done"||!le(_lxDJ(t))) return;
     if(t.cancelled && (!t.cancelDate || le(t.cancelDate))) return;
     var n=Number(t.tkNum); if(!n) return;
     var ns=[n]; if(Number(t.dbNum)>0&&Number(t.dbNum)!==n) ns.push(Number(t.dbNum));
@@ -25655,7 +25770,7 @@ async function expAcomptesNonSoldes(silencieux, mois, collecteur){
     var _dans=function(arr,v){ return Array.isArray(arr)&&arr.map(Number).indexOf(v)>=0; };
     var _ref=function(v){ return ns.indexOf(Number(v))>=0; }, _refArr=function(arr){ return ns.some(function(v){ return _dans(arr,v); }); };
     var _el=!!(t.isAcompteEnLigne||(t.items||[]).some(function(it){ return it&&it.isAcompteEnLigne&&it.isAcompte; })); // 2026-10-14 (NF525 acompte en ligne) : remboursement partiel possible -> le ticket négatif ne « solde » pas à lui seul
-    var solde=AP.some(function(x){ return x&&x.st==="done"&&le(x.date)&&(x.items||[]).some(function(it){ return it&&((it.isAcompteDeduct&&(_ref(it.acompteTkNum)||_refArr(it.acompteTkNums)))||(!_el&&it.isAcompteCancel&&(_ref(it.origTkNum)||_ref(x.origTkNum)||_refArr(it.origTkNums)||_refArr(x.origTkNums)))); }); });
+    var solde=AP.some(function(x){ return x&&x.st==="done"&&le(_lxDJ(x))&&(x.items||[]).some(function(it){ return it&&((it.isAcompteDeduct&&(_ref(it.acompteTkNum)||_refArr(it.acompteTkNums)))||(!_el&&it.isAcompteCancel&&(_ref(it.origTkNum)||_ref(x.origTkNum)||_refArr(it.origTkNums)||_refArr(x.origTkNums)))); }); });
     var appt=_rdvDe(ns);
     if(!solde && appt && appt.st==="done" && appt.tkNum && le(appt.date)) solde=true;
     if(solde) return;
@@ -25665,7 +25780,7 @@ async function expAcomptesNonSoldes(silencieux, mois, collecteur){
     if(_el){
       var rN=(t.acompteRdv&&_rdvNouveau[t.acompteRdv])||null;
       if(rN){ if(rN.status==="done"&&rN.ticket_num&&(!dTk[rN.ticket_num]||le(dTk[rN.ticket_num]))) return; if(rN.retenue_at&&le(_lxDateParis(rN.retenue_at))) return; }
-      var rembN=0; AP.forEach(function(x){ if(x&&x.st==="done"&&le(x.date)&&!x.cancelled&&(x.isAcompteCancel||(x.items||[]).some(function(it){ return it&&it.isAcompteCancel; }))&&(_ref(x.origTkNum)||_refArr(x.origTkNums)||(x.items||[]).some(function(it){ return it&&it.isAcompteCancel&&(_ref(it.origTkNum)||_refArr(it.origTkNums)); }))) rembN+=-(Number(x.pr)||0); });
+      var rembN=0; AP.forEach(function(x){ if(x&&x.st==="done"&&le(_lxDJ(x))&&!x.cancelled&&(x.isAcompteCancel||(x.items||[]).some(function(it){ return it&&it.isAcompteCancel; }))&&(_ref(x.origTkNum)||_refArr(x.origTkNums)||(x.items||[]).some(function(it){ return it&&it.isAcompteCancel&&(_ref(it.origTkNum)||_refArr(it.origTkNums)); }))) rembN+=-(Number(x.pr)||0); });
       rembN=Math.min(m,Math.round(rembN*100)/100);
       var rdvTxt=rN?(_lxDateFrCourte(rN.date_rdv)+" "+String(rN.heure_rdv||"").slice(0,5)):(appt?(_lxDateFrCourte(appt.date)+" "+(appt.time||"")):"");
       ligne("Acompte en ligne (ticket #"+n+")", cl?cName(cl):[(t.clientPrenom||""),(t.clientNom||"")].join(" ").trim(), (rN&&rN.service_nom)||(t.items&&t.items[0]&&t.items[0].name)||"", rdvTxt, t.datePaiement||t.date, m, rembN, m-rembN, "Ticket #"+n+(rN&&rN.payment_intent_id?" / "+rN.payment_intent_id:""), (rN&&rN.status==="cancelled")?"RDV annul\u00e9 (remboursement / conservation en cours)":"D\u00e9j\u00e0 dans le CA de caisse du "+_lxDateFrCourte(t.date)+" - prestation \u00e0 r\u00e9aliser");
@@ -25779,7 +25894,7 @@ async function expLivreRecettes(mois, collecteur){
   var rows=[], tot=0;
   function ligne(date,heure,ref,client,nature,mode,montant){ montant=Math.round(montant*100)/100; if(Math.abs(montant)<0.005) return; tot+=montant; rows.push([date,heure||"",ref,client,nature,mode,csvNum(montant)]); }
   // 1) Encaissements au comptoir (tickets du mois), hors part déjà payée en ligne
-  AP.filter(function(a){ return a.st==="done" && a.tkNum && String(a.date||"").indexOf(accM)===0; }).forEach(function(a){
+  AP.filter(function(a){ return a.st==="done" && a.tkNum && _lxDJ(a).indexOf(accM)===0; }).forEach(function(a){
     // Règlement par bon cadeau / avoir : pas une nouvelle recette (le bon a été compté à sa vente).
     var b=_lxPayBuckets(a), comptoir=(b.cb+b.esp+b.chq+b.vir+b.aut);
     var modes=[]; ["cb","esp","chq","vir","aut"].forEach(function(k){ if(Math.abs(b[k])>0.004) modes.push({cb:"CB",esp:"Esp\u00e8ces",chq:"Ch\u00e8que",vir:"Virement",aut:"Autre"}[k]); });
@@ -25787,7 +25902,7 @@ async function expLivreRecettes(mois, collecteur){
     var nom=cl?cName(cl):((typeof apptClientLabel==="function")?apptClientLabel(a):"");
     var nat=(a.items&&a.items.length)?a.items.filter(function(it){return !it.isSep && !it.isAcompteData;}).map(function(it){return it.name||"";}).join(" + "):"Prestation";
     if(_lxEstRetour(a)){ var _riL=_lxRetourInfo(a)||{}; nat="Remboursement (retour partiel du ticket #"+(_riL.refTk!=null?_riL.refTk:"--")+" du "+_lxJJMMAAAA(_riL.refDate)+") : "+nat; } // 2026-10-17 retour partiel
-    ligne(a.date,a.time,"Ticket #"+a.tkNum,nom,nat,modes.join(" + "),comptoir);
+    ligne(_lxDJ(a),a.time,"Ticket #"+a.tkNum,nom,nat,modes.join(" + "),comptoir);
   });
   (typeof PS!=="undefined"?PS:[]).filter(function(p){ return String(p.date||"").indexOf(accM)===0; }).forEach(function(p){ ligne(p.date,p.time,"Vente #"+(p.tkNum||""),"","Vente produit : "+(p.prod||""),p.met||"",Number(p.pr)||0); });
   // 2) Paiements en ligne : au jour du paiement ; remboursements : au jour du remboursement
@@ -25803,6 +25918,7 @@ async function expLivreRecettes(mois, collecteur){
     ["Rappel", "Les acomptes pay\u00e9s en ligne comptent le jour du paiement ; le jour du rendez-vous, seul le solde pay\u00e9 sur place est compt\u00e9. Un acompte conserv\u00e9 (client absent) a d\u00e9j\u00e0 \u00e9t\u00e9 compt\u00e9 le jour du paiement."],
     ["Base l\u00e9gale", "Micro-entreprise : recettes encaiss\u00e9es (CGI art. 50-0 et 102 ter) ; livre-journal des recettes obligatoire."]
   ];
+  _lxVentesReporteesPied(footer, accM); // 2026-10-28 (-5)
   _lxCsvSortie(collecteur, "livre_recettes_"+accM+".csv", csvBuildPro("Livre des recettes encaiss\u00e9es", accM, headers, rows, footer));
   if(typeof auditLog==="function") auditLog("EXPORT_LIVRE_RECETTES","P\u00e9riode "+accM+" - total "+csvNum(tot));
 }
@@ -25836,7 +25952,7 @@ async function _lxPackComptableZip(mois, opts){
 
   // Helper : run un export et capture le contenu (au lieu de download)
   // On va dupliquer la logique des 4 exports en y mettant le contenu dans le ZIP.
-  var dn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(accM)===0 && _lxCaOk(a);});
+  var dn = AP.filter(function(a){return a.st==="done" && _lxDJ(a).indexOf(accM)===0 && _lxCaOk(a);});
   var ps2 = PS.filter(function(p){return p.date.indexOf(accM)===0;});
   var annul = AP.filter(function(a){return a.cancelled && a.cancelDate && a.cancelDate.indexOf(accM)===0;});
   var rdvOnline = (window.RDV_ONLINE||[]).filter(function(r){return r.acomptePaye && String(r.acomptePayeAt?_lxDateParis(r.acomptePayeAt):(r.date||"")).indexOf(accM)===0;});
@@ -25851,7 +25967,7 @@ async function _lxPackComptableZip(mois, opts){
     var detail = (a.items&&a.items.length) ? a.items.filter(function(it){return !it.isSep;}).map(function(it){return (it.qty>1?(it.qty+"\u00D7 "):"")+(it.name||"");}).join(" + ") : (sv?sv.n:"");
     var ttc=Number(a.pr)||0; var _v=_lxHtTva(a); var ht=_v.ht, tva=_v.tva;
     var src=(a.comment && a.comment.indexOf("Import LS")>=0) ? "LS Coiffure" : "Luxyra";
-    rJournal.push([a.date,a.time||"",a.tkNum||"",clNom,sty?sty.n:"",detail,csvNum(ht),csvNum(tva),csvNum(ttc),csvNum(a.remise||0),_lxModeDetail(a),(a.isCancel?"Contre-ticket d\u2019annulation":(_lxEstRetour(a)?_lxRetourLibelle(a):"Encaiss\u00e9")),src,(a.hash||"").slice(0,16)]); // 2026-10-17 retour partiel : statut explicite
+    rJournal.push([_lxDJ(a),a.time||"",a.tkNum||"",clNom,sty?sty.n:"",detail,csvNum(ht),csvNum(tva),csvNum(ttc),csvNum(a.remise||0),_lxModeDetail(a),(a.isCancel?"Contre-ticket d\u2019annulation":(_lxEstRetour(a)?_lxRetourLibelle(a):"Encaiss\u00e9")),src,(a.hash||"").slice(0,16)]); // 2026-10-17 retour partiel : statut explicite
   });
   ps2.forEach(function(p){
     var ttc=Number(p.pr)||0; var _v=_lxHtTvaProd(ttc); var ht=_v.ht, tva=_v.tva;
@@ -25959,7 +26075,8 @@ async function _lxPackComptableZip(mois, opts){
     }
     // 2026-10-28 (v6.7.0) : bons à usage multiple (fichier ajouté seulement s'il y a eu une vente, une utilisation ou une expiration)
     try{ if(lxBumMois(accM).actif) expBonsUsageMultiple(accM, _cap); }catch(_e10){ if(opts.strict) throw _e10; }
-    _cap.forEach(function(f){ var pf=/^tva_paiements/.test(f.name)?"06_":(/^livre_recettes/.test(f.name)?"07_":(/^acomptes_non_soldes/.test(f.name)?"08_":(/^bons_usage_multiple/.test(f.name)?"10_":"09_"))); folder.file(pf+f.name, f.content); });
+    try{ expVentesReportees(accM, _cap); }catch(_e11){ if(opts.strict) throw _e11; } // 2026-10-28 (-5) : seulement s'il y a des ventes reportées
+    _cap.forEach(function(f){ var pf=/^tva_paiements/.test(f.name)?"06_":(/^livre_recettes/.test(f.name)?"07_":(/^acomptes_non_soldes/.test(f.name)?"08_":(/^bons_usage_multiple/.test(f.name)?"10_":(/^ventes_reportees/.test(f.name)?"11_":"09_")))); folder.file(pf+f.name, f.content); });
   }
 
   // 0. Rapport HTML imprimable inclus dans le ZIP (\u00e0 ouvrir dans le navigateur, bouton \ud83d\udda8 \u2192 PDF)
@@ -26016,7 +26133,7 @@ async function _lxExcelComptableClasseur(mois, opts){
     }).catch(function(e){ if(!opts.silencieux) showAlert("Impossible de charger l'outil Excel. Réessayez avec une connexion stable.","error"); throw e; });
   }
   // Données identiques à expPackComptable
-  var dn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(accM)===0 && _lxCaOk(a);});
+  var dn = AP.filter(function(a){return a.st==="done" && _lxDJ(a).indexOf(accM)===0 && _lxCaOk(a);});
   var ps2 = PS.filter(function(p){return p.date.indexOf(accM)===0;});
   var annul = AP.filter(function(a){return a.cancelled && a.cancelDate && a.cancelDate.indexOf(accM)===0;});
   var rdvOnline = (window.RDV_ONLINE||[]).filter(function(r){return r.acomptePaye && String(r.acomptePayeAt?_lxDateParis(r.acomptePayeAt):(r.date||"")).indexOf(accM)===0;});
@@ -26228,7 +26345,7 @@ async function _lxExcelComptableClasseur(mois, opts){
   ];
   // Calculs cumul YTD (year-to-date)
   var anKey = accM.slice(0,4);
-  var allDnAn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(anKey)===0 && _lxCaOk(a);});
+  var allDnAn = AP.filter(function(a){return a.st==="done" && _lxDJ(a).indexOf(anKey)===0 && _lxCaOk(a);});
   var allPsAn = PS.filter(function(p){return p.date.indexOf(anKey)===0;});
   var caTotAn = 0; allDnAn.forEach(function(a){caTotAn += _lxCaTtc(a);}); allPsAn.forEach(function(p){caTotAn += Number(p.pr)||0;}); // 2026-10-28 : hors bons à usage multiple vendus
   // Distinguer services vs ventes pour micro
@@ -26293,7 +26410,7 @@ async function _lxExcelComptableClasseur(mois, opts){
     var clNom = cl ? cName(cl) : (typeof apptClientLabel==="function" ? apptClientLabel(a) : "Passage");
     var detail = (a.items&&a.items.length) ? a.items.filter(function(it){return !it.isSep;}).map(function(it){return (it.qty>1?(it.qty+"× "):"")+(it.name||"");}).join(" + ") : (sv?sv.n:"");
     var src=(a.comment && a.comment.indexOf("Import LS")>=0) ? "LS Coiffure" : "Luxyra";
-    pushVente(a.date, a.time||"", a.tkNum||"", clNom, sty?sty.n:"", detail, Number(a.pr)||0, Number(a.remise)||0, _lxModeDetail(a), (a.isCancel?"Contre-ticket d\u2019annulation":(_lxEstRetour(a)?_lxRetourLibelle(a):"Encaissé")), src, a.hash, a); // 2026-10-17 retour partiel : statut explicite
+    pushVente(_lxDJ(a), a.time||"", a.tkNum||"", clNom, sty?sty.n:"", detail, Number(a.pr)||0, Number(a.remise)||0, _lxModeDetail(a), (a.isCancel?"Contre-ticket d\u2019annulation":(_lxEstRetour(a)?_lxRetourLibelle(a):"Encaissé")), src, a.hash, a); // 2026-10-17 retour partiel : statut explicite
   });
   ps2.forEach(function(p){
     pushVente(p.date, p.time||"", p.tkNum||"", "", "", "🛍 "+p.prod, Number(p.pr)||0, 0, p.met||"", "Vente produit", "Luxyra", "", {pr:Number(p.pr)||0,items:[{price:Number(p.pr)||0,qty:1,remise:0,isProd:true}]});
@@ -26382,7 +26499,7 @@ async function _lxExcelComptableClasseur(mois, opts){
 
   // === ONGLET 5 : ANNULATIONS ===
   // 2026-10-17 retour partiel : les remboursements partiels du mois figurent aussi dans cet onglet (montant remboursé, motif)
-  var _retXl=AP.filter(function(a){ return _lxEstRetour(a)&&a.st==="done"&&String(a.date||"").indexOf(accM)===0; });
+  var _retXl=AP.filter(function(a){ return _lxEstRetour(a)&&a.st==="done"&&_lxDJ(a).indexOf(accM)===0; });
   if(annul.length||_retXl.length){
     var annulD = [
       ["ANNULATIONS & REMBOURSEMENTS — "+mL],
@@ -26398,7 +26515,7 @@ async function _lxExcelComptableClasseur(mois, opts){
       annulD.push([toDate(a.date), a.time||"", a.tkNum||"", toDate(a.cancelDate)||"", clNom, sv?sv.n:"", pr, a.cancelReason||"(non précisé)", String(a.hash||"").slice(0,16)]);
     });
     _retXl.forEach(function(a){ var ri=_lxRetourInfo(a)||{}, cl=gC(a.cId), m=Math.abs(Number(a.pr)||0); totAnnul+=m;
-      annulD.push([toDate(ri.refDate)||"", "", "#"+(ri.refTk!=null?ri.refTk:"--")+" \u2192 #"+(a.tkNum||""), toDate(a.date)||"", cl?cName(cl):"Passage", "Retour partiel : "+(a.items||[]).filter(function(it){return it&&it.isRetour;}).map(function(it){return (it.name||"")+(Number(it.retourQty)>0?" x"+it.retourQty:"");}).join(" + "), m, ri.motif||"(non précisé)", String(a.hash||"").slice(0,16)]); });
+      annulD.push([toDate(ri.refDate)||"", "", "#"+(ri.refTk!=null?ri.refTk:"--")+" \u2192 #"+(a.tkNum||""), toDate(_lxDJ(a))||"", cl?cName(cl):"Passage", "Retour partiel : "+(a.items||[]).filter(function(it){return it&&it.isRetour;}).map(function(it){return (it.name||"")+(Number(it.retourQty)>0?" x"+it.retourQty:"");}).join(" + "), m, ri.motif||"(non précisé)", String(a.hash||"").slice(0,16)]); });
     annulD.push(["","","","","",(_retXl.length?"TOTAL ANNULÉ / REMBOURSÉ":"TOTAL ANNULÉ"), totAnnul, "", ""]);
     XLSX.utils.book_append_sheet(wb, makeSheet(annulD, {
       titleRows:[0], subRows:[1], headerRows:[3], totalRows:[annulD.length-1],
@@ -26566,6 +26683,13 @@ async function _lxExcelComptableClasseur(mois, opts){
       bumD.push(["BONS EN CIRCULATION AU "+_lxJJMMAAAA(_finBM),"","","",lxBumEncours(_finBM)]);
       XLSX.utils.book_append_sheet(wb, makeSheet(bumD, { titleRows:[0], subRows:[1,2], headerRows:[4], totalRows:[bumD.length-4,bumD.length-3,bumD.length-2,bumD.length-1], numCols:[4], dateCols:[0], titleSpan:5, colWidths:[12,14,16,40,16] }), "9 — Bons usage multiple");
     } }catch(_eBMX){ if(opts.strict) throw _eBMX; }
+  // === ONGLET 10 : VENTES REPORTÉES (2026-10-28 -5, v6.8.3 — seulement s'il y en a) : date réelle, date d'enregistrement, période TVA d'origine
+  try{ var _VR=_lxVentesReportees(accM);
+    if(_VR.length){
+      var vrD=[["VENTES REPORTÉES — "+mL],[SALON_CONFIG.nomComplet()],[LX_REPORT_NOTE],[]], _vr=_lxVentesReporteesCsv(_VR);
+      vrD.push(_vr[0]); _vr.slice(1,-1).forEach(function(r){ vrD.push([r[0],r[1],toDate(r[2]),r[3],toDate(r[4]),r[5],r[6],r[7],r[8],r[9],r[10]]); });
+      XLSX.utils.book_append_sheet(wb, makeSheet(vrD, { titleRows:[0], subRows:[1,2], headerRows:[4], numCols:[8,9,10], dateCols:[2,4], titleSpan:11, colWidths:[10,18,12,8,14,12,12,12,12,12,12] }), "10 — Ventes reportées");
+    } }catch(_eVRX){ if(opts.strict) throw _eVRX; }
   XLSX.utils.book_append_sheet(wb, makeSheet(guideD, {
     titleRows:[0], subRows:[1], headerRows:[8, 20], titleSpan:3, colWidths:[26, 50, 30]
   }), "📖 Guide");
@@ -34555,7 +34679,7 @@ function exportTicketsCSV(){
 // (caractères 3, 7, 13 et 19 de la signature base64url), version du logiciel, nombre de lignes,
 // duplicatas numérotés. La signature est calculée côté serveur ; le ticket papier en reprend l'extrait.
 // =====================================================================
-var LX_VERSION="6.8.2", LX_CAISSE="C01"; // 2026-10-28 (-4) : 6.8.2 = corrections du contre-audit (6.8.0 et 6.8.1 jamais publiées) : un ticket encaissé n'est plus jamais abandonné par la file de secours (vente d'une journée déjà close enregistrée sur la journée ouverte, date réelle de vente en mention ; clôture forcée = ticket gardé en file), seuil de version de référence du serveur ; formats de hash, chaînage, signatures et clôtures inchangés (BOI-TVA-DECLA-30-10-30 § 340 : version MINEURE). 2026-10-28 (-3) : 6.8.1 = corrections de l'audit de la 6.8.0 (jamais publiée) : version transmise dans chaque ticket (raw_data.lxVersion) et contrôlée par le serveur, série de n° imprimés propre au serveur (900001+) exclue du compteur des appareils ; formats de hash, chaînage et signatures inchangés (BOI-TVA-DECLA-30-10-30 § 340). 2026-10-28 (-2) : 6.8.0 = version MINEURE (recettes encaissées en ligne enregistrées par le serveur au paiement confirmé, avec la MÊME chaîne de numérotation, empreinte, sceau et signature ; BOI-TVA-DECLA-30-10-30 § 340 : aucune fonction d'inaltérabilité, de sécurisation, de conservation ou d'archivage modifiée). 6.7.0 = version MINEURE (bons cadeaux à usage unique / multiple, CGI art. 256 ter) : formats de hash, chaînage et signatures inchangés (BOI-TVA-DECLA-30-10-30 § 340)
+var LX_VERSION="6.8.3", LX_CAISSE="C01"; // 2026-10-28 (-5) : 6.8.3 = corrections du contre-audit final (6.8.0 à 6.8.2 jamais publiées) : journée retenue (ventes encaissées non transmises) -> Z refusée avec cause et marche à suivre, forçage tracé par un administrateur (lx_z_forcer), clôtures dans l'ordre des dates, carte « Caisse » de l'accueil ; date réelle d'une vente reportée SCELLÉE dans le ticket (items[0].lxRep, champ couvert par l'empreinte, format inchangé) ; exports à la date du journal avec la liste des ventes reportées ; seuil de version du serveur 6.8.3 (BOI-TVA-DECLA-30-10-30 § 340 : version MINEURE). 2026-10-28 (-4) : 6.8.2 = corrections du contre-audit (6.8.0 et 6.8.1 jamais publiées) : un ticket encaissé n'est plus jamais abandonné par la file de secours (vente d'une journée déjà close enregistrée sur la journée ouverte, date réelle de vente en mention ; clôture forcée = ticket gardé en file), seuil de version de référence du serveur ; formats de hash, chaînage, signatures et clôtures inchangés (BOI-TVA-DECLA-30-10-30 § 340 : version MINEURE). 2026-10-28 (-3) : 6.8.1 = corrections de l'audit de la 6.8.0 (jamais publiée) : version transmise dans chaque ticket (raw_data.lxVersion) et contrôlée par le serveur, série de n° imprimés propre au serveur (900001+) exclue du compteur des appareils ; formats de hash, chaînage et signatures inchangés (BOI-TVA-DECLA-30-10-30 § 340). 2026-10-28 (-2) : 6.8.0 = version MINEURE (recettes encaissées en ligne enregistrées par le serveur au paiement confirmé, avec la MÊME chaîne de numérotation, empreinte, sceau et signature ; BOI-TVA-DECLA-30-10-30 § 340 : aucune fonction d'inaltérabilité, de sécurisation, de conservation ou d'archivage modifiée). 6.7.0 = version MINEURE (bons cadeaux à usage unique / multiple, CGI art. 256 ter) : formats de hash, chaînage et signatures inchangés (BOI-TVA-DECLA-30-10-30 § 340)
 window.LX_SIG_CACHE=window.LX_SIG_CACHE||{};
 function _lxSigExtrait(sg){ sg=String(sg||""); return [3,7,13,19].map(function(i){ return sg.charAt(i-1)||""; }).join(""); }
 async function _lxSignerMaintenant(){
@@ -39580,6 +39704,161 @@ function _lxZAfficherEcart(ctl){
   h+='<button class="btn bk" onclick="cM()">Fermer</button></div></div>';
   m.innerHTML=h;
 }
+// =====================================================================
+// 2026-10-28 (-5, v6.8.3, contre-audit final constats 2 et 3) — VENTES NON TRANSMISES ET JOURNÉES RETENUES
+// Avant la Z, la base est interrogée (lx_z_controle_ventes) : rendez-vous ENCAISSÉS du jour dont le ticket n'est pas au journal
+// (vente restée sur un autre appareil : ancienne version, hors connexion, file de secours) et journées antérieures non
+// clôturées. La base refuse elle-même une telle Z (LX_Z_VENTES_NON_TRANSMISES / LX_Z_JOURNEE_ANTERIEURE_OUVERTE). Ici : renvoi
+// automatique des tickets en attente de CET appareil, nouveau contrôle, puis cause + marche à suivre ; en dernier recours, un
+// ADMINISTRATEUR (code PIN administrateur) peut forcer la clôture : forçage tracé (JET 900, journal des événements, liste des
+// ventes consignée, inaltérable — lx_z_forcer), accepté par le serveur seulement après deux contrôles successifs et un renvoi.
+// =====================================================================
+function _lxZEur(v){ return (Number(v)||0).toFixed(2).replace(".",",")+" €"; }
+async function _lxZControleVentesServeur(jour){
+  if(window._lxDemo||window._lxVueAdmin||window._archiveMode||typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId) return {ok:true, nonVerifie:true, vnt:[], ant:[]};
+  if(typeof _isOnline!=="undefined"&&_isOnline===false) return {ok:true, nonVerifie:true, vnt:[], ant:[]};
+  try{
+    var r=await _lxAvecDelai(_sb.rpc("lx_z_controle_ventes",{p_salon:_salonId, p_date:jour}),6000);
+    // fonction absente (SQL pas encore appliqué) / délai : pas de blocage ici (la base contrôle de toute façon à l'enregistrement)
+    if(!r||r.__delai||r.error||!r.data||r.data.ok!==true) return {ok:true, nonVerifie:true, vnt:[], ant:[]};
+    var d=r.data; d.vnt=Array.isArray(d.ventes_non_transmises)?d.ventes_non_transmises:[]; d.ant=Array.isArray(d.journees_anterieures)?d.journees_anterieures:[];
+    return d;
+  }catch(_e){ return {ok:true, nonVerifie:true, vnt:[], ant:[]}; }
+}
+window._lxZControleVentesServeur=_lxZControleVentesServeur;
+// Renvoi des tickets en attente de cet appareil (file de secours) + reprise des tickets du serveur ; compte rendu transmis au forçage
+async function _lxZRenvoyerEnAttente(){
+  var t0=new Date().toISOString(), r=null;
+  try{ if(typeof lxWalRejouer==="function") r=await lxWalRejouer("cloture", true); }catch(_e){}
+  try{ if(typeof lxRecettesServeurImport==="function"&&((typeof lxRecettesServeur==="function"&&lxRecettesServeur())||(window.LX_CONFIG&&window.LX_CONFIG.recettes_en_ligne_serveur_depuis))) await lxRecettesServeurImport(true); }catch(_e2){}
+  var reste=0; try{ reste=(typeof window.lxWalTicketsNonTransmis==="function")?window.lxWalTicketsNonTransmis(null).length:0; }catch(_e3){}
+  var o={tente_at:t0, fini_at:new Date().toISOString(), transmis:(r&&r.ok)||0, en_echec:(r&&r.ko)||0, restants_appareil:reste, version:(typeof LX_VERSION!=="undefined"?LX_VERSION:null)};
+  window._lxZRenvoi=o; return o;
+}
+window._lxZRenvoyerEnAttente=_lxZRenvoyerEnAttente;
+// Contrôle complet avant la Z du jour : renvoi automatique puis second contrôle si des ventes manquent. Retourne le résultat final.
+async function _lxZVentesAvantCloture(jour){
+  var c=await _lxZControleVentesServeur(jour);
+  if(c.nonVerifie||(!c.vnt.length&&!c.ant.length)) return c;
+  await _lxZRenvoyerEnAttente();
+  var c2=await _lxZControleVentesServeur(jour);
+  c2.renvoi=window._lxZRenvoi; return c2;
+}
+window._lxZVentesAvantCloture=_lxZVentesAvantCloture;
+function _lxZListeVentesHtml(L){
+  return '<ul style="text-align:left;font-size:12.5px;margin:6px 0 10px 18px;padding:0;line-height:1.5">'+L.slice(0,30).map(function(v){ return '<li>Ticket n°'+_lxEsc(v.ticket_num||"?")+(v.heure?' à '+_lxEsc(String(v.heure).slice(0,5)):'')+' — '+_lxZEur(v.prix)+'</li>'; }).join("")+(L.length>30?'<li>…</li>':'')+'</ul>';
+}
+// Fenêtre « clôture bloquée » : cause + marche à suivre + réessayer / forcer (administrateur)
+function _lxZVentesModal(jour, ctl, pourZduJour){
+  var m=document.getElementById("modal"); if(!m) return;
+  window._lxZVentesCtx={jour:jour, ctl:ctl, pourZduJour:!!pourZduJour};
+  var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-height:90vh;overflow-y:auto">';
+  h+='<div style="font-size:42px;margin-bottom:6px">⛔</div>';
+  if(ctl.vnt&&ctl.vnt.length){
+    var tot=0; ctl.vnt.forEach(function(v){ tot+=Number(v.prix)||0; });
+    h+='<h2>Clôture du '+fmt(jour)+' impossible : vente'+(ctl.vnt.length>1?'s':'')+' non transmise'+(ctl.vnt.length>1?'s':'')+'</h2>';
+    h+='<div style="font-size:13.5px;margin:10px 0 6px;line-height:1.5;text-align:left"><strong>'+ctl.vnt.length+' vente'+(ctl.vnt.length>1?'s':'')+' encaissée'+(ctl.vnt.length>1?'s':'')+'</strong> ce jour ('+_lxZEur(tot)+') '+(ctl.vnt.length>1?'figurent':'figure')+' au planning mais '+(ctl.vnt.length>1?'leurs tickets ne sont pas arrivés':'son ticket n’est pas arrivé')+' au journal des tickets (caisse scellée). Clôturer maintenant scellerait une journée incomplète : la clôture est refusée.</div>';
+    h+=_lxZListeVentesHtml(ctl.vnt);
+    h+='<div style="font-size:12.5px;text-align:left;line-height:1.5;background:rgba(255,255,255,.05);border-radius:10px;padding:10px 12px;margin-bottom:12px"><b>À faire</b><br>1. Allumez les autres appareils de la caisse (tablette, téléphone), connectez-les à internet et rechargez l’application (Paramètres : version 6.8.3 ou plus) : les tickets en attente partent seuls.<br>2. Revenez ici et touchez « Réessayer ».<br>3. Seulement si l’appareil est perdu ou hors service : un administrateur peut forcer la clôture. Le forçage est tracé (journal NF525) avec la liste de ces ventes ; si elles arrivent plus tard, elles seront enregistrées sur la journée ouverte avec leur date réelle.</div>';
+    if(ctl.renvoi) h+='<div style="font-size:11.5px;color:var(--text3);margin-bottom:10px">Renvoi des tickets de cet appareil tenté : '+(ctl.renvoi.transmis||0)+' transmis, '+(ctl.renvoi.restants_appareil||0)+' encore en attente sur cet appareil.</div>';
+    h+='<button class="btn bg bk" id="lxZVBtn" style="margin-bottom:8px" onclick="_lxZVentesReessayer()">Réessayer</button>';
+    h+='<button class="btn bk" style="margin-bottom:8px;background:var(--red,#dc3545);color:#fff" onclick="_lxZForcerDemander()">Forcer la clôture (administrateur)</button>';
+  } else if(ctl.ant&&ctl.ant.length){
+    var a0=ctl.ant[0], rh=Array.isArray(a0.rdv_hors_journal)?a0.rdv_hors_journal:[];
+    h+='<h2>Journée du '+fmt(a0.date)+' non clôturée</h2>';
+    h+='<div style="font-size:13.5px;margin:10px 0 8px;line-height:1.5;text-align:left">Les clôtures se font dans l’ordre des dates : la journée du <b>'+fmt(a0.date)+'</b> doit être clôturée avant celle du '+fmt(jour)+'.'+(rh.length?' Elle est retenue par <b>'+rh.length+' vente'+(rh.length>1?'s':'')+' non transmise'+(rh.length>1?'s':'')+'</b> :':' Elle sera clôturée automatiquement cette nuit, puis celle-ci.')+'</div>';
+    if(rh.length) h+=_lxZListeVentesHtml(rh);
+    h+='<div style="font-size:12.5px;text-align:left;line-height:1.5;background:rgba(255,255,255,.05);border-radius:10px;padding:10px 12px;margin-bottom:12px">Vous pouvez continuer à encaisser normalement. '+(rh.length?'Faites transmettre ces tickets (appareils allumés, connectés, application rechargée) ; à défaut, un administrateur peut forcer la clôture de cette journée (tracé). ':'')+'La clôture automatique de nuit clôturera ensuite les journées dans l’ordre.</div>';
+    if(rh.length){
+      window._lxZVentesCtx={jour:a0.date, ctl:{vnt:rh, ant:[]}, pourZduJour:false};
+      h+='<button class="btn bg bk" id="lxZVBtn" style="margin-bottom:8px" onclick="_lxZVentesReessayer()">Réessayer la transmission</button>';
+      h+='<button class="btn bk" style="margin-bottom:8px;background:var(--red,#dc3545);color:#fff" onclick="_lxZForcerDemander()">Forcer la clôture du '+fmt(a0.date)+' (administrateur)</button>';
+    }
+  }
+  h+='<div id="lxZVMsg" style="font-size:12px;color:var(--text3);margin-bottom:8px"></div><button class="btn bk" onclick="cM()">Fermer</button></div></div>';
+  m.innerHTML=h;
+}
+window._lxZVentesModal=_lxZVentesModal;
+window._lxZVentesReessayer=async function(){
+  var C=window._lxZVentesCtx; if(!C) return;
+  var b=document.getElementById("lxZVBtn"); if(b){ b.disabled=true; b.textContent="Transmission en cours…"; }
+  await _lxZRenvoyerEnAttente();
+  var c=await _lxZControleVentesServeur(C.jour); c.renvoi=window._lxZRenvoi;
+  if(!c.vnt.length && (!C.pourZduJour || !c.ant.length)){
+    cM(); if(typeof toast==="function") toast("✓ Toutes les ventes du "+fmt(C.jour)+" sont au journal","success");
+    if(C.pourZduJour){ window._cloturingInProgress=false; setTimeout(function(){ if(typeof _doClotureDo==="function") _doClotureDo(); },60); }
+    return;
+  }
+  _lxZVentesModal(C.jour, c.vnt.length?c:{vnt:[],ant:c.ant}, C.pourZduJour);
+};
+// Forçage : administrateur (PIN), motif obligatoire, renvoi déjà tenté (deux contrôles côté serveur)
+window._lxZForcerDemander=function(){
+  var C=window._lxZVentesCtx; if(!C) return;
+  var go2=function(){
+    var m=document.getElementById("modal"); if(!m) return;
+    var tot=0; (C.ctl.vnt||[]).forEach(function(v){ tot+=Number(v.prix)||0; });
+    var h='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">';
+    h+='<h2>Forcer la clôture du '+fmt(C.jour)+'</h2>';
+    h+='<div style="font-size:13px;text-align:left;line-height:1.5;margin-bottom:8px">'+(C.ctl.vnt||[]).length+' vente(s) ('+_lxZEur(tot)+') seront consignées comme <b>non transmises</b> à la clôture : trace inaltérable au journal NF525 (votre nom, la date, le motif, la liste). Si ces tickets arrivent ensuite, ils seront enregistrés sur la journée ouverte avec leur date réelle de vente.</div>';
+    h+=_lxZListeVentesHtml(C.ctl.vnt||[]);
+    h+='<textarea id="lxZFMotif" rows="3" placeholder="Motif (obligatoire) : ex. tablette du poste 2 en panne, tickets impossibles à récupérer" style="width:100%;border:1px solid #e91e63;border-radius:8px;padding:10px;font-size:14px"></textarea>';
+    h+='<div id="lxZFMsg" style="font-size:12px;color:#ef5350;margin:6px 0"></div>';
+    h+='<div style="display:flex;gap:8px;margin-top:8px"><button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Annuler</button><button class="btn" id="lxZFBtn" style="flex:1;background:var(--red,#dc3545);color:#fff" onclick="_lxZForcerValider()">Forcer (tracé)</button></div></div></div>';
+    m.innerHTML=h;
+  };
+  if(typeof requireAdmin==="function" && typeof OPERATEURS!=="undefined" && Array.isArray(OPERATEURS) && OPERATEURS.some(function(o){ return o&&o.role==="admin"&&o.actif; })) requireAdmin("Forcer une clôture (ventes non transmises)", go2);
+  else go2(); // aucun opérateur configuré : le compte de l'établissement est l'administrateur
+};
+window._lxZForcerValider=async function(){
+  var C=window._lxZVentesCtx; if(!C) return;
+  var mo=String((document.getElementById("lxZFMotif")||{}).value||"").trim(), msg=document.getElementById("lxZFMsg"), b=document.getElementById("lxZFBtn");
+  if(mo.length<15){ if(msg) msg.textContent="Motif obligatoire (15 caractères au moins)."; return; }
+  if(!window._lxZRenvoi){ await _lxZRenvoyerEnAttente(); await _lxZControleVentesServeur(C.jour); await _lxZControleVentesServeur(C.jour); }
+  if(b){ b.disabled=true; b.textContent="Enregistrement…"; }
+  var op=(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR)?((CURRENT_OPERATOR.prenom||"")+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:"")).trim()+" (administrateur)":"Compte de l’établissement";
+  var r=null; try{ r=await _sb.rpc("lx_z_forcer",{p_salon:_salonId, p_date:C.jour, p_motif:mo, p_operateur:op, p_renvoi:window._lxZRenvoi||{}}); }catch(e){ r={error:{message:String(e&&e.message||e)}}; }
+  var d=r&&r.data;
+  if(!d||d.ok!==true){ if(b){ b.disabled=false; b.textContent="Forcer (tracé)"; } if(msg) msg.textContent="Forçage refusé : "+String((d&&d.erreur)||(r&&r.error&&r.error.message)||"erreur")+(d&&d.controles!=null?" — touchez d’abord « Réessayer ».":""); return; }
+  try{ if(typeof auditLog==="function") auditLog("CLOTURE_Z_FORCEE_APP","Journée "+C.jour+" : "+(d.nb||0)+" vente(s) non transmise(s) consignée(s) ("+_lxZEur(d.montant)+") — "+mo.slice(0,200)); }catch(_eA){}
+  cM();
+  if(C.pourZduJour){ if(typeof toast==="function") toast("Forçage enregistré (tracé) : la clôture va être calculée depuis les tickets enregistrés","warning"); window._cloturingInProgress=false; setTimeout(function(){ if(typeof _doClotureDo==="function") _doClotureDo(); },60); }
+  else if(typeof showAlert==="function") showAlert("Forçage enregistré (tracé au journal NF525).\n\nLa journée du "+fmt(C.jour)+" sera clôturée automatiquement cette nuit, puis les journées suivantes, dans l’ordre des dates.","info");
+  try{ window._lxCaisseAlertes=null; }catch(_eC){}
+};
+// Carte « Caisse » de l'accueil (établissement) : journées retenues, mois non clôturés, remboursements Stripe à enregistrer.
+// Lue au serveur (lx_caisse_alertes) au plus toutes les 10 minutes ; rien si tout va bien.
+window._lxCaisseAlertes=null; var _lxCaisseAlertesAt=0, _lxCaisseAlertesEnCours=false;
+async function lxCaisseAlertesVerifier(force){
+  if(_lxCaisseAlertesEnCours) return;
+  if(window._lxDemo||window._lxVueAdmin||window._archiveMode||typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId) return;
+  if(!force && Date.now()-_lxCaisseAlertesAt<10*60*1000) return;
+  if(typeof _isOnline!=="undefined"&&_isOnline===false) return;
+  _lxCaisseAlertesEnCours=true; _lxCaisseAlertesAt=Date.now();
+  try{
+    var r=await _lxAvecDelai(_sb.rpc("lx_caisse_alertes",{p_salon:_salonId}),6000);
+    var avant=JSON.stringify(window._lxCaisseAlertes||null);
+    if(r&&!r.__delai&&!r.error&&r.data&&r.data.ok===true) window._lxCaisseAlertes=r.data;
+    if(JSON.stringify(window._lxCaisseAlertes||null)!==avant && (window._currentPage||"home")==="home" && typeof go==="function" && !document.querySelector("#modal .mbox")) go("home");
+  }catch(_e){} finally{ _lxCaisseAlertesEnCours=false; }
+}
+window.lxCaisseAlertesVerifier=lxCaisseAlertesVerifier;
+function _lxCaisseAlertesCarte(){
+  try{ setTimeout(function(){ lxCaisseAlertesVerifier(false); },0); }catch(_e0){}
+  var A=window._lxCaisseAlertes; if(!A||window._lxVueAdmin) return "";
+  var J=Array.isArray(A.journees_retenues)?A.journees_retenues:[], M=Array.isArray(A.mois_non_clotures)?A.mois_non_clotures:[], R=Array.isArray(A.remboursements_en_attente)?A.remboursements_en_attente:[];
+  if(!J.length&&!M.length&&!R.length) return "";
+  var L=[];
+  if(J.length){
+    var j0=J[0], rh=Array.isArray(j0.rdv_hors_journal)?j0.rdv_hors_journal:[];
+    L.push('<b>Journée du '+fmt(j0.date)+' non clôturée</b>'+(rh.length?' : '+rh.length+' vente(s) encaissée(s) non transmise(s) (ticket n°'+rh.slice(0,4).map(function(v){ return _lxEsc(v.ticket_num||"?"); }).join(", n°")+(rh.length>4?"…":"")+'). Rallumez et reconnectez les autres appareils, rechargez l’application ; les journées suivantes ('+(J.length-1)+') attendent.':(J.length>1?' ('+J.length+' journées en attente).':' (clôture automatique cette nuit).'))+(rh.length?' <span style="text-decoration:underline;cursor:pointer" onclick="event.stopPropagation();_lxCaisseVoirRetenue()">Voir / forcer</span>':''));
+  }
+  if(M.length) L.push('<b>Clôture mensuelle en attente</b> ('+M.map(function(x){ return _lxEsc(x); }).join(", ")+') : une journée du mois n’est pas clôturée ; nouvel essai automatique chaque nuit.');
+  R.slice(0,3).forEach(function(x){ L.push('<b>Remboursement fait sur Stripe</b>'+(x.le?' le '+fmt(String(x.le).slice(0,10)):'')+' : '+_lxZEur(x.montant)+(x.ticket_origine?' (ticket n°'+_lxEsc(x.ticket_origine)+')':'')+' — il sera enregistré en caisse <b>automatiquement</b> à la mise en service des paiements en ligne (date réelle conservée) : <b>ne le saisissez pas</b> (il serait compté deux fois).'); });
+  return '<div style="background:#1d0d0d;border:1.5px solid #ef5350;border-radius:14px;padding:12px 14px;margin-bottom:12px;display:flex;gap:10px;align-items:flex-start"><div style="font-size:22px">🧾</div><div style="font-size:12.5px;line-height:1.5;color:#fff"><div style="font-weight:800;color:#ef5350;margin-bottom:3px">Caisse : action requise</div>'+L.join('<br>')+'</div></div>';
+}
+window._lxCaisseAlertesCarte=_lxCaisseAlertesCarte;
+window._lxCaisseVoirRetenue=function(){ var A=window._lxCaisseAlertes, J=A&&Array.isArray(A.journees_retenues)?A.journees_retenues:[]; if(!J.length) return;
+  _lxZVentesModal(J[0].date, {vnt:Array.isArray(J[0].rdv_hors_journal)?J[0].rdv_hors_journal:[], ant:[]}, false); };
 // Liste « encaissements du jour » reconstruite depuis les tickets enregistrés (une entrée par ticket du journal ; les
 // données de gestion — collaborateur, prestations — reprises de l'entrée de l'appareil quand elle existe).
 function _lxZDoneDepuisTickets(jour, db){
@@ -39637,6 +39916,11 @@ window._lxZRefuseeParServeur=function(clot, msg){
     if(Array.isArray(window.CLOTURES)) window.CLOTURES=window.CLOTURES.filter(function(x){ return !(x&&clot&&x.id===clot.id); });
     if(window.LOCKED_DAYS&&clot&&clot.date&&!(window.CLOTURES||[]).some(function(x){ return x&&x.date===clot.date; })){ delete window.LOCKED_DAYS[clot.date]; try{ localStorage.setItem("_cp_locked",JSON.stringify(window.LOCKED_DAYS)); }catch(_eL){} }
     if(window._lastCloture===clot) window._lastCloture=null;
+    // 2026-10-28 (-5, v6.8.3) : ventes non transmises / journée antérieure retenue (contrôle de la base)
+    if(/LX_Z_VENTES_NON_TRANSMISES|LX_Z_JOURNEE_ANTERIEURE_OUVERTE/.test(String(msg||""))){
+      showAlert("Clôture Z NON enregistrée : "+String(msg||"").replace(/^.*(LX_Z_VENTES_NON_TRANSMISES|LX_Z_JOURNEE_ANTERIEURE_OUVERTE)\s*:?\s*/,"").slice(0,420)+"\n\nLa journée reste ouverte. Relancez la clôture : l’application vous indiquera les ventes concernées et la marche à suivre.","error");
+      return;
+    }
     showAlert("Clôture Z NON enregistrée : elle ne correspond pas aux tickets enregistrés.\n\nLa journée reste ouverte. Relancez la clôture : l’application vous proposera de la recalculer depuis les tickets enregistrés.\n\n("+String(msg||"").replace(/^.*LX_Z_ECART_JOURNAL\s*:?\s*/,"").slice(0,240)+")","error");
   }catch(_e){}
 };
@@ -40615,6 +40899,7 @@ async function exportFEC(){
 
   if(typeof auditLog==="function") auditLog("EXPORT_FEC", "Période "+dateFrom+" → "+dateTo+" · "+R.nbTickets+" tickets · "+R.nbLignes+" écritures");
   if(typeof toast==="function") toast("✓ FEC téléchargé : "+fileName+" ("+R.nbTickets+" tickets, "+R.nbLignes+" écritures)","success");
+  _lxVentesReporteesSignaler(dateFrom, dateTo, "FEC"); // 2026-10-28 (-5) : ventes reportées signalées (PieceDate = date réelle dans le FEC)
 }
 // 2026-10-27 (-3, audit FEC) : nom du fichier selon l'art. A. 47 A-1 du LPF (X) et le BOI-CF-IOR-60-40-20 § 370 :
 // <SIREN>FEC<date de clôture de l'exercice AAAAMMJJ>.txt pour l'exercice entier ; extrait d'une partie de l'exercice =
@@ -40651,7 +40936,7 @@ async function _lxFecConstruire(dateFrom, dateTo, opts){
       var r=await _sb.from("tickets")
         // 2026-10-14 (NF525) : raw_data n'était pas sélectionné -> le libellé « dont acompte payé en ligne » (_lxLibAcompte)
         // était toujours vide. On lit uniquement les 2 champs utiles (raw_data entier contient le HTML du ticket).
-        .select("id,num,date_ticket,heure_ticket,ts_created,client_id,client_nom,client_prenom,collaborateur_nom,items,total_brut,total_remise,total_ttc,total_ht,total_tva,taux_tva,mode_paiement,detail_paiement,status,raw_acompte:raw_data->>acompte,raw_acompte_mode:raw_data->>acompteMode,raw_retour:raw_data->>isRetour,raw_retour_tk:raw_data->>retourRefTk,raw_retour_date:raw_data->>retourRefDate,raw_bons:raw_data->bonsUtil") // 2026-10-17 retour partiel ; 2026-10-28 bons utilisés (v6.7.0)
+        .select("id,num,date_ticket,heure_ticket,ts_created,client_id,client_nom,client_prenom,collaborateur_nom,items,total_brut,total_remise,total_ttc,total_ht,total_tva,taux_tva,mode_paiement,detail_paiement,status,raw_acompte:raw_data->>acompte,raw_acompte_mode:raw_data->>acompteMode,raw_retour:raw_data->>isRetour,raw_retour_tk:raw_data->>retourRefTk,raw_retour_date:raw_data->>retourRefDate,raw_bons:raw_data->bonsUtil,raw_rep:raw_data->>reportJourClos,raw_dv:raw_data->>dateVente") // 2026-10-17 retour partiel ; 2026-10-28 bons utilisés (v6.7.0) ; 2026-10-28 (-5) vente reportée
         .eq("salon_id",_salonId)
         .gte("date_ticket",dateFrom)
         .lte("date_ticket",dateTo)
@@ -40728,7 +41013,14 @@ async function _lxFecConstruire(dateFrom, dateTo, opts){
     var dateE=fmtDate(t.date_ticket);
     _bc={d:dateE, r:[]}; blocs.push(_bc);
     var pieceRef="TK"+String(t.num||0).padStart(6,"0");
-    var libBase=(((t.client_prenom||"")+" "+(t.client_nom||"")).trim()||"Vente comptoir")+_lxLibAcompte(t.items||(t.raw_data&&t.raw_data.items)||[], (t.raw_data&&_lxIsAcompteOnline&&_lxIsAcompteOnline(t.raw_data.acompteMode))?t.raw_data.acompte:0);
+    // 2026-10-28 (-5, v6.8.3) : VENTE REPORTÉE (journée de vente close lors de sa transmission) ou paiement en ligne enregistré le
+    // lendemain : EcritureDate = date du journal (comme la Z, la clôture mensuelle et le journal des tickets) ; PieceDate = date
+    // RÉELLE de la vente (date de la pièce justificative : ticket remis au client ; scellée dans items[0].lxRep) ; libellé signalé.
+    // Ticket non reporté : écriture strictement inchangée.
+    var _rep=(Array.isArray(t.items)&&t.items[0]&&t.items[0].lxRep&&String(t.items[0].lxRep.v)==="1")?t.items[0].lxRep:(String(t.raw_rep)==="true"&&t.raw_dv?{dateVente:t.raw_dv}:null);
+    var pieceD=dateE, _libRep="";
+    if(_rep&&/^\d{4}-\d{2}-\d{2}/.test(String(_rep.dateVente||""))&&String(_rep.dateVente).slice(0,10)<String(t.date_ticket).slice(0,10)){ pieceD=fmtDate(_rep.dateVente); _libRep=" (VENTE DU "+fmtDate(_rep.dateVente)+" REPORTEE)"; }
+    var libBase=(((t.client_prenom||"")+" "+(t.client_nom||"")).trim()||"Vente comptoir")+_libRep+_lxLibAcompte(t.items||(t.raw_data&&t.raw_data.items)||[], (t.raw_data&&_lxIsAcompteOnline&&_lxIsAcompteOnline(t.raw_data.acompteMode))?t.raw_data.acompte:0);
     var totalTTC=Number(t.total_ttc)||0;
     var totalHT=Number(t.total_ht)||(totalTTC/(1+tva/100));
     var totalTVA=Number(t.total_tva)||(totalTTC-totalHT);
@@ -40756,11 +41048,11 @@ async function _lxFecConstruire(dateFrom, dateTo, opts){
     }
 
     if(t.status==="cancelled"){
-      if(_hc) _bc.r.push(["VTE","Ventes salon",0,dateE,ACC_BON_BUM,"Bons \u00e0 usage multiple","","",pieceRef,dateE,"ANNULATION "+escFEC(libBase),fmtAmount(_hc),fmtAmount(0),"","",dateE,"",""]); // 2026-10-28
-      _fecLegs(t,totalTTC,_isV2).forEach(function(lg){ _bc.r.push(["VTE","Ventes salon",0,dateE,lg.acc,lg.lib,"","",pieceRef,dateE,"ANNULATION "+escFEC(libBase),fmtAmount(0),fmtAmount(lg.amt),"","",dateE,"",""]); });
-      if(prestHT!==0) _bc.r.push(["VTE","Ventes salon",0,dateE,ACC_VENTE_PREST,"Prestations de services","","",pieceRef,dateE,"ANNULATION "+escFEC(libBase),fmtAmount(prestHT),fmtAmount(0),"","",dateE,"",""]);
-      if(prodHT>0) _bc.r.push(["VTE","Ventes salon",0,dateE,ACC_VENTE_PROD,"Ventes de produits","","",pieceRef,dateE,"ANNULATION "+escFEC(libBase),fmtAmount(prodHT),fmtAmount(0),"","",dateE,"",""]);
-      if(totalTVA>0) _bc.r.push(["VTE","Ventes salon",0,dateE,ACC_TVA,"TVA collectée","","",pieceRef,dateE,"ANNULATION TVA "+escFEC(libBase),fmtAmount(totalTVA),fmtAmount(0),"","",dateE,"",""]);
+      if(_hc) _bc.r.push(["VTE","Ventes salon",0,dateE,ACC_BON_BUM,"Bons \u00e0 usage multiple","","",pieceRef,pieceD,"ANNULATION "+escFEC(libBase),fmtAmount(_hc),fmtAmount(0),"","",dateE,"",""]); // 2026-10-28
+      _fecLegs(t,totalTTC,_isV2).forEach(function(lg){ _bc.r.push(["VTE","Ventes salon",0,dateE,lg.acc,lg.lib,"","",pieceRef,pieceD,"ANNULATION "+escFEC(libBase),fmtAmount(0),fmtAmount(lg.amt),"","",dateE,"",""]); });
+      if(prestHT!==0) _bc.r.push(["VTE","Ventes salon",0,dateE,ACC_VENTE_PREST,"Prestations de services","","",pieceRef,pieceD,"ANNULATION "+escFEC(libBase),fmtAmount(prestHT),fmtAmount(0),"","",dateE,"",""]);
+      if(prodHT>0) _bc.r.push(["VTE","Ventes salon",0,dateE,ACC_VENTE_PROD,"Ventes de produits","","",pieceRef,pieceD,"ANNULATION "+escFEC(libBase),fmtAmount(prodHT),fmtAmount(0),"","",dateE,"",""]);
+      if(totalTVA>0) _bc.r.push(["VTE","Ventes salon",0,dateE,ACC_TVA,"TVA collectée","","",pieceRef,pieceD,"ANNULATION TVA "+escFEC(libBase),fmtAmount(totalTVA),fmtAmount(0),"","",dateE,"",""]);
       return;
     }
 
@@ -40769,7 +41061,7 @@ async function _lxFecConstruire(dateFrom, dateTo, opts){
     // 2026-10-17 retour partiel : libellé « RETOUR » avec la référence du ticket d'origine (écriture en sens inverse, équilibrée)
     if(String(t.raw_retour)==="true") _lib="RETOUR TK "+escFEC(String(t.raw_retour_tk||"?"))+" DU "+fmtDate(t.raw_retour_date)+" "+escFEC(libBase);
     function _fl(acc,accLib,lib,amt,sens){ var v=Math.round((Number(amt)||0)*100)/100; if(Math.abs(v)<0.005) return; if(v<0){ v=-v; sens=(sens==="D")?"C":"D"; }
-      _bc.r.push(["VTE","Ventes salon",0,dateE,acc,accLib,"","",pieceRef,dateE,lib,fmtAmount(sens==="D"?v:0),fmtAmount(sens==="C"?v:0),"","",dateE,"",""]); }
+      _bc.r.push(["VTE","Ventes salon",0,dateE,acc,accLib,"","",pieceRef,pieceD,lib,fmtAmount(sens==="D"?v:0),fmtAmount(sens==="C"?v:0),"","",dateE,"",""]); }
     _fecLegs(t,totalTTC,_isV2).forEach(function(lg){ _fl(lg.acc,lg.lib,_lib,lg.amt,"D"); });
     _fl(ACC_VENTE_PREST,"Prestations de services",_lib,prestHT,"C");
     _fl(ACC_VENTE_PROD,"Ventes de produits",_lib,prodHT,"C");
@@ -40838,7 +41130,7 @@ function _lxEcAutorise(){
 // de cohérence avec la clôture mensuelle scellée, jamais de chiffre envoyé.
 function _lxEcControleApp(mois){
   var t=0, n=0;
-  (Array.isArray(AP)?AP:[]).forEach(function(a){ if(a && a.st==="done" && String(a.date||"").indexOf(mois)===0 && _lxCaOk(a)){ t+=Number(a.pr)||0; n++; } });
+  (Array.isArray(AP)?AP:[]).forEach(function(a){ if(a && a.st==="done" && _lxDJ(a).indexOf(mois)===0 && _lxCaOk(a)){ t+=Number(a.pr)||0; n++; } }); // 2026-10-28 (-5) : date du journal (ventes reportées)
   return {ca:Math.round(t*100)/100, nb:n};
 }
 function _lxEcB64(u8){ var s="", CH=0x8000; for(var i=0;i<u8.length;i+=CH) s+=String.fromCharCode.apply(null, u8.subarray(i, i+CH)); return btoa(s); }
@@ -41244,6 +41536,7 @@ async function exportEBP(){
   var url=URL.createObjectURL(blob); var a=document.createElement("a"); a.href=url; a.download=fileName; document.body.appendChild(a); a.click();
   setTimeout(function(){document.body.removeChild(a); URL.revokeObjectURL(url);},100);
   if(typeof auditLog==="function") auditLog("EXPORT_EBP","Export EBP "+dateFrom+" -> "+dateTo);
+  _lxVentesReporteesSignaler(dateFrom, dateTo, "EBP"); // 2026-10-28 (-5)
   if(typeof toast==="function") toast("Export EBP telecharge","success");
 }
 
@@ -41521,6 +41814,7 @@ async function exportQuadratus(){
   var url=URL.createObjectURL(blob); var a=document.createElement("a"); a.href=url; a.download=fileName; document.body.appendChild(a); a.click();
   setTimeout(function(){document.body.removeChild(a); URL.revokeObjectURL(url);},100);
   if(typeof auditLog==="function") auditLog("EXPORT_QUADRATUS","Export Quadratus "+dateFrom+" -> "+dateTo);
+  _lxVentesReporteesSignaler(dateFrom, dateTo, "Quadratus"); // 2026-10-28 (-5)
   if(typeof toast==="function") toast("Export Quadratus telecharge","success");
 }
 
