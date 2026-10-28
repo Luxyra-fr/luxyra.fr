@@ -4465,6 +4465,18 @@ async function lxEcVentesReportees(env, salonId, mois) {
     return out;
   } catch (_) { return []; }
 }
+// 2026-10-28 (Luxyra 6.8.5, règle TVA unique) : TVA du mois = somme, par taux, des HT / TVA ENREGISTRÉS sur les tickets (comme le
+// FEC, le rapport, l'Excel et la Z depuis 6.8.5) + rapprochement avec les clôtures Z SCELLÉES (écart d'arrondi des Z antérieures).
+// Lecture seule : public.lx_tva_periode_controle (docs/migrations_1028_tva/tva_unique.sql). Fonction absente / erreur -> null (e-mail
+// d'avant : chiffres de la clôture mensuelle).
+async function lxEcTvaMois(env, salonId, mois) {
+  try {
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/lx_tva_periode_controle`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_salon: salonId, p_du: mois + "-01", p_au: lxEcFinMois(mois) }) });
+    if (!r.ok) return null;
+    const j = await r.json();
+    return j && typeof j === "object" && !Array.isArray(j) && Array.isArray(j.par_taux) ? j : null;
+  } catch (_) { return null; }
+}
 async function lxEcCloture(env, salonId, mois) {
   const a = await lxEcGet(env, `clotures_mensuelles?salon_id=eq.${encodeURIComponent(salonId)}&annee=eq.${Number(mois.slice(0, 4))}&mois=eq.${Number(mois.slice(5, 7))}&select=*&limit=1`);
   return Array.isArray(a) && a[0] ? a[0] : null;
@@ -4553,8 +4565,21 @@ function lxEcCorpsMail(salon, cfg, mois, zm, fichiers, notes, opts) {
     L.push([franchise ? "Chiffre d'affaires (TVA non applicable)" : "Chiffre d'affaires TTC", `<b>${lxEcEur(zm.total_ca)}</b>`]);
     if (franchise) L.push(["TVA", "Non applicable, art. 293 B du CGI"]);
     else {
+      // 2026-10-28 (6.8.5, règle TVA unique) : HT et TVA = somme des tickets enregistrés, une ligne par taux (= FEC, rapport, Excel) ;
+      // écart d'arrondi avec les Z scellées signalé (Z antérieures à 6.8.5). Sans ces données : chiffres de la clôture mensuelle.
+      const tv = opts.tva && opts.tva.concordance_ca ? opts.tva : null;
+      if (tv) {
+        const hcT = Math.round((Number(tv.hc) || 0) * 100) / 100;
+        L.push([hcT ? "Chiffre d'affaires HT" : "dont HT", lxEcEur(Math.round((Number(tv.ht) - hcT) * 100) / 100)]);
+        tv.par_taux.filter((x) => Number(x.taux) > 0).forEach((x) => L.push([`TVA collectée (${lxEcTaux(x.taux)})` + (tv.par_taux.filter((y) => Number(y.taux) > 0).length > 1 ? ` — base HT ${lxEcEur(x.ht)}` : ""), lxEcEur(x.tva)]));
+        if (tv.par_taux.filter((x) => Number(x.taux) > 0).length > 1) L.push(["TVA collectée (total)", lxEcEur(tv.tva)]);
+        // écart signé « Z − tickets » (TVA des Z scellées moins TVA des tickets) : positif = les Z anciennes comptaient plus de TVA
+        const _sg = (v) => { const n = Math.round((Number(v) || 0) * 100) / 100; return (n > 0 ? "+" : "") + lxEcEur(n); };
+        if (Math.abs(Number(tv.ecart_ht) || 0) >= 0.005 || Math.abs(Number(tv.ecart_tva) || 0) >= 0.005) L.push([`Écart d'arrondi des clôtures Z scellées avant la version 6.8.5 : Z − tickets = TVA des Z ${lxEcEur(tv.z_tva)} − TVA des tickets ${lxEcEur(tv.tva)} (HT : ${lxEcEur(tv.z_ht)} − ${lxEcEur(tv.ht)} = ${_sg(tv.ecart_ht)}). Information seulement : la TVA à déclarer est celle des tickets ci-dessus`, `Z − tickets = ${_sg(tv.ecart_tva)}`]);
+      } else {
       L.push([_hcBum ? "Chiffre d'affaires HT" : "dont HT", lxEcEur(Math.round((Number(zm.total_ht) - _hcBum) * 100) / 100)]); // 2026-10-28 : hors bons à usage multiple (HT = TTC, sans TVA)
       L.push([txP !== tx ? `TVA collectée (prestations ${lxEcTaux(tx)} · produits ${lxEcTaux(txP)})` : `TVA collectée (${lxEcTaux(tx)})`, lxEcEur(zm.total_tva)]);
+      }
     }
     const LIB = { cb: "Carte bancaire", esp: "Espèces", chq: "Chèque", vir: "Virement", enligne: "Payé en ligne", bon: "Bons cadeaux / avoirs", aut: "Autres" };
     let det = zm.detail_paiements; if (typeof det === "string") { try { det = JSON.parse(det); } catch (e) { det = null; } }
@@ -4563,7 +4588,7 @@ function lxEcCorpsMail(salon, cfg, mois, zm, fichiers, notes, opts) {
     }
     L.push(["Tickets · annulations", `${Number(zm.nb_tickets) || 0} · ${Number(zm.nb_annulations) || 0}`]);
     h += `<table style="width:100%;border-collapse:collapse;font-size:13.5px;margin:6px 0 16px">${L.map((r, i) => `<tr><td style="padding:7px 0;${i < L.length - 1 ? "border-bottom:1px solid #eee" : ""}">${r[0]}</td><td style="text-align:right;${i < L.length - 1 ? "border-bottom:1px solid #eee" : ""}">${r[1]}</td></tr>`).join("")}</table>`;
-    h += `<div style="font-size:11px;color:#8a8a8a;margin:-8px 0 14px">Chiffres de la clôture mensuelle de la caisse${zm.hash ? ` (empreinte ${ccEsc(String(zm.hash).slice(0, 16))}…)` : ""}.</div>`;
+    h += `<div style="font-size:11px;color:#8a8a8a;margin:-8px 0 14px">Chiffres de la clôture mensuelle de la caisse${zm.hash ? ` (empreinte ${ccEsc(String(zm.hash).slice(0, 16))}…)` : ""}${opts.tva && opts.tva.concordance_ca && !franchise ? " ; HT et TVA : somme des montants enregistrés sur chaque ticket, par taux" : ""}.</div>`;
   } else {
     h += `<p style="margin:0 0 14px">Cet e-mail confirme que l'envoi automatique des documents comptables de <b>${nom}</b> vers cette adresse est bien configuré.</p>`;
   }
@@ -4701,7 +4726,7 @@ async function handleComptaEnvoi(request, env) {
       await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/compta_envois?salon_id=eq.${encodeURIComponent(salonId)}&mois=eq.${mois}&type=eq.auto&statut=eq.reserve&cree_le=lt.${encodeURIComponent(new Date(Date.now() - 15 * 60 * 1000).toISOString())}`, { method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify({ statut: "echec", erreur: "envoi interrompu" }) });
     }
     const copieA = cfg.copie !== false && salon.email && String(salon.email).toLowerCase() !== String(cfg.email).toLowerCase() && LX_EC_RE_EMAIL.test(String(salon.email)) ? String(salon.email) : null;
-    const chiffres = zm ? { total_ca: zm.total_ca, total_ht: zm.total_ht, total_tva: zm.total_tva, nb_tickets: zm.nb_tickets, nb_annulations: zm.nb_annulations, detail_paiements: zm.detail_paiements, hash: zm.hash || null } : null;
+    const chiffres = zm ? { total_ca: zm.total_ca, total_ht: zm.total_ht, total_tva: zm.total_tva, nb_tickets: zm.nb_tickets, nb_annulations: zm.nb_annulations, detail_paiements: zm.detail_paiements, hash: zm.hash || null, tva_regle: (zm.raw_data && zm.raw_data.tva && zm.raw_data.tva.regle) || null } : null;
     // Réservation AVANT l'envoi : un 2e appareil (ou un 2e onglet) prend le conflit de l'index unique -> déjà envoyé
     const res = await lxEcJournalAjouter(env, { salon_id: salonId, mois, type, statut: "reserve", destinataire: cfg.email, copie_a: copieA, cabinet: cfg.cabinet || null,
       fichiers, taille_totale: total, chiffres, mode_caisse: modeCaisse, declenche_par: auteur });
@@ -4710,7 +4735,8 @@ async function handleComptaEnvoi(request, env) {
     const modeTest = modeCaisse !== "reel";
     const sujet = `${type === "test" ? "[Test] " : ""}${modeTest ? "[Données de test] " : ""}Documents comptables — ${String(salon.nom || "Établissement").replace(/[\r\n]/g, " ").slice(0, 80)} — ${lxEcMoisLib(mois, true)}`;
     const reportees = zm ? await lxEcVentesReportees(env, salonId, mois) : []; // 2026-10-28 (-5)
-    const corps = lxEcCorpsMail(salon, cfg, mois, zm, fichiers, b.notes, { test: type === "test", modeTest, reportees });
+    const tvaMois = zm ? await lxEcTvaMois(env, salonId, mois) : null; // 2026-10-28 (6.8.5)
+    const corps = lxEcCorpsMail(salon, cfg, mois, zm, fichiers, b.notes, { test: type === "test", modeTest, reportees, tva: tvaMois });
     const html = lxMailLayout(corps, { titre: zm ? `Documents comptables de ${lxEcMoisLib(mois, false)}` : "Envoi au comptable configuré", salon: salon.nom || "" });
     let out = null, erreur = null;
     try {
