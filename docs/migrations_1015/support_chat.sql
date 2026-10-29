@@ -580,7 +580,7 @@ BEGIN
         || '<body style="margin:0;padding:0;background:#0a0a0a;font-family:Helvetica,Arial,sans-serif">'
         || '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0a"><tr><td align="center" style="padding:24px 16px">'
         || '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;margin:0 auto">'
-        || '<tr><td style="padding:24px 0;text-align:center"><img src="https://luxyra.fr/luxyra-logo.png" alt="Luxyra" style="height:48px"></td></tr>'
+        || '<tr><td style="padding:24px 0;text-align:center"><img src="https://luxyra.fr/email/luxyra-logo-128.png" alt="Luxyra" style="height:48px"></td></tr>'
         || '<tr><td style="padding:8px 24px 16px;text-align:center;font-size:15px;color:rgba(255,255,255,.8);line-height:1.6">'
         || CASE WHEN r.dest = 'pro'
              THEN 'Bonjour' || CASE WHEN coalesce(r.prenom, '') <> '' THEN ' <strong style="color:#fff">' || lx_prive.html_esc(r.prenom) || '</strong>' ELSE '' END
