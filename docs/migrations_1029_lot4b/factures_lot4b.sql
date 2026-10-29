@@ -43,7 +43,7 @@
 do $$
 declare
   v_attendu jsonb := jsonb_build_object(
-    'public.lx_facture_emettre(uuid,jsonb,text)', jsonb_build_array('b555d5376727f0b2d63de0ccb37c882b', 'be0fba3c505391aeb51d8053b7d71554'),
+    'public.lx_facture_emettre(uuid,jsonb,text)', jsonb_build_array('b555d5376727f0b2d63de0ccb37c882b', '69d6e1e2ab1b17c84d5aea9fbf7228ac'),
     'lx_prive.facture_lignes(jsonb,jsonb,numeric,numeric)', jsonb_build_array('c47c42ec9eedb62206b05c95c7761f7a'),
     'lx_prive.tva_ticket_lignes(jsonb,numeric,numeric,numeric,jsonb,numeric,jsonb)', jsonb_build_array('f1cf5f0969713c74ccabacc3124466cf'),
     'lx_prive.tva_item_montant(jsonb)', jsonb_build_array('c400078a37818c12fb340768b16e4e05'),
@@ -357,15 +357,25 @@ begin
     'origine_numero', case when v_orig.id is not null then coalesce(v_orig.numero, v_orig.num::text) else null end,
     -- 2026-10-29 (lot 4b)
     'numerotation', 'Numérotation unique et continue, commune aux factures (F-) et aux factures d''avoir (A-) : un numéro qui manque dans une série figure dans l''autre (CGI, ann. II, art. 242 nonies A, I-7°).',
-    'bons', case when v_bons_tot > 0 and v_type = 'avoir' then
-      'Opération rectifiée : ' || replace(to_char(t.total_ttc + sign(t.total_ttc) * v_bons_tot, 'FM999999990.00'), '.', ',') || ' € TTC, dont '
+    -- mention récapitulative (montants en valeur absolue : un avoir annonce des montants rectifiés, jamais des montants négatifs) ;
+    -- franchise en base (art. 293 B) : aucune TVA, ni à la vente du bon ni ici -> le texte ne parle que du montant déjà encaissé
+    'bons', case when v_bons_tot > 0 and v_type = 'avoir' and v_franchise then
+      'Opération rectifiée : ' || replace(to_char(abs(t.total_ttc) + v_bons_tot, 'FM999999990.00'), '.', ',') || ' €, dont '
+      || replace(to_char(v_bons_tot, 'FM999999990.00'), '.', ',') || ' € : montant déjà encaissé lors de l''achat du bon cadeau (' || coalesce(v_bons_txt, '') || '), non repris par cet avoir. Montant du présent avoir : '
+      || replace(to_char(abs(t.total_ttc), 'FM999999990.00'), '.', ',') || ' €.'
+      when v_bons_tot > 0 and v_type = 'avoir' then
+      'Opération rectifiée : ' || replace(to_char(abs(t.total_ttc) + v_bons_tot, 'FM999999990.00'), '.', ',') || ' € TTC, dont '
       || replace(to_char(v_bons_tot, 'FM999999990.00'), '.', ',') || ' € réglés lors de l''achat du bon cadeau (' || coalesce(v_bons_txt, '') || ') : la TVA de cette part, acquittée à la vente du bon (CGI art. 256 ter), n''est pas rectifiée par cet avoir. Montant du présent avoir : '
-      || replace(to_char(t.total_ttc, 'FM999999990.00'), '.', ',') || ' € TTC.'
+      || replace(to_char(abs(t.total_ttc), 'FM999999990.00'), '.', ',') || ' € TTC.'
+      when v_bons_tot > 0 and v_franchise then
+      'Prix total de l''opération : ' || replace(to_char(t.total_ttc + v_bons_tot, 'FM999999990.00'), '.', ',') || ' €, dont '
+      || replace(to_char(v_bons_tot, 'FM999999990.00'), '.', ',') || ' € : montant déjà encaissé lors de l''achat du bon cadeau (' || coalesce(v_bons_txt, '') || '), non facturé de nouveau ici. Montant de la présente facture : '
+      || replace(to_char(t.total_ttc, 'FM999999990.00'), '.', ',') || ' €.'
       when v_bons_tot > 0 then
-      'Prix total de l''opération : ' || replace(to_char(t.total_ttc + sign(t.total_ttc) * v_bons_tot, 'FM999999990.00'), '.', ',') || ' € TTC, dont '
+      'Prix total de l''opération : ' || replace(to_char(t.total_ttc + v_bons_tot, 'FM999999990.00'), '.', ',') || ' € TTC, dont '
       || replace(to_char(v_bons_tot, 'FM999999990.00'), '.', ',') || ' € réglés lors de l''achat du bon cadeau (' || coalesce(v_bons_txt, '') || ') : TVA acquittée à la vente du bon (CGI art. 256 ter), non facturée de nouveau ici. Montant de la présente facture : '
       || replace(to_char(t.total_ttc, 'FM999999990.00'), '.', ',') || ' € TTC.' end,
-    'bon_vente', case when v_bon_vente then 'Vente d''un bon cadeau à usage unique : TVA due dès la vente du bon (CGI art. 256 ter, 1 et 3-b) ; son utilisation ne donnera pas lieu à une nouvelle TVA.' end);
+    'bon_vente', case when v_bon_vente and not v_franchise then 'Vente d''un bon cadeau à usage unique : TVA due dès la vente du bon (CGI art. 256 ter, 1 et 3-b) ; son utilisation ne donnera pas lieu à une nouvelle TVA.' end);
   -- numérotation continue par établissement (UNE seule séquence pour F- et A-, sous verrou — art. 242 nonies A, I-7° ; mention
   -- « numerotation » ci-dessus), chaînage de l'empreinte (format inchangé)
   perform pg_advisory_xact_lock(hashtext('factures_clients_' || t.salon_id::text));
@@ -397,7 +407,7 @@ revoke all on function public.lx_facture_emettre(uuid, jsonb, text) from public,
 grant execute on function public.lx_facture_emettre(uuid, jsonb, text) to authenticated, service_role;
 
 -- ===================================================================================================================== contrôles
--- Après application (lecture seule) — attendus : md5 lx_facture_emettre = be0fba3c505391aeb51d8053b7d71554 ; facture_lignes_v2 présente, non
+-- Après application (lecture seule) — attendus : md5 lx_facture_emettre = 69d6e1e2ab1b17c84d5aea9fbf7228ac ; facture_lignes_v2 présente, non
 -- exécutable par anon / authenticated ; aucune facture créée par ce fichier.
 --   select md5(pg_get_functiondef('public.lx_facture_emettre(uuid,jsonb,text)'::regprocedure));
 --   select has_function_privilege('authenticated','lx_prive.facture_lignes_v2(jsonb,jsonb,numeric,numeric,jsonb)','execute');  -> false
