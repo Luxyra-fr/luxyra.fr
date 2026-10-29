@@ -27,12 +27,15 @@ Objet : lot 4 de l'audit indépendant (constats M4, M10, M9, reste de M6, mineur
 | Factures clients établies à partir d'un ticket (`lx_facture_emettre`) | — (hors périmètre de la condition « caisse » : document commercial) | **Non** : la facture recopie le ticket scellé (aucun montant nouveau, aucune recette, aucune écriture) ; table `factures_clients` déjà inaltérable ; elle est déjà comprise dans l'archive fiscale (format `LUXYRA-NF525-ARCHIVE-1` inchangé). |
 | FEC / EBP / Quadratus : ticket « cancelled » traité comme une vente (sa paire d'annulation est le contre-ticket) ; versements Stripe (banque / frais 627 / 580100) ; FEC de test nommé « _TEST » | Archivage (§ 220 et suivants) | **Non** : exports en lecture seule ; format FEC inchangé (18 colonnes, nommage réglementaire ; seul le suffixe `_TEST` et le libellé du journal en caisse de TEST, sans valeur fiscale) ; écritures de banque ajoutées (journal BQ) à partir de données Stripe, hors données de caisse. |
 | Conditions des devis, libellés « loi anti-fraude », nombre de tickets du rapport (tickets numérotés) | — | Présentation / documents de gestion. |
+| **Révision du 29/10/2026 (contre-audit, avant mise en service)** — factures : aucune facture en caisse de TEST (`lx_facture_emettre` + déclencheur `a_lx_factures_clients_pas_de_test`), ancienne fonction `generer_facture_client` retirée, lignes calculées par la base (remise globale en ligne « Remise » par taux), mentions du vendeur exigées (n° de TVA, adresse, RCS et capital pour une société : colonnes `salons.rcs_ville` / `capital_social`), avoir sans facture d'origine refusé, vente de bon à usage multiple non facturée ; XML EN 16931 | — (document commercial, hors condition « caisse ») | **Non** : la facture recopie toujours le ticket scellé (aucun montant nouveau, aucune écriture) ; les ventes de test (sans valeur fiscale) ne peuvent plus porter de pièce inaltérable qui empêcherait leur effacement au passage en caisse réelle ; format d'empreinte des factures inchangé (`FC|…`) ; 0 facture en production. |
+| Révision du 29/10/2026 — `consommer_bon_cadeau` / `recrediter_bon_cadeau` : montant au centime (3 décimales refusées) ; `creer_ticket_avoir` (non utilisée par l'application) : règlements par bon à usage multiple repris en négatif sur le contre-ticket | Inaltérabilité, conservation | **Non** : contrôle d'entrée ajouté (le montant enregistré était déjà arrondi au centime par la colonne, seule la réponse différait) ; contre-ticket au même modèle que celui de l'application (depuis la v6.7.0). |
+| Révision du 29/10/2026 — devis (« acompte », annulation par l'établissement : remboursement total), information TVA sur frais Stripe (bordereau, e-mail au comptable), `payment_intent` des versements Stripe | — | Présentation / données de rapprochement hors caisse. |
 
 ## 3. Pourquoi « 6.8.6 »
 
 Aucun paramètre impactant l'inaltérabilité, la sécurisation, la conservation ou l'archivage n'est modifié : les contrôles sont
 ajoutés (renforcement), les formats d'empreinte, de chaînage, de clôture et d'archive sont inchangés, aucune donnée enregistrée
-n'est modifiée. Version mineure : 6.8.5 → **6.8.6** (même racine majeure 6, attestation individuelle en cours de validité).
+n'est modifiée. Version mineure : 6.8.5 → **6.8.6** (même racine majeure 6, attestation individuelle en cours de validité). La révision du 29/10/2026 (corrections du contre-audit) intervient AVANT toute publication de la 6.8.6 (0 ticket portant « 6.8.6 » en production au 29/10/2026) : elle reste la version 6.8.6 ; seule la garde de la couche données passe à 20261028-9 (nouvelles colonnes lues).
 
 ## 4. Éléments de preuve
 
@@ -41,3 +44,4 @@ n'est modifiée. Version mineure : 6.8.5 → **6.8.6** (même racine majeure 6, 
 - Essais (PostgreSQL 17.6 réel, navigateur sans affichage, base et Stripe simulés) : registre NF525, intervention -8 (bancs
   `/tmp/lot4/`).
 - Relevés de production (lecture seule, 28/10/2026) : registre NF525, intervention -8.
+- Révision du 29/10/2026 : commit b65be0b ; essais (bancs de l'auditeur sur base reconstituée depuis la production, XML validé par le schéma et le schématron Factur-X 1.09 EN16931, navigateur, worker) : registre NF525, intervention -8, « RÉVISION DU 29/10/2026 ».
