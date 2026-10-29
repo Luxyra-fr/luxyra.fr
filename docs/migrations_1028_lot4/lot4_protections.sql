@@ -45,7 +45,12 @@
 --      réception de payout.paid — webhook « comptes connectés » existant) -> rapprochement du compte 580100 dans les exports.
 --  §5  factures clients (CGI art. 289 ; ann. II art. 242 nonies A) : public.lx_facture_emettre — facture (ou facture d'avoir)
 --      établie À PARTIR D'UN TICKET SCELLÉ, numérotation continue par établissement, données recopiées du ticket (aucune nouvelle
---      recette), empreinte chaînée ; table factures_clients déjà inaltérable (déclencheur existant).
+--      recette), lignes calculées par la base (remise globale = ligne « Remise » par taux), empreinte chaînée ; table
+--      factures_clients déjà inaltérable (déclencheur existant). AUCUNE facture en caisse de TEST (fonction + déclencheur) ;
+--      ancienne fonction generer_facture_client retirée ; mentions du vendeur (n° de TVA, RCS, capital) exigées.
+-- Révision du 29/10/2026 (contre-audit NO GO) : §5 réécrit (voir son en-tête), creer_ticket_avoir reprend les règlements par bon
+-- à usage multiple en négatif, consommer_bon_cadeau / recrediter_bon_cadeau : montant au centime. Version jamais appliquée en
+-- production : la garde n'accepte que les md5 de production et ceux de CETTE révision.
 --
 -- RETOUR ARRIÈRE : docs/migrations_1028_lot4/lot4_protections_retour_arriere.sql (suppression des contrôles et fonctions, définition
 -- de PRODUCTION de creer_ticket_avoir à l'identique). Les tables créées (journal des bons, versements Stripe, colonnes des factures)
@@ -58,14 +63,16 @@
 do $$
 declare
   v_attendu constant jsonb := jsonb_build_object(
-    'public.creer_ticket_avoir(uuid,text)',          jsonb_build_array('cf9b3c1e00e45e84f5e40d48fd41f64a', 'b81e797463ad59a9cfea56477fd8e863'),
+    -- fonctions REMPLACÉES : md5 de production OU md5 posé par ce fichier (seconde exécution)
+    'public.creer_ticket_avoir(uuid,text)',          jsonb_build_array('cf9b3c1e00e45e84f5e40d48fd41f64a', 'a4b3134a35a4799a4df2a56dd9a2879c'),
+    'public.consommer_bon_cadeau(uuid,numeric,text)', jsonb_build_array('5362a2575acb47ad41b79b6e5b99a75a', 'd887fdccfcdbfcc0c88df8ab308bccad'),
+    'public.recrediter_bon_cadeau(uuid,numeric,text,text)', jsonb_build_array('901a4d8b3ef76ea13683cae00d8d32ca', 'b785b85e4a80c414e0cb676283a4b01b'),
+    'public.generer_facture_client(uuid,text,text,text,text,text,text,text,text,text)', jsonb_build_array('d2e41194b825d224acd2a979a55665ab', '25e27c4d8076f82e1e556b8d709cb527'),
     -- fonctions lues (non remplacées) dont le comportement est supposé par ce fichier
     'public.ticket_nf525_update()',                  jsonb_build_array('2efe40f4b0fa84256af05674f52c0d2f'),
     'public.tickets_nf525_protect()',                jsonb_build_array('91f7a2c1fa04b784fba7224f18bbf779'),
     'lx_prive.tickets_raw_data_fige()',              jsonb_build_array('9273bd3dea161baf7041eaf385c0f5ea'),
     'lx_prive.garde_paiements_cartes_cadeaux()',     jsonb_build_array('3420d7d3c3376546b9bab1d9b259d3f3'),
-    'public.consommer_bon_cadeau(uuid,numeric,text)', jsonb_build_array('5362a2575acb47ad41b79b6e5b99a75a'),
-    'public.recrediter_bon_cadeau(uuid,numeric,text,text)', jsonb_build_array('901a4d8b3ef76ea13683cae00d8d32ca'),
     'public.clotures_set_cumul_perpetuel()',         jsonb_build_array('f2a2530f3a8ad1824381d0dd7003f981'),
     'lx_prive.clotures_controle_journal()',          jsonb_build_array('f60dd43a409593d75f31f229ae4e0994'),
     'public.factures_clients_inalterable()',         jsonb_build_array('34ecf21db5aa72638064719a04428a47'));
@@ -179,6 +186,7 @@ returns jsonb language plpgsql security definer set search_path = public, extens
 declare
   v_user_id uuid; v_role text; o tickets%rowtype; v_avoir_id uuid; v_avoir_num int; v_now timestamptz := now();
   v_collab_nom text; v_jour date := (now() at time zone 'Europe/Paris')::date; v_items jsonb; v_det jsonb; v_ref text;
+  v_bons jsonb; b jsonb; v_rc jsonb;
 begin
   v_user_id := auth.uid();
   begin v_role := auth.role(); exception when others then v_role := null; end;
@@ -209,6 +217,13 @@ begin
     into v_items from jsonb_array_elements(case when jsonb_typeof(o.items) = 'array' then o.items else '[]'::jsonb end) e;
   select coalesce(jsonb_object_agg(d.key, case when jsonb_typeof(d.value) = 'number' then to_jsonb(-(d.value #>> '{}')::numeric) else d.value end), '{}'::jsonb)
     into v_det from jsonb_each(case when jsonb_typeof(o.detail_paiement) = 'object' then o.detail_paiement else '{}'::jsonb end) d;
+  -- 2026-10-29 (contre-audit) : règlements de l'origine par bon à usage multiple repris EN NÉGATIF sur le contre-ticket (même
+  -- modèle que l'application : entrée bonsUtil BUM négative) -> l'utilisation du bon est annulée dans lx_bons_etat (journal des
+  -- tickets) ; le solde du bon est recrédité par recrediter_bon_cadeau (utilisation tracée, journal des bons).
+  select coalesce(jsonb_agg(jsonb_build_object('id', u->'id', 'code', u->'code', 'usage', 'BUM', 'scope', u->'scope',
+                                               'montant', -round(lx_prive.tva_num(u->'montant'), 2))), '[]'::jsonb)
+    into v_bons from jsonb_array_elements(case when jsonb_typeof(o.raw_data->'bonsUtil') = 'array' then o.raw_data->'bonsUtil' else '[]'::jsonb end) u
+   where jsonb_typeof(u) = 'object' and u->>'usage' = 'BUM' and coalesce(lx_prive.tva_num(u->'montant'), 0) <> 0;
   perform set_config('lx.annulation_ticket', p_ticket_origine_id::text, true);  -- contre-ticket accepté par a_lx_tickets_0_statut (is_avoir, parent)
   insert into tickets (salon_id, num, date_ticket, heure_ticket, ts_created, client_id, client_nom, client_prenom, collaborateur_id, collaborateur_nom,
                        items, total_brut, total_remise, total_ttc, total_ht, total_tva, taux_tva, mode_paiement, detail_paiement, status,
@@ -217,8 +232,20 @@ begin
           v_items, -coalesce(o.total_brut, 0), -coalesce(o.total_remise, 0), -o.total_ttc, -o.total_ht, -o.total_tva, o.taux_tva, o.mode_paiement, v_det, 'paid',
           p_ticket_origine_id, true,
           jsonb_build_object('id', gen_random_uuid()::text, 'isCancel', true, 'cancelRef', v_ref, 'cancelMotif', left(p_motif, 200),
-                             'contraSameDay', (o.date_ticket = v_jour), 'origine', 'creer_ticket_avoir', 'lxVersion', '6.8.6'))
+                             'contraSameDay', (o.date_ticket = v_jour), 'origine', 'creer_ticket_avoir', 'lxVersion', '6.8.6')
+          || case when jsonb_array_length(v_bons) > 0 then jsonb_build_object('bonsUtil', v_bons) else '{}'::jsonb end)
   returning id, num into v_avoir_id, v_avoir_num;
+  for b in select x from jsonb_array_elements(v_bons) x loop
+    v_rc := null;
+    if coalesce(b->>'id', '') ~ '^[0-9a-fA-F-]{36}$' then
+      v_rc := public.recrediter_bon_cadeau((b->>'id')::uuid, -lx_prive.tva_num(b->'montant'), v_avoir_num::text, 'Annulation du ticket n° ' || v_ref);
+    end if;
+    if v_rc is null or coalesce(v_rc->>'ok', '') <> 'true' then
+      insert into audit_log (salon_id, action, details, operator_name)
+      values (o.salon_id, 'BON_RECREDIT_A_FAIRE', 'Contre-ticket n° ' || v_avoir_num || ' : bon ' || coalesce(b->>'code', b->>'id', '?') || ' à recréditer de ' ||
+              to_char(-lx_prive.tva_num(b->'montant'), 'FM9999999.00') || ' EUR (' || coalesce(v_rc->>'erreur', 'bon introuvable') || ')', 'creer_ticket_avoir');
+    end if;
+  end loop;
   update tickets set cancelled_at = v_now, cancel_reason = left(p_motif, 500) where id = p_ticket_origine_id;
   perform set_config('lx.annulation_ticket', '', true);
   insert into audit_log (salon_id, action, details, operator_name)
@@ -298,8 +325,10 @@ returns trigger language plpgsql security definer set search_path = public, pg_t
 declare a jsonb; n jsonb; v_nat text; v_tk text;
 begin
   if TG_OP = 'DELETE' then
-    -- suppression déverrouillée (réinitialisation d'essai, suppression d'un établissement : archivées et tracées par ces fonctions,
-    -- qui purgent aussi ce journal) : rien n'est écrit ; suppression serveur d'un bon en ligne jamais payé : tracée
+    -- suppression déverrouillée (réinitialisation d'essai, suppression d'un établissement : archivées et tracées par ces fonctions) :
+    -- rien n'est écrit. Ces fonctions NE purgent PAS ce journal : après une réinitialisation d'essai, les mouvements des bons de
+    -- l'essai y restent (sans donnée personnelle, chaîne intacte) ; seule la suppression définitive de l'établissement
+    -- (admin_delete_salon_cascade, purge par salon_id) les efface. Suppression serveur d'un bon en ligne jamais payé : tracée.
     if coalesce(current_setting('luxyra.allow_nf525_unlock', true), '') <> 'true' then
       perform lx_prive.bon_mouvement_ecrire(OLD.salon_id, OLD.id, OLD.code, 'suppression', lx_prive.bon_fiscal(OLD), null, null);
     end if;
@@ -486,6 +515,125 @@ end $$;
 revoke all on function public.lx_bons_etat(uuid, date) from public, anon;
 grant execute on function public.lx_bons_etat(uuid, date) to authenticated, service_role;
 
+
+-- 2026-10-29 (contre-audit lot 4, mineur) : consommer_bon_cadeau / recrediter_bon_cadeau — définitions de PRODUCTION (md5 5362a257… /
+-- 901a4d8b…) à l'identique, plus le contrôle du montant au centime (seule modification).
+create or replace function public.consommer_bon_cadeau(p_bon_id uuid, p_montant numeric, p_ticket text DEFAULT NULL::text)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE
+  v_bon   record;
+  v_uid   uuid;
+  v_reste numeric;
+  v_hist  jsonb;
+BEGIN
+  IF p_montant IS NULL OR p_montant <= 0 THEN
+    RETURN jsonb_build_object('ok', false, 'erreur', 'Montant invalide');
+  END IF;
+  -- 2026-10-29 (contre-audit lot 4) : montant au centime. Bruit de calcul (< 0,000001) arrondi ; 3 décimales ou plus refusées
+  -- (le solde et l'utilisé sont des numeric(10,2) : 10,005 était répondu « restant 69,995 » mais enregistré 70,00 / 30,01).
+  IF abs(p_montant - round(p_montant, 2)) >= 0.000001 THEN
+    RETURN jsonb_build_object('ok', false, 'erreur', 'Montant invalide : deux decimales au plus (centimes)');
+  END IF;
+  p_montant := round(p_montant, 2);
+
+  SELECT * INTO v_bon FROM cartes_cadeaux WHERE id = p_bon_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('ok', false, 'erreur', 'Bon cadeau introuvable');
+  END IF;
+
+  v_uid := auth.uid();
+  IF v_uid IS NOT NULL
+     AND NOT (EXISTS (SELECT 1 FROM salons s WHERE s.id = v_bon.salon_id AND s.user_id = v_uid)
+              OR public.is_admin()) THEN
+    RETURN jsonb_build_object('ok', false, 'erreur', 'Acces refuse');
+  END IF;
+
+  -- 2026-10-14 audit : paiement en ligne non confirmé -> bon inutilisable
+  IF v_bon.payment_status IS NOT NULL AND v_bon.payment_status <> 'paid' THEN
+    RETURN jsonb_build_object('ok', false, 'erreur', 'Paiement en ligne de ce bon non confirme');
+  END IF;
+  IF coalesce(v_bon.status,'') = 'voided' THEN
+    RETURN jsonb_build_object('ok', false, 'erreur', 'Ce bon a ete annule');
+  END IF;
+  IF v_bon.date_expiration IS NOT NULL AND v_bon.date_expiration < current_date THEN
+    RETURN jsonb_build_object('ok', false, 'erreur', 'Ce bon est expire');
+  END IF;
+  IF coalesce(v_bon.restant,0) < p_montant THEN
+    RETURN jsonb_build_object('ok', false, 'erreur',
+      'Solde insuffisant : ' || coalesce(v_bon.restant,0)::text || ' EUR disponibles',
+      'restant', coalesce(v_bon.restant,0));
+  END IF;
+
+  v_reste := coalesce(v_bon.restant,0) - p_montant;
+  v_hist  := coalesce(v_bon.history, '[]'::jsonb) || jsonb_build_object(
+               'date', to_char(now() AT TIME ZONE 'Europe/Paris','YYYY-MM-DD'),
+               'time', to_char(now() AT TIME ZONE 'Europe/Paris','HH24:MI'),
+               'amount', p_montant,
+               'tkNum', coalesce(p_ticket,'')
+             );
+
+  UPDATE cartes_cadeaux
+     SET restant = v_reste,
+         utilise = coalesce(utilise,0) + p_montant,
+         status  = CASE WHEN v_reste <= 0 THEN 'used' ELSE status END,
+         history = v_hist
+   WHERE id = p_bon_id;
+
+  RETURN jsonb_build_object('ok', true, 'restant', v_reste,
+                            'utilise', coalesce(v_bon.utilise,0) + p_montant,
+                            'status', CASE WHEN v_reste <= 0 THEN 'used' ELSE v_bon.status END);
+END;
+$function$;
+create or replace function public.recrediter_bon_cadeau(p_bon_id uuid, p_montant numeric, p_ticket text DEFAULT NULL::text, p_motif text DEFAULT NULL::text)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE
+  v_bon record; v_uid uuid; v_reste numeric; v_util numeric; v_hist jsonb;
+BEGIN
+  IF p_montant IS NULL OR p_montant <= 0 THEN
+    RETURN jsonb_build_object('ok', false, 'erreur', 'Montant invalide');
+  END IF;
+  -- 2026-10-29 (contre-audit lot 4) : montant au centime. Bruit de calcul (< 0,000001) arrondi ; 3 décimales ou plus refusées
+  -- (le solde et l'utilisé sont des numeric(10,2) : 10,005 était répondu « restant 69,995 » mais enregistré 70,00 / 30,01).
+  IF abs(p_montant - round(p_montant, 2)) >= 0.000001 THEN
+    RETURN jsonb_build_object('ok', false, 'erreur', 'Montant invalide : deux decimales au plus (centimes)');
+  END IF;
+  p_montant := round(p_montant, 2);
+  SELECT * INTO v_bon FROM cartes_cadeaux WHERE id = p_bon_id FOR UPDATE;
+  IF NOT FOUND THEN RETURN jsonb_build_object('ok', false, 'erreur', 'Bon cadeau introuvable'); END IF;
+  v_uid := auth.uid();
+  IF v_uid IS NULL OR NOT (EXISTS (SELECT 1 FROM salons s WHERE s.id = v_bon.salon_id AND s.user_id = v_uid) OR public.is_admin()) THEN
+    RETURN jsonb_build_object('ok', false, 'erreur', 'Acces refuse');
+  END IF;
+  IF coalesce(v_bon.status,'') = 'voided' THEN RETURN jsonb_build_object('ok', false, 'erreur', 'Ce bon a ete annule'); END IF;
+  IF coalesce(v_bon.utilise,0) + 0.004 < p_montant THEN
+    RETURN jsonb_build_object('ok', false, 'erreur', 'Montant superieur au montant utilise (' || coalesce(v_bon.utilise,0)::text || ' EUR)');
+  END IF;
+  v_reste := round(coalesce(v_bon.restant,0) + p_montant, 2);
+  v_util  := greatest(0, round(coalesce(v_bon.utilise,0) - p_montant, 2));
+  v_hist  := coalesce(v_bon.history, '[]'::jsonb) || jsonb_build_object(
+               'date', to_char(now() AT TIME ZONE 'Europe/Paris','YYYY-MM-DD'),
+               'time', to_char(now() AT TIME ZONE 'Europe/Paris','HH24:MI'),
+               'amount', -p_montant, 'tkNum', coalesce(p_ticket,''), 'motif', left(coalesce(p_motif,'recredit'),200));
+  UPDATE cartes_cadeaux
+     SET restant = v_reste, utilise = v_util,
+         status  = CASE WHEN status = 'used' AND v_reste > 0 THEN 'active' ELSE status END,
+         history = v_hist
+   WHERE id = p_bon_id;
+  INSERT INTO audit_log(salon_id, action, details, operator_name)
+  VALUES (v_bon.salon_id, 'BON_CADEAU_RECREDIT', 'Bon ' || coalesce(v_bon.code,'?') || ' recrédité de ' || p_montant || ' EUR (ticket ' || coalesce(p_ticket,'') || ') — ' || left(coalesce(p_motif,''),200), NULL);
+  RETURN jsonb_build_object('ok', true, 'restant', v_reste, 'utilise', v_util,
+                            'status', CASE WHEN v_bon.status = 'used' AND v_reste > 0 THEN 'active' ELSE v_bon.status END);
+END;
+$function$;
+
 -- ===================================================================================================================== §3
 -- ARRONDIS À L'ÉCRITURE DES CLÔTURES Z (bruit de calcul flottant de l'application : 380.79999999999995, 59.400000000000006).
 -- Seulement quand l'écart avec le centime est un BRUIT (< 0,000001) : la valeur au centime est exactement celle de l'empreinte
@@ -598,6 +746,19 @@ comment on table public.stripe_versements is 'Versements Stripe (payout.paid) re
 -- 03/10/1983 : note obligatoire pour une prestation de services d'au moins 25 € TTC, ou à la demande du client ; client
 -- professionnel : facture obligatoire, CGI art. 289, I-1-a). La facture d'un ticket déjà encaissé N'EST PAS une nouvelle recette :
 -- montants recopiés du ticket (aucun calcul nouveau, aucune écriture comptable), mention « Facture acquittée ».
+-- 2026-10-29 (contre-audit du lot 4, NO GO levé) :
+--   * BLOQUANT — AUCUNE facture en caisse de TEST (LX_FACTURE_TEST) : factures_clients.ticket_id référence le ticket SANS
+--     cascade ; une facture de test bloquait la réinitialisation d'essai (factory_reset_salon), l'effacement des ventes de test
+--     (reset_ventes_test_salon), le passage en caisse réelle et le passage automatique à l'abonnement (resté en test, seule trace
+--     NF525_INTEGRITE_KO). Refus dans lx_facture_emettre ET déclencheur a_lx_factures_clients_pas_de_test (toute insertion, tous
+--     rôles) ; l'ancienne fonction de production generer_facture_client (sans contrôle, exécutable par le propriétaire) est retirée ;
+--   * lignes de la facture calculées par la base (colonne lignes) : remise globale du ticket = ligne « Remise » négative PAR TAUX,
+--     somme des lignes = total du ticket au centime ;
+--   * n° de TVA du vendeur obligatoire hors franchise (ann. II art. 242 nonies A, I-2°) ; adresse du vendeur complète (I-1°) ;
+--   * société (SAS, SASU, SARL, EURL, SA, SNC…) : ville du greffe (mention « RCS ») et capital social obligatoires (C. com.
+--     art. R123-237, 1° et 2°, et R123-238) ; colonnes salons.rcs_ville / salons.capital_social (Paramètres › Infos établissement) ;
+--   * avoir sans facture d'origine refusé ; un avoir reprend le client de la facture qu'il rectifie ;
+--   * vente d'un bon à usage multiple (hors champ de la TVA, CGI art. 256 ter) : pas de facture de vente (voir lx_facture_emettre).
 alter table public.factures_clients add column if not exists type text not null default 'facture';         -- facture | avoir
 alter table public.factures_clients add column if not exists numero text;                                   -- n° affiché (F-000001 / A-000001 : même série)
 alter table public.factures_clients add column if not exists facture_origine_id uuid;                       -- facture rectifiée (avoir)
@@ -608,7 +769,14 @@ alter table public.factures_clients add column if not exists client_siren text;
 alter table public.factures_clients add column if not exists par_taux jsonb;                                -- [{taux, ht, tva, ttc}]
 alter table public.factures_clients add column if not exists mentions jsonb;                                -- mentions légales imprimées
 alter table public.factures_clients add column if not exists salon_forme text;
-alter table public.factures_clients add column if not exists mode_caisse text;                              -- test | reel (caisse en mode test : série TEST à part)
+alter table public.factures_clients add column if not exists mode_caisse text;                              -- toujours 'reel' (aucune facture en caisse de test)
+alter table public.factures_clients add column if not exists lignes jsonb;                                  -- [{nom, qte, ttc, ht, taux, remise}] calculées par la base
+alter table public.factures_clients add column if not exists salon_rue text;                                -- adresse du vendeur découpée (XML EN 16931)
+alter table public.factures_clients add column if not exists salon_cp text;
+alter table public.factures_clients add column if not exists salon_ville text;
+alter table public.factures_clients add column if not exists salon_pays text;
+alter table public.factures_clients add column if not exists salon_rcs text;                                -- « RCS <ville du greffe> <SIREN> »
+alter table public.factures_clients add column if not exists salon_capital numeric(14,2);
 create unique index if not exists factures_clients_num_unique on public.factures_clients (salon_id, num);
 create unique index if not exists factures_clients_ticket_unique on public.factures_clients (salon_id, ticket_id) where ticket_id is not null;
 -- l'insertion ne passe plus que par la fonction (la politique d'insertion directe ne permettait pas de garantir la numérotation)
@@ -617,12 +785,119 @@ revoke insert, update, delete on public.factures_clients from anon, authenticate
 grant select on public.factures_clients to authenticated;
 grant select, insert on public.factures_clients to service_role;
 
+-- Mentions légales du vendeur (Paramètres › Infos établissement), à côté de siret / tva / forme_juridique (même convention : colonnes)
+alter table public.salons add column if not exists rcs_ville text;                                          -- ville du greffe (mention « RCS Metz »)
+alter table public.salons add column if not exists capital_social numeric(14,2);                            -- capital social (sociétés)
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'salons_capital_social_positif') then
+    alter table public.salons add constraint salons_capital_social_positif check (capital_social is null or capital_social >= 0);
+  end if;
+end $$;
+comment on column public.salons.rcs_ville is 'Ville du greffe du RCS (mention « RCS <ville> » des factures et devis, C. com. art. R123-237, 2°). 2026-10-29, Luxyra 6.8.6.';
+comment on column public.salons.capital_social is 'Capital social en euros (sociétés, C. com. art. R123-238). 2026-10-29, Luxyra 6.8.6.';
+
+-- forme juridique d'une SOCIÉTÉ (codes de l'inscription : sas, sasu, sarl, eurl, sa… ; valeurs libres « SASU », « Société … »)
+create or replace function lx_prive.forme_societe(p text) returns boolean language sql immutable set search_path = pg_catalog as $$
+  select coalesce(lower(btrim(p)) ~ '^(sas|sasu|sarl|sarlu|eurl|sa|snc|scs|sca|selarl|selas|selasu|selafa|selca|scop|sci)([^a-z]|$)'
+                  or lower(btrim(p)) ~ '^soci[eé]t[eé]', false)
+$$;
+create or replace function lx_prive.forme_libelle(p text) returns text language sql immutable set search_path = pg_catalog as $$
+  select case when nullif(btrim(coalesce(p, '')), '') is null then null
+              when lower(btrim(p)) = 'micro' then 'Micro-entreprise'
+              when lower(btrim(p)) = 'ei' then 'Entreprise individuelle'
+              when lower(btrim(p)) = 'eirl' then 'EIRL'
+              when lx_prive.forme_societe(p) and btrim(p) !~ ' ' then upper(btrim(p))
+              else btrim(p) end
+$$;
+
+-- Lignes d'une facture : lignes du ticket au taux de chaque ligne (même règle que lx_prive.tva_ticket_lignes : taux propre si
+-- l'établissement facture la TVA, sinon produits / prestations), HT de chaque ligne = TTC / (1 + taux), puis, PAR TAUX, écart avec
+-- la ventilation enregistrée (p_par = valeurs de la Z et du FEC) : remise globale du ticket (hors lignes) -> ligne « Remise »
+-- négative ; écart d'arrondi du HT (≤ 0,02) -> porté sur la ligne la plus importante. Somme des lignes = ventilation = ticket.
+create or replace function lx_prive.facture_lignes(p_items jsonb, p_par jsonb, p_s numeric, p_p numeric)
+returns jsonb language plpgsql immutable set search_path = public, pg_temp as $$
+declare
+  v_items jsonb := case when jsonb_typeof(p_items) = 'array' then p_items else '[]'::jsonb end;
+  v_out jsonb := '[]'::jsonb; p jsonb; v_t numeric; v_l jsonb; v_sttc numeric; v_sht numeric; d_ttc numeric; d_ht numeric;
+  v_s numeric := coalesce(p_s, 0); v_p numeric; v_imax int; v_max numeric; i int; v_ptaux numeric[];
+begin
+  v_p := case when v_s > 0 then coalesce(p_p, v_s) else 0 end;
+  select coalesce(array_agg(lx_prive.tva_num(x->'taux')), '{}') into v_ptaux from jsonb_array_elements(coalesce(p_par, '[]'::jsonb)) x;
+  if exists (select 1 from jsonb_array_elements(v_items) e
+              where jsonb_typeof(e) = 'object' and not lx_prive.tva_vrai(e->'isSep') and not lx_prive.tva_vrai(e->'isAcompteData')
+                and round(lx_prive.tva_item_montant(e), 2) <> 0
+                and not (case when v_s > 0 and lx_prive.tva_num(e->'tvaTaux') is not null then lx_prive.tva_num(e->'tvaTaux')
+                              when lx_prive.tva_vrai(e->'isProd') then v_p else v_s end = any (v_ptaux))) then
+    raise exception 'LX_FACTURE_VENTILATION : le taux d''une ligne du ticket ne figure pas dans la ventilation enregistrée — facture impossible, écrivez au support (support@luxyra.fr)' using errcode = 'P0001';
+  end if;
+  for p in select x from jsonb_array_elements(coalesce(p_par, '[]'::jsonb)) x order by lx_prive.tva_num(x->'taux') desc loop
+    v_t := lx_prive.tva_num(p->'taux');
+    select coalesce(jsonb_agg(jsonb_build_object('nom', coalesce(nullif(btrim(e->>'name'), ''), 'Article'),
+                                                 'qte', coalesce(nullif(lx_prive.tva_num(e->'qty'), 0), 1),
+                                                 'ttc', round(lx_prive.tva_item_montant(e), 2),
+                                                 'ht', case when v_t > 0 then round(round(lx_prive.tva_item_montant(e), 2) / (1 + v_t / 100), 2) else round(lx_prive.tva_item_montant(e), 2) end,
+                                                 'taux', v_t, 'remise', false) order by o), '[]'::jsonb)
+      into v_l
+      from jsonb_array_elements(v_items) with ordinality as z(e, o)
+     where jsonb_typeof(e) = 'object' and not lx_prive.tva_vrai(e->'isSep') and not lx_prive.tva_vrai(e->'isAcompteData')
+       and case when v_s > 0 and lx_prive.tva_num(e->'tvaTaux') is not null then lx_prive.tva_num(e->'tvaTaux')
+                when lx_prive.tva_vrai(e->'isProd') then v_p else v_s end = v_t;
+    select coalesce(sum((x->>'ttc')::numeric), 0), coalesce(sum((x->>'ht')::numeric), 0) into v_sttc, v_sht from jsonb_array_elements(v_l) x;
+    d_ttc := round(lx_prive.tva_num(p->'ttc') - v_sttc, 2);
+    d_ht := round(lx_prive.tva_num(p->'ht') - v_sht, 2);
+    if abs(d_ttc) >= 0.005 then
+      v_l := v_l || jsonb_build_array(jsonb_build_object(
+        'nom', case when sign(d_ttc) <> sign(lx_prive.tva_num(p->'ttc')) or lx_prive.tva_num(p->'ttc') = 0 then 'Remise' else 'Ajustement' end
+               || case when array_length(v_ptaux, 1) > 1 then ' (TVA ' || replace(trim_scale(v_t)::text, '.', ',') || ' %)' else '' end,
+        'qte', 1, 'ttc', d_ttc, 'ht', d_ht, 'taux', v_t, 'remise', true));
+    elsif abs(d_ht) >= 0.005 then
+      if abs(d_ht) > 0.025 or jsonb_array_length(v_l) = 0 then
+        raise exception 'LX_FACTURE_VENTILATION : HT des lignes (taux % %%) différent de la ventilation enregistrée de % — écrivez au support', v_t, d_ht using errcode = 'P0001';
+      end if;
+      v_max := null; v_imax := 0;
+      for i in 0 .. jsonb_array_length(v_l) - 1 loop
+        if v_max is null or abs((v_l->i->>'ttc')::numeric) > v_max then v_max := abs((v_l->i->>'ttc')::numeric); v_imax := i; end if;
+      end loop;
+      v_l := jsonb_set(v_l, array[v_imax::text, 'ht'], to_jsonb(round((v_l->v_imax->>'ht')::numeric + d_ht, 2)));
+    end if;
+    v_out := v_out || v_l;
+  end loop;
+  return v_out;
+end $$;
+
+-- AUCUNE facture (de vente ou d'avoir) pour un ticket de caisse de TEST ni pour un établissement en caisse de TEST, quelle que soit la
+-- voie d'insertion (fonction, rôle serveur, administration) : une facture est une pièce inaltérable rattachée au ticket (clé
+-- étrangère sans cascade) — elle empêcherait l'effacement des ventes de test et le passage en caisse réelle.
+create or replace function lx_prive.factures_clients_pas_de_test()
+returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  if exists (select 1 from public.salons s where s.id = NEW.salon_id and s.mode_caisse = 'test')
+     or exists (select 1 from public.tickets t where t.id = NEW.ticket_id and t.mode_caisse = 'test') then
+    raise exception 'LX_FACTURE_TEST : aucune facture en caisse de TEST (ventes sans valeur, effacées au passage en caisse réelle). Les factures se font une fois la caisse réelle activée.' using errcode = 'P0001';
+  end if;
+  return NEW;
+end $$;
+drop trigger if exists a_lx_factures_clients_pas_de_test on public.factures_clients;
+create trigger a_lx_factures_clients_pas_de_test before insert on public.factures_clients for each row execute function lx_prive.factures_clients_pas_de_test();
+
+-- Ancienne fonction de PRODUCTION (md5 d2e41194…) : numérotation hors verrou, aucune mention, aucun contrôle (caisse de test
+-- comprise), exécutable par le propriétaire -> retirée (seule voie : lx_facture_emettre). Définition d'origine dans le retour arrière.
+create or replace function public.generer_facture_client(p_ticket_id uuid, p_client_nom text default null, p_client_prenom text default null,
+  p_client_adresse text default null, p_client_cp text default null, p_client_ville text default null, p_client_email text default null,
+  p_client_telephone text default null, p_client_siret text default null, p_client_tva_intracom text default null)
+returns jsonb language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  raise exception 'LX_FACTURE_VOIE_RETIREE : generer_facture_client est remplacée par lx_facture_emettre (Luxyra 6.8.6)' using errcode = 'P0001';
+end $$;
+revoke all on function public.generer_facture_client(uuid, text, text, text, text, text, text, text, text, text) from public, anon, authenticated;
+
 create or replace function public.lx_facture_emettre(p_ticket uuid, p_client jsonb, p_operateur text default null)
 returns jsonb language plpgsql security definer set search_path = public, extensions, pg_temp as $$
 declare
   t public.tickets%rowtype; s public.salons%rowtype; v_num int; v_prev text; v_hash text; v_id uuid; v_type text; v_orig public.factures_clients%rowtype;
-  v_l jsonb; v_par jsonb; v_items jsonb; v_nom text; v_adr text; v_pro boolean; v_franchise boolean; v_mentions jsonb; v_numero text;
-  v_jour date := (now() at time zone 'Europe/Paris')::date; v_ref text; v_test boolean;
+  v_l jsonb; v_par jsonb; v_items jsonb; v_lignes jsonb; v_nom text; v_prenom text; v_adr text; v_cp text; v_ville text; v_email text; v_tel text;
+  v_siren text; v_siret text; v_tvacli text; v_pro boolean; v_franchise boolean; v_mentions jsonb; v_numero text;
+  v_jour date := (now() at time zone 'Europe/Paris')::date; v_ref text; v_tva_v text; v_siren_v text; v_soc boolean; v_rcs text; v_forme text; v_vendeur text;
 begin
   select * into t from public.tickets where id = p_ticket;
   if t.id is null then raise exception 'LX_FACTURE : ticket introuvable' using errcode = 'P0001'; end if;
@@ -630,26 +905,53 @@ begin
     raise exception 'LX_REFUS : établissement non autorisé' using errcode = '42501';
   end if;
   select * into s from public.salons where id = t.salon_id;
-  -- caisse en mode TEST : facture de test (série à part, n° 900001 et suivants, préfixe TEST-) — la série réelle commence à 1
-  -- au passage en caisse réelle, sans trou ni facture d'essai mélangée
-  v_test := coalesce(t.mode_caisse, s.mode_caisse, 'reel') = 'test';
+  -- caisse de TEST : aucune facture (voir l'en-tête du §5 et le déclencheur a_lx_factures_clients_pas_de_test)
+  if coalesce(t.mode_caisse, s.mode_caisse, 'reel') = 'test' or coalesce(s.mode_caisse, 'reel') = 'test' then
+    raise exception 'LX_FACTURE_TEST : aucune facture en caisse de TEST (ventes sans valeur, effacées au passage en caisse réelle). Les factures se font une fois la caisse réelle activée.' using errcode = 'P0001';
+  end if;
   if coalesce(t.total_ttc, 0) = 0 then raise exception 'LX_FACTURE : ticket à 0 €, aucune facture' using errcode = 'P0001'; end if;
   if exists (select 1 from public.factures_clients f where f.salon_id = t.salon_id and f.ticket_id = t.id) then
     raise exception 'LX_FACTURE_DEJA : une facture existe déjà pour ce ticket (réimprimez-la)' using errcode = 'P0001';
   end if;
-  v_nom := nullif(trim(coalesce(p_client->>'nom', '')), '');
-  v_adr := nullif(trim(coalesce(p_client->>'adresse', '')), '');
-  v_pro := coalesce(p_client->>'type', '') = 'professionnel';
-  if v_nom is null or v_adr is null or nullif(trim(coalesce(p_client->>'cp', '')), '') is null or nullif(trim(coalesce(p_client->>'ville', '')), '') is null then
-    raise exception 'LX_FACTURE_CLIENT : nom et adresse complète du client obligatoires (CGI ann. II art. 242 nonies A, 2°)' using errcode = 'P0001';
-  end if;
-  if v_pro and nullif(regexp_replace(coalesce(p_client->>'siren', ''), '\s', '', 'g'), '') is null then
-    raise exception 'LX_FACTURE_CLIENT : SIREN (ou SIRET) du client professionnel obligatoire' using errcode = 'P0001';
-  end if;
-  if nullif(regexp_replace(coalesce(s.siret, ''), '\s', '', 'g'), '') is null then
+  -- vendeur (ann. II art. 242 nonies A, I-1° et 2° ; C. com. art. R123-237 et R123-238)
+  v_siren_v := left(regexp_replace(coalesce(s.siret, ''), '\D', '', 'g'), 9);
+  if length(v_siren_v) <> 9 then
     raise exception 'LX_FACTURE_VENDEUR : SIRET de l''établissement non renseigné (Paramètres › Infos établissement)' using errcode = 'P0001';
   end if;
-  -- facture d'avoir : contre-ticket (montant négatif) d'un ticket déjà facturé -> rectifie cette facture
+  if nullif(btrim(coalesce(s.adresse, '')), '') is null or nullif(btrim(coalesce(s.cp, '')), '') is null or nullif(btrim(coalesce(s.ville, '')), '') is null then
+    raise exception 'LX_FACTURE_VENDEUR : adresse de l''établissement incomplète (Paramètres › Infos établissement : Adresse, CP, Ville)' using errcode = 'P0001';
+  end if;
+  v_franchise := coalesce(t.taux_tva, 0) = 0 and coalesce(s.taux_tva, 0) = 0;
+  v_tva_v := nullif(upper(regexp_replace(coalesce(nullif(s.tva_intra, ''), s.tva, ''), '\s', '', 'g')), '');
+  if not v_franchise and v_tva_v is null then
+    raise exception 'LX_FACTURE_VENDEUR_TVA : n° de TVA intracommunautaire de l''établissement non renseigné — obligatoire sur une facture avec TVA (CGI, ann. II, art. 242 nonies A, I-2°). À saisir dans Paramètres › Infos établissement › « N° TVA intracommunautaire ».' using errcode = 'P0001';
+  end if;
+  v_soc := lx_prive.forme_societe(s.forme_juridique);
+  if v_soc and (nullif(btrim(coalesce(s.rcs_ville, '')), '') is null or s.capital_social is null) then
+    raise exception 'LX_FACTURE_VENDEUR_RCS : société (%) — ville du greffe (mention « RCS ») et capital social obligatoires sur une facture (C. com. art. R123-237 et R123-238). À saisir dans Paramètres › Infos établissement › « Mentions légales de la société ».', s.forme_juridique using errcode = 'P0001';
+  end if;
+  v_rcs := case when nullif(btrim(coalesce(s.rcs_ville, '')), '') is not null then 'RCS ' || btrim(s.rcs_ville) || ' ' || v_siren_v end;
+  v_forme := lx_prive.forme_libelle(s.forme_juridique);
+  v_vendeur := nullif(concat_ws(' — ',
+                 case when v_forme is not null then v_forme || case when s.capital_social is not null then ' au capital de ' || replace(to_char(s.capital_social, 'FM999999999990.00'), '.', ',') || ' €' else '' end end,
+                 v_rcs, 'SIREN ' || v_siren_v), '');
+  -- ventilation par taux = valeurs ENREGISTRÉES du ticket (même règle que la Z et le FEC : lx_prive.tva_ticket_lignes)
+  v_l := lx_prive.tva_ticket_lignes(t.items, t.total_ttc, t.total_ht, t.taux_tva, t.raw_data->'lxTva',
+           case when coalesce(s.taux_tva, 20) > 0 then coalesce(s.taux_tva_produits, s.taux_tva, 20) else 0 end, t.raw_data->'bonsUtil');
+  -- vente (ou annulation de vente) d'un bon à usage multiple : opération HORS CHAMP de la TVA (CGI art. 256 ter ; directive
+  -- 2016/1065 : la TVA est due à l'utilisation du bon) -> ni livraison ni prestation à facturer (CGI art. 289, I) ; un document
+  -- mêlant une catégorie hors champ (« O ») et une catégorie taxée est en outre invalide en EN 16931 (règles BR-O-11 à BR-O-14).
+  -- La facture se fait sur le ticket d'UTILISATION du bon (prestation / produit, TVA à cette date).
+  if coalesce(lx_prive.tva_num(v_l->'hc'), 0) <> 0 then
+    raise exception 'LX_FACTURE_BON_MULTIPLE : ce ticket contient la vente d''un bon cadeau à usage multiple, hors champ de la TVA (CGI art. 256 ter) — pas de facture pour cette vente. La facture s''établit sur le ticket où le bon est utilisé. Pour un bon vendu avec une prestation, encaissez-les sur deux tickets.' using errcode = 'P0001';
+  end if;
+  select coalesce(jsonb_agg(jsonb_build_object('taux', x->'t', 'ht', x->'ht', 'tva', x->'tva', 'ttc', x->'ttc') order by (x->>'t')::numeric desc), '[]'::jsonb)
+    into v_par from jsonb_array_elements(coalesce(v_l->'l', '[]'::jsonb)) x;
+  v_items := case when jsonb_typeof(t.items) = 'array' then t.items else '[]'::jsonb end;
+  v_lignes := lx_prive.facture_lignes(v_items, v_par, t.taux_tva,
+                case when coalesce(s.taux_tva, 20) > 0 then coalesce(s.taux_tva_produits, s.taux_tva, 20) else 0 end);
+  -- facture d'avoir : contre-ticket (montant négatif) d'un ticket déjà facturé -> rectifie cette facture ; sans facture d'origine :
+  -- refus (le contre-ticket suffit, un avoir ne rectifie qu'une facture)
   v_type := case when t.total_ttc < 0 then 'avoir' else 'facture' end;
   if v_type = 'avoir' then
     v_ref := coalesce(t.raw_data->>'cancelRef', t.raw_data->>'retourRefTk', '');
@@ -657,58 +959,68 @@ begin
      where f.salon_id = t.salon_id and f.type = 'facture'
        and (o.id = t.parent_ticket_id or (v_ref <> '' and (o.raw_data->>'tkNum' = v_ref or o.raw_data->>'id' = v_ref or o.num::text = v_ref)))
      order by f.num limit 1;
+    if v_orig.id is null then
+      raise exception 'LX_FACTURE_AVOIR_SANS_ORIGINE : aucune facture n''a été émise pour le ticket d''origine — une facture d''avoir ne rectifie qu''une facture. Le contre-ticket d''annulation suffit.' using errcode = 'P0001';
+    end if;
+    -- ventilation de l'avoir : taux compris dans ceux de la facture rectifiée (sinon : taux des produits changé entre la vente et
+    -- une annulation par la fonction serveur creer_ticket_avoir -> avoir incohérent avec la facture : refus, support)
+    if exists (select 1 from jsonb_array_elements(v_par) x
+                where not exists (select 1 from jsonb_array_elements(coalesce(v_orig.par_taux, '[]'::jsonb)) y where lx_prive.tva_num(y->'taux') = lx_prive.tva_num(x->'taux'))) then
+      raise exception 'LX_FACTURE_AVOIR_VENTILATION : les taux de TVA du contre-ticket ne correspondent pas à ceux de la facture % — écrivez au support (support@luxyra.fr)', coalesce(v_orig.numero, v_orig.num::text) using errcode = 'P0001';
+    end if;
+    -- même client que la facture rectifiée
+    v_nom := v_orig.client_nom; v_prenom := v_orig.client_prenom; v_adr := v_orig.client_adresse; v_cp := v_orig.client_cp; v_ville := v_orig.client_ville;
+    v_email := v_orig.client_email; v_tel := v_orig.client_telephone; v_siren := v_orig.client_siren; v_siret := v_orig.client_siret;
+    v_tvacli := v_orig.client_tva_intracom; v_pro := coalesce(v_orig.client_type, '') = 'professionnel';
+  else
+    v_nom := nullif(btrim(coalesce(p_client->>'nom', '')), ''); v_prenom := nullif(btrim(coalesce(p_client->>'prenom', '')), '');
+    v_adr := nullif(btrim(coalesce(p_client->>'adresse', '')), ''); v_cp := nullif(btrim(coalesce(p_client->>'cp', '')), ''); v_ville := nullif(btrim(coalesce(p_client->>'ville', '')), '');
+    v_email := nullif(btrim(coalesce(p_client->>'email', '')), ''); v_tel := nullif(btrim(coalesce(p_client->>'telephone', '')), '');
+    v_siren := nullif(regexp_replace(coalesce(p_client->>'siren', ''), '\s', '', 'g'), ''); v_siret := nullif(regexp_replace(coalesce(p_client->>'siret', ''), '\s', '', 'g'), '');
+    v_tvacli := nullif(upper(regexp_replace(coalesce(p_client->>'tva_intracom', ''), '\s', '', 'g')), '');
+    v_pro := coalesce(p_client->>'type', '') = 'professionnel';
+    if v_nom is null or v_adr is null or v_cp is null or v_ville is null then
+      raise exception 'LX_FACTURE_CLIENT : nom et adresse complète du client obligatoires (CGI, ann. II, art. 242 nonies A, I-1°)' using errcode = 'P0001';
+    end if;
+    if v_pro and v_siren is null then
+      raise exception 'LX_FACTURE_CLIENT : SIREN (ou SIRET) du client professionnel obligatoire' using errcode = 'P0001';
+    end if;
   end if;
-  -- ventilation par taux = valeurs ENREGISTRÉES du ticket (même règle que la Z et le FEC : lx_prive.tva_ticket_lignes)
-  v_l := lx_prive.tva_ticket_lignes(t.items, t.total_ttc, t.total_ht, t.taux_tva, t.raw_data->'lxTva',
-           case when coalesce(s.taux_tva, 20) > 0 then coalesce(s.taux_tva_produits, s.taux_tva, 20) else 0 end, t.raw_data->'bonsUtil');
-  select coalesce(jsonb_agg(jsonb_build_object('taux', x->'t', 'ht', x->'ht', 'tva', x->'tva', 'ttc', x->'ttc') order by (x->>'t')::numeric desc), '[]'::jsonb)
-    into v_par from jsonb_array_elements(coalesce(v_l->'l', '[]'::jsonb)) x;
-  if lx_prive.tva_num(v_l->'hc') is not null and lx_prive.tva_num(v_l->'hc') <> 0 then
-    v_par := v_par || jsonb_build_array(jsonb_build_object('taux', null, 'ht', v_l->'hc', 'tva', 0, 'ttc', v_l->'hc', 'hors_champ', true));
-  end if;
-  v_items := case when jsonb_typeof(t.items) = 'array' then t.items else '[]'::jsonb end;
-  v_franchise := coalesce(t.taux_tva, 0) = 0 and coalesce(s.taux_tva, 0) = 0;
   v_mentions := jsonb_build_object(
     'acquittee', case when v_type = 'facture' then 'Facture acquittée le ' || to_char(t.date_ticket, 'DD/MM/YYYY') || ' (ticket de caisse n° ' || coalesce(t.raw_data->>'tkNum', t.num::text) || ', règlement : ' || coalesce(t.mode_paiement, '') || ')'
                       else 'Avoir remboursé le ' || to_char(t.date_ticket, 'DD/MM/YYYY') || ' (ticket n° ' || coalesce(t.raw_data->>'tkNum', t.num::text) || ')' end,
     'recette', 'Facture établie à partir d''un ticket de caisse déjà enregistré : elle ne constitue pas une nouvelle recette.',
     'tva', case when v_franchise then 'TVA non applicable, art. 293 B du CGI' else null end,
+    'vendeur', v_vendeur,
     'escompte', case when v_pro then 'Escompte pour paiement anticipé : néant.' else null end,
     'penalites', case when v_pro then 'En cas de retard de paiement : pénalités au taux d''intérêt de la BCE majoré de 10 points et indemnité forfaitaire pour frais de recouvrement de 40 € (C. com. art. L441-10 et D441-5) — sans objet pour une facture acquittée.' else null end,
     'categorie', case when exists (select 1 from jsonb_array_elements(v_items) e where coalesce(e->>'isProd', '') = 'true')
-                       and exists (select 1 from jsonb_array_elements(v_items) e where coalesce(e->>'isProd', '') <> 'true' and coalesce(e->>'isSep', '') <> 'true')
+                       and exists (select 1 from jsonb_array_elements(v_items) e where coalesce(e->>'isProd', '') <> 'true' and coalesce(e->>'isSep', '') <> 'true' and coalesce(e->>'isAcompteData', '') <> 'true')
                       then 'Prestations de services et livraisons de biens'
                       when exists (select 1 from jsonb_array_elements(v_items) e where coalesce(e->>'isProd', '') = 'true') then 'Livraisons de biens'
                       else 'Prestations de services' end,
-    'rectifie', case when v_orig.id is not null then 'Avoir rectifiant la facture ' || coalesce(v_orig.numero, v_orig.num::text) || ' du ' || to_char(v_orig.date_facture, 'DD/MM/YYYY') else null end);
-  -- numérotation continue par établissement (une seule série, sous verrou), chaînage de l'empreinte
+    'rectifie', case when v_orig.id is not null then 'Avoir rectifiant la facture ' || coalesce(v_orig.numero, v_orig.num::text) || ' du ' || to_char(v_orig.date_facture, 'DD/MM/YYYY') else null end,
+    'origine_numero', case when v_orig.id is not null then coalesce(v_orig.numero, v_orig.num::text) else null end);
+  -- numérotation continue par établissement (une seule série F- / A-, sous verrou), chaînage de l'empreinte
   perform pg_advisory_xact_lock(hashtext('factures_clients_' || t.salon_id::text));
-  if v_test then
-    select coalesce(max(num), 900000) + 1 into v_num from public.factures_clients where salon_id = t.salon_id and num > 900000;
-    select hash into v_prev from public.factures_clients where salon_id = t.salon_id and num > 900000 order by num desc limit 1;
-    v_mentions := v_mentions || jsonb_build_object('test', 'FACTURE DE TEST (caisse en mode test) — sans valeur');
-  else
-    select coalesce(max(num), 0) + 1 into v_num from public.factures_clients where salon_id = t.salon_id and num <= 900000;
-    select hash into v_prev from public.factures_clients where salon_id = t.salon_id and num <= 900000 order by num desc limit 1;
-  end if;
-  v_numero := case when v_test then 'TEST-' else '' end || (case when v_type = 'avoir' then 'A-' else 'F-' end) || lpad((case when v_test then v_num - 900000 else v_num end)::text, 6, '0');
+  select coalesce(max(num), 0) + 1 into v_num from public.factures_clients where salon_id = t.salon_id;
+  select hash into v_prev from public.factures_clients where salon_id = t.salon_id order by num desc limit 1;
+  v_numero := (case when v_type = 'avoir' then 'A-' else 'F-' end) || lpad(v_num::text, 6, '0');
   v_hash := upper(encode(extensions.digest('FC|' || v_num || '|' || v_type || '|' || to_char(v_jour, 'YYYY-MM-DD') || '|' || coalesce(t.raw_data->>'tkNum', t.num::text) || '|' ||
             to_char(t.total_ttc, 'FM999999990.00') || '|' || to_char(t.total_ht, 'FM999999990.00') || '|' || coalesce(t.hash, '') || '|' || v_nom || '|' ||
             coalesce(v_prev, '') || '|' || coalesce(s.siret, ''), 'sha256'), 'hex'));
   insert into public.factures_clients (salon_id, num, numero, type, ticket_id, ticket_num, facture_origine_id, date_operation,
       client_nom, client_prenom, client_adresse, client_cp, client_ville, client_email, client_telephone, client_siret, client_siren, client_tva_intracom, client_type,
-      salon_nom, salon_siret, salon_adresse, salon_tva_intracom, salon_forme, date_facture, heure_facture, ts_created,
-      items, total_ht, total_tva, total_ttc, taux_tva, par_taux, mode_paiement, mentions, hash, hash_algo, hash_prev, operator_name, mode_caisse)
+      salon_nom, salon_siret, salon_adresse, salon_tva_intracom, salon_forme, salon_rue, salon_cp, salon_ville, salon_pays, salon_rcs, salon_capital,
+      date_facture, heure_facture, ts_created,
+      items, lignes, total_ht, total_tva, total_ttc, taux_tva, par_taux, mode_paiement, mentions, hash, hash_algo, hash_prev, operator_name, mode_caisse)
   values (t.salon_id, v_num, v_numero, v_type, t.id, coalesce(t.raw_data->>'tkNum', t.num::text), v_orig.id, t.date_ticket,
-      v_nom, nullif(trim(coalesce(p_client->>'prenom', '')), ''), v_adr, trim(p_client->>'cp'), trim(p_client->>'ville'),
-      nullif(trim(coalesce(p_client->>'email', '')), ''), nullif(trim(coalesce(p_client->>'telephone', '')), ''),
-      nullif(regexp_replace(coalesce(p_client->>'siret', ''), '\s', '', 'g'), ''), nullif(regexp_replace(coalesce(p_client->>'siren', ''), '\s', '', 'g'), ''),
-      nullif(upper(regexp_replace(coalesce(p_client->>'tva_intracom', ''), '\s', '', 'g')), ''), case when v_pro then 'professionnel' else 'particulier' end,
-      s.nom, s.siret, concat_ws(', ', nullif(s.adresse, ''), nullif(concat_ws(' ', nullif(s.cp, ''), nullif(s.ville, '')), '')),
-      case when v_franchise then null else nullif(coalesce(nullif(s.tva_intra, ''), s.tva), '') end, s.forme_juridique,
+      v_nom, v_prenom, v_adr, v_cp, v_ville, v_email, v_tel, v_siret, v_siren, v_tvacli, case when v_pro then 'professionnel' else 'particulier' end,
+      s.nom, s.siret, concat_ws(', ', nullif(btrim(s.adresse), ''), nullif(concat_ws(' ', nullif(btrim(s.cp), ''), nullif(btrim(s.ville), '')), '')),
+      case when v_franchise then null else v_tva_v end, v_forme, btrim(s.adresse), btrim(s.cp), btrim(s.ville), 'FR', v_rcs, s.capital_social,
       v_jour, (now() at time zone 'Europe/Paris')::time, now(),
-      v_items, t.total_ht, t.total_tva, t.total_ttc, t.taux_tva, v_par, t.mode_paiement, v_mentions, v_hash, 'SHA-256', coalesce(v_prev, ''), left(p_operateur, 120),
-      case when v_test then 'test' else 'reel' end)
+      v_items, v_lignes, t.total_ht, t.total_tva, t.total_ttc, t.taux_tva, v_par, t.mode_paiement, v_mentions, v_hash, 'SHA-256', coalesce(v_prev, ''), left(p_operateur, 120),
+      'reel')
   returning id into v_id;
   insert into public.audit_log (salon_id, action, details, operator_name)
   values (t.salon_id, case when v_type = 'avoir' then 'FACTURE_AVOIR_EMISE' else 'FACTURE_EMISE' end,

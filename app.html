@@ -413,12 +413,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261028-8"></script>
+<script src="luxyra-supabase.js?v=20261028-9"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261028-8";
+  var attendu="20261028-9";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -4904,23 +4904,41 @@ function chooseDevisPrintFmt(idx){
 // (C. civ. art. 1590) ; un « acompte » engage ferme les deux parties (le client resterait redevable de tout le prix) et ne se
 // « perd » pas. Retour : lignes de texte (sans HTML).
 function lxDevisConditions(validiteJours, totalTTC){
+  // 2026-10-29 (contre-audit) : texte aligné sur ce que fait RÉELLEMENT l'application. La somme demandée à la réservation est
+  // désignée comme un ACOMPTE (stipulation expresse : sans elle, C. consom. art. L214-1, les sommes versées d'avance sont des
+  // arrhes, que le professionnel qui se dédit doit restituer AU DOUBLE — C. civ. art. 1590 — ce que l'application ne fait pas).
+  // Annulation par l'établissement : l'application rembourse l'acompte EN TOTALITÉ (jamais de retenue, depuis le 13/10/2026) ;
+  // annulation par le client : remboursement selon les réglages (délai, remboursement automatique, pourcentage).
   var SC=window.SITE_CONFIG||{}, L=[], eur=function(x){ return (Math.round((Number(x)||0)*100)/100).toFixed(2).replace(".",",")+" \u20ac"; };
   L.push("Devis valable "+validiteJours+" jours \u00e0 compter de la date d\u2019\u00e9mission.");
   var m=Number(SC.acompteMontant)||0, pct=(SC.acompteType==="pourcentage"), tot=Math.max(0,Number(totalTTC)||0);
   if((SC.modeCaution||"aucun")==="acompte" && m>0 && tot>0 && !(Number(SC.acompteSeuil)>0 && tot<Number(SC.acompteSeuil))){
     var mt=pct?Math.round(tot*Math.min(m,100))/100:m; if(Number(SC.acompteMin)>0 && mt<Number(SC.acompteMin)) mt=Number(SC.acompteMin); mt=Math.min(mt,tot);
-    L.push("Arrhes \u00e0 verser \u00e0 la r\u00e9servation : "+(pct?(String(m).replace(".",",")+" % du montant, soit "):"")+eur(mt)+" ; solde le jour de la prestation.");
+    L.push("Acompte \u00e0 verser \u00e0 la r\u00e9servation : "+(pct?(String(m).replace(".",",")+" % du montant, soit "):"")+eur(mt)+" ; solde le jour de la prestation. Cette somme est un acompte, non des arrhes (code de la consommation, art. L214-1).");
     var d=String(SC.politiqueAnnul||"48h"), h=parseInt(d,10), rb=(SC.remboursementAnnul!==false), pp=Math.max(0,Math.min(100,parseInt(SC.rembPartielPct,10)||0));
-    var garde=pp>0?(pp+" % des arrhes rembours\u00e9s, le reste conserv\u00e9 par l\u2019\u00e9tablissement"):"arrhes conserv\u00e9es par l\u2019\u00e9tablissement";
-    if(rb && h>0) L.push("Annulation par le client plus de "+h+" h avant la prestation : arrhes rembours\u00e9es ; moins de "+h+" h avant : "+garde+".");
-    else if(rb && h===0) L.push("Annulation par le client avant la prestation : arrhes rembours\u00e9es.");
+    var garde=pp>0?(pp+" % de l\u2019acompte rembours\u00e9s, le reste conserv\u00e9 par l\u2019\u00e9tablissement"):"acompte conserv\u00e9 par l\u2019\u00e9tablissement";
+    if(rb && h>0) L.push("Annulation par le client plus de "+h+" h avant la prestation : acompte rembours\u00e9 ; moins de "+h+" h avant : "+garde+".");
+    else if(rb && h===0) L.push("Annulation par le client avant la prestation : acompte rembours\u00e9.");
     else L.push("Annulation par le client : "+garde+".");
-    L.push("Annulation par l\u2019\u00e9tablissement : arrhes rembours\u00e9es au double (code de la consommation, art. L214-1 ; code civil, art. 1590).");
+    L.push("Annulation par l\u2019\u00e9tablissement : acompte rembours\u00e9 en totalit\u00e9.");
   } else {
     L.push("Aucune somme n\u2019est demand\u00e9e \u00e0 l\u2019avance : r\u00e8glement le jour de la prestation.");
   }
   return L;
 }
+// 2026-10-29 : mentions légales d'une société (C. com. art. R123-237 et R123-238) — forme, capital social, « RCS <ville du greffe> <SIREN> »
+// (Paramètres › Infos établissement) ; aussi imprimées sur les factures (par la base). Vide pour une entreprise individuelle sans RCS.
+function lxMentionsSociete(){
+  var C=SALON_CONFIG||{}, f=(typeof lxFormeJurLabel==="function")?lxFormeJurLabel():"", siren=String(C.siret||"").replace(/\D/g,"").slice(0,9), P=[];
+  var cap=(C.capitalSocial!=null&&C.capitalSocial!==""&&isFinite(Number(C.capitalSocial)))?Number(C.capitalSocial):null;
+  if(f && (lxEstSociete() || cap!=null)) P.push(f+(cap!=null?" au capital de "+cap.toFixed(2).replace(".",",")+" \u20ac":""));
+  if(String(C.rcsVille||"").trim() && siren.length===9) P.push("RCS "+String(C.rcsVille).trim()+" "+siren);
+  return P.join(" \u2014 ");
+}
+window.lxMentionsSociete=lxMentionsSociete;
+// même règle que la base (lx_prive.forme_societe) : société -> ville du greffe (RCS) et capital obligatoires sur les factures
+function lxEstSociete(){ var c=String(SALON_CONFIG.formeJuridiqueCode||"").trim().toLowerCase(); return /^(sas|sasu|sarl|sarlu|eurl|sa|snc|scs|sca|selarl|selas|selasu|selafa|selca|scop|sci)([^a-z]|$)/.test(c) || /^soci[e\u00e9]t[e\u00e9]/.test(c); }
+window.lxEstSociete=lxEstSociete;
 window.lxDevisConditions=lxDevisConditions;
 function printDevis(idx,printFmt){
   var dv=window.DEVIS[idx];if(!dv)return;
@@ -5052,6 +5070,7 @@ function printDevis(idx,printFmt){
   h+="<strong>"+nomComplet+"</strong>";
   if(siret)h+="<br>SIRET : "+siret; else h+="<br>SIRET : en cours d'attribution";
   if(tvaIntra&&showTVA)h+="<br>TVA : "+tvaIntra;
+  try{ var _msA=lxMentionsSociete(); if(_msA) h+="<br>"+escapeHtml(_msA); }catch(_eMs){} // 2026-10-29 : forme, capital, RCS
   h+="</div></div>";
   h+="<div class='col'><div class='col-title'>Client</div><div class='col-content'>";
   h+="<strong>"+(clientLine1||"—")+"</strong>";
@@ -5223,6 +5242,7 @@ function printDevisThermal(idx){
   if(SALON_CONFIG.tel)h+="<div class='c'>Tel: "+SALON_CONFIG.tel+"</div>";
   if(siret)h+="<div class='c' style='font-size:9px;margin-top:2px'>SIRET "+siret+"</div>"; else h+="<div class='c' style='font-size:9px;margin-top:2px'>SIRET en cours d'attribution</div>";
   if(showTVA&&tvaIntra)h+="<div class='c' style='font-size:9px'>TVA "+tvaIntra+"</div>";
+  try{ var _msT=lxMentionsSociete(); if(_msT) h+="<div class='c' style='font-size:9px'>"+escapeHtml(_msT)+"</div>"; }catch(_eMs){} // 2026-10-29
 
   h+="<hr>";
 
@@ -5570,6 +5590,7 @@ function _buildDevisEmailHtml(dv){
   h += 'Pour valider ce devis, veuillez nous répondre par email ou par téléphone.<br>';
   h += '<strong>'+nomComplet+'</strong>';
   if(siret) h += ' — SIRET '+siret;
+  try{ var _msE=lxMentionsSociete(); if(_msE) h += ' — '+escapeHtml(_msE); }catch(_eMs){} // 2026-10-29
   h += '</div>';
 
   h += '</div>';
@@ -15365,8 +15386,8 @@ function saveSalonInfo(){
   var _idAv=null; // 2026-10-14 : valeurs avant modification (remises en memoire si l'identite est refusee)
   // 2026-10-11 (NF525, JET 410) : trace du changement des données d'identification de l'assujetti
   try{
-    _idAv={nom:SALON_CONFIG.nom||"",adresse:SALON_CONFIG.adresse||"",cp:SALON_CONFIG.cp||"",ville:SALON_CONFIG.ville||"",siret:SALON_CONFIG.siret||"",tva:SALON_CONFIG.tva||""};
-    var _idAp={nom:S.nom||SALON_CONFIG.nom||"",adresse:S.adr||"",cp:S.cp||"",ville:S.ville||"",siret:S.siret||"",tva:S.tva||""};
+    _idAv={nom:SALON_CONFIG.nom||"",adresse:SALON_CONFIG.adresse||"",cp:SALON_CONFIG.cp||"",ville:SALON_CONFIG.ville||"",siret:SALON_CONFIG.siret||"",tva:SALON_CONFIG.tva||"",rcs:SALON_CONFIG.rcsVille||"",capital:(SALON_CONFIG.capitalSocial!=null?String(SALON_CONFIG.capitalSocial):"")};
+    var _idAp={nom:S.nom||SALON_CONFIG.nom||"",adresse:S.adr||"",cp:S.cp||"",ville:S.ville||"",siret:S.siret||"",tva:S.tva||"",rcs:String(S.rcsVille||"").trim(),capital:String(S.capitalSocial||"").trim()};
     var _idCh=Object.keys(_idAv).filter(function(k){ return String(_idAv[k]).trim()!==String(_idAp[k]).trim(); });
     if(_idCh.length&&typeof auditLog==="function") auditLog("CONFIG_IDENTITE", _idCh.map(function(k){ return k+" : « "+_idAv[k]+" » → « "+_idAp[k]+" »"; }).join(" ; ").slice(0,900));
   }catch(_eId){}
@@ -15380,6 +15401,11 @@ function saveSalonInfo(){
   SALON_CONFIG.email=S.email||"";
   SALON_CONFIG.siret=String(S.siret||"").replace(/\s+/g,"");
   SALON_CONFIG.tva=S.tva||"";
+  // 2026-10-29 : mentions légales de la société (RCS, capital) — capital : nombre positif (virgule acceptée), sinon non modifié
+  var _capS=String(S.capitalSocial==null?"":S.capitalSocial).replace(/\s/g,"").replace(",","."), _cap=(_capS!==""&&isFinite(Number(_capS))&&Number(_capS)>=0)?Math.round(Number(_capS)*100)/100:null;
+  if(_capS!==""&&_cap===null){ showAlert("Capital social : montant en euros attendu (ex. 1000).","warning"); return; }
+  SALON_CONFIG.rcsVille=String(S.rcsVille||"").trim().slice(0,80);
+  if(_cap!==null) SALON_CONFIG.capitalSocial=_cap;
   SALON_CONFIG.logo=S.logo||"";
   // Réseaux sociaux (normalise les @pseudo en URL complètes)
   SALON_CONFIG.facebookUrl = _normalizeSocialUrl(S.facebookUrl||"", "facebook");
@@ -15412,7 +15438,8 @@ function saveSalonInfo(){
       // 2026-10-13 : SIRET envoyé seulement s'il est rempli. Un salon « en cours d'immatriculation »
       // (SIRET vide en base) envoyait siret:"" -> refusé par le contrôle SIRET -> TOUTE la mise à jour
       // échouait en silence (note des tickets, logo, téléphone… perdus au rechargement).
-      siret:(String(SALON_CONFIG.siret||"").replace(/\s+/g,"")||undefined), tva:SALON_CONFIG.tva  // 2026-10-15 : espaces retirés (« 789 965 951 00039 » était refusé)
+      siret:(String(SALON_CONFIG.siret||"").replace(/\s+/g,"")||undefined), tva:SALON_CONFIG.tva,  // 2026-10-15 : espaces retirés (« 789 965 951 00039 » était refusé)
+      rcs_ville:SALON_CONFIG.rcsVille, capital_social:(_cap!==null?_cap:undefined)  // 2026-10-29 : mentions légales de la société (factures, devis)
     });
     // 2026-10-15 : seuls les champs MODIFIES depuis l'ouverture du formulaire sont envoyes (logo / note du ticket
     // ne sont plus jamais ecrases par une valeur vide venue d'un formulaire incomplet ou d'un autre appareil).
@@ -16822,7 +16849,7 @@ function rSettings(){
   else if(settTab==="salon"){
     // Init/merge depuis SALON_CONFIG (avant : si window.SALON existait déjà avec {}, les champs restaient undefined → "undefined" affiché en value)
     if(!window.SALON) window.SALON={};
-    var _salonDefaults = {nom:SALON_CONFIG.nom||"",sousTitre:SALON_CONFIG.sousTitre||"",adr:SALON_CONFIG.adresse||"",cp:SALON_CONFIG.cp||"",ville:SALON_CONFIG.ville||"",tel:SALON_CONFIG.tel||"",email:SALON_CONFIG.email||"",siret:SALON_CONFIG.siret||"",tva:SALON_CONFIG.tva||"",logo:SALON_CONFIG.logo||"",subdomain:SALON_CONFIG.subdomain||"",facebookUrl:SALON_CONFIG.facebookUrl||"",instagramUrl:SALON_CONFIG.instagramUrl||"",tiktokUrl:SALON_CONFIG.tiktokUrl||"",noteTicket:SALON_CONFIG.noteTicket||""};
+    var _salonDefaults = {nom:SALON_CONFIG.nom||"",sousTitre:SALON_CONFIG.sousTitre||"",adr:SALON_CONFIG.adresse||"",cp:SALON_CONFIG.cp||"",ville:SALON_CONFIG.ville||"",tel:SALON_CONFIG.tel||"",email:SALON_CONFIG.email||"",siret:SALON_CONFIG.siret||"",tva:SALON_CONFIG.tva||"",logo:SALON_CONFIG.logo||"",subdomain:SALON_CONFIG.subdomain||"",facebookUrl:SALON_CONFIG.facebookUrl||"",instagramUrl:SALON_CONFIG.instagramUrl||"",tiktokUrl:SALON_CONFIG.tiktokUrl||"",noteTicket:SALON_CONFIG.noteTicket||"",rcsVille:SALON_CONFIG.rcsVille||"",capitalSocial:(SALON_CONFIG.capitalSocial!=null?String(SALON_CONFIG.capitalSocial):"")};
     Object.keys(_salonDefaults).forEach(function(k){ if(window.SALON[k]==null||typeof window.SALON[k]==="undefined") window.SALON[k]=_salonDefaults[k]; });
     // 2026-10-15 : logo et note du ticket toujours repris des valeurs enregistrees (SALON_CONFIG) si le formulaire
     // n'a rien de plus recent ; photo des valeurs a l'ouverture -> a l'enregistrement on n'ecrit QUE ce qui a change
@@ -16883,6 +16910,14 @@ function rSettings(){
     h+='<input id="tvaInput" value="'+(S.tva||"").replace(/"/g,"&quot;")+'" placeholder="FR12345678901" onchange="window.SALON.tva=this.value" oninput="(function(self){var v=lxValidateTvaFr(self.value);var b=document.getElementById(\'tvaBadge\');if(b)b.innerHTML=lxValidationBadge(v);})(this)">';
     h+='<div style="font-size:10px;color:var(--text3);margin-top:4px" id="tvaHelpMsg">'+(_tvaValid.ok?'<span style="color:#4caf50">\u2713 '+_tvaValid.msg+'</span>':_tvaValid.msg!=="Non renseign\u00e9"?'<span style="color:#ef5350">\u26a0 '+_tvaValid.msg+'</span>':'<span style="color:rgba(255,255,255,.5)">Optionnel \u2014 laissez vide si non assujetti TVA (r\u00e9gime micro-BIC sans option)</span>')+'</div></div>';
     h+='</div>';
+    // 2026-10-29 (contre-audit lot 4) : mentions légales d'une société (C. com. art. R123-237 et R123-238), imprimées sur les
+    // factures et les devis ; OBLIGATOIRES pour émettre une facture si la forme juridique est une société (SAS, SASU, SARL, EURL, SA…).
+    var _soc=(typeof lxEstSociete==="function")&&lxEstSociete();
+    h+='<div style="margin:14px 0 6px;font-size:12px;font-weight:700;color:var(--gold);letter-spacing:1px;text-transform:uppercase">\ud83c\udfdb Mentions l\u00e9gales de la soci\u00e9t\u00e9</div>';
+    h+='<div style="font-size:11px;color:var(--text3);margin-bottom:6px">'+(_soc?'<span style="color:#ffb74d">Obligatoires pour vos factures</span> (forme juridique : '+_lxAttr((typeof lxFormeJurLabel==="function"&&lxFormeJurLabel())||"soci\u00e9t\u00e9")+'). ':'Facultatif pour une entreprise individuelle. ')+'Imprim\u00e9es sur les factures et les devis : \u00ab RCS &lt;ville du greffe&gt; &lt;SIREN&gt; \u00bb et capital social (Kbis).</div>';
+    h+='<div style="display:grid;grid-template-columns:2fr 1fr;gap:10px">';
+    h+='<div class="fg"><label>Ville du greffe (RCS)'+(_soc?' *':'')+'</label><input id="rcsVilleInput" value="'+_lxAttr(S.rcsVille||"")+'" placeholder="ex. Metz" maxlength="80" onchange="window.SALON.rcsVille=this.value.trim()"></div>';
+    h+='<div class="fg"><label>Capital social (\u20ac)'+(_soc?' *':'')+'</label><input id="capitalSocialInput" inputmode="decimal" value="'+_lxAttr(S.capitalSocial||"")+'" placeholder="ex. 1000" onchange="window.SALON.capitalSocial=this.value.trim()"></div></div>';
     // 2026-10-09 : note libre imprimée en bas de chaque ticket (ex. conditions d'échange)
     h+='<div class="fg" style="margin-top:12px"><label>Note en bas des tickets <span style="font-size:10px;color:var(--text3)">(ex. conditions d\u2019\u00e9change des produits)</span></label>';
     h+='<textarea id="noteTicketInput" maxlength="600" rows="4" style="width:100%;resize:vertical" placeholder="Ex. : Les produits peuvent \u00eatre \u00e9chang\u00e9s sous 15 jours, non ouverts, sur pr\u00e9sentation du ticket." oninput="window.SALON.noteTicket=this.value;var c=document.getElementById(\'noteTicketCount\');if(c)c.textContent=this.value.length+\'/600\'">'+escapeHtml(S.noteTicket||"")+'</textarea>';
@@ -25998,6 +26033,8 @@ async function expBordereauStripe(){
       footer.push(["Total des versements du mois", "encaissements "+csvNum(_tb)+" \u20ac \u2212 frais Stripe "+csvNum(_tf)+" \u20ac = vir\u00e9 en banque "+csvNum(_tn)+" \u20ac"]);
     } else footer.push(["Versements Stripe", "Aucun versement re\u00e7u enregistr\u00e9 ce mois (les versements sont relev\u00e9s automatiquement \u00e0 leur arriv\u00e9e en banque)."]);
   }catch(_eVsB){}
+  // 2026-10-29 (contre-audit, réserve) : TVA sur les frais Stripe — ligne d'INFORMATION, aucune écriture générée
+  footer.push(["TVA sur les frais Stripe (information)", "Frais factur\u00e9s par Stripe Payments Europe Ltd (Irlande), sans TVA fran\u00e7aise. Selon leur nature : exon\u00e9ration (services de paiement, CGI art. 261 C) ou TVA due par le salon en autoliquidation (CGI art. 283-2), \u00e0 d\u00e9clarer sur la CA3. \u00c0 v\u00e9rifier par votre comptable sur les factures mensuelles de Stripe (tableau de bord Stripe \u203a Documents). Luxyra ne g\u00e9n\u00e8re aucune \u00e9criture de TVA sur ces frais."]);
   csvDownload("bordereau_stripe_"+accM+".csv", csvBuildPro("Bordereau acomptes en ligne (Stripe Connect)", accM, headers, dataRows, footer));
   if(typeof auditLog==="function") auditLog("EXPORT_BORDEREAU_STRIPE","P\u00e9riode "+accM+" - "+rdvOnline.length+" acomptes - Brut "+csvNum(totalBrut));
 }
@@ -34939,7 +34976,7 @@ function rTickets(){
       h+='<div style="display:flex;gap:6px;flex-wrap:wrap">';
       h+='<button class="btn bs" style="font-size:11px;padding:5px 10px" onclick="reprintTicket(\''+a.id+'\')">\ud83d\udda8 Imprimer</button>';
       h+='<button class="btn bs" style="font-size:11px;padding:5px 10px" onclick="emailTicket(\''+a.id+'\')">\u2709 Email</button>';
-      h+='<button class="btn bs" style="font-size:11px;padding:5px 10px" onclick="lxFactureOuvrir(\''+a.id+'\')">\ud83e\uddfe Facture d\u2019avoir</button>'; // 2026-10-28 (-8, 6.8.6)
+      h+=lxFactureBouton(a.id,true); // 2026-10-28 (-8, 6.8.6) ; 2026-10-29 : désactivé en caisse de TEST
       h+='<span style="font-size:11px;color:var(--text3);align-self:center">Contre-ticket d\u2019annulation (r\u00e9f. #'+(a.cancelRef||"--")+')</span>';
       h+='</div>';
     }
@@ -34947,7 +34984,7 @@ function rTickets(){
       h+='<div style="display:flex;gap:6px;flex-wrap:wrap">';
       h+='<button class="btn bs" style="font-size:11px;padding:5px 10px" onclick="reprintTicket(\''+a.id+'\')">\ud83d\udda8 Imprimer</button>';
       h+='<button class="btn bs" style="font-size:11px;padding:5px 10px" onclick="emailTicket(\''+a.id+'\')">\u2709 Email</button>';
-      h+='<button class="btn bs" style="font-size:11px;padding:5px 10px" onclick="lxFactureOuvrir(\''+a.id+'\')">\ud83e\uddfe Facture</button>'; // 2026-10-28 (-8, 6.8.6) : facture à partir du ticket
+      h+=lxFactureBouton(a.id,false); // 2026-10-28 (-8, 6.8.6) : facture à partir du ticket ; 2026-10-29 : désactivé en caisse de TEST
       h+='<button class="btn bs" style="font-size:11px;padding:5px 10px;color:#a29bfe;border-color:rgba(108,92,231,.3)" onclick="corrigerCollabVente(\''+a.id+'\')">✏️ Modifier collaborateur</button>';
       h+='<button class="btn bs" style="font-size:11px;padding:5px 10px;color:#e8c873;border-color:rgba(200,168,78,.3)" onclick="modifReglement(\''+a.id+'\')">💳 Modifier règlement</button>';
       h+='<button class="btn bs" style="font-size:11px;padding:5px 10px;color:var(--red);border-color:rgba(244,67,54,.2)" onclick="deleteTicket(\''+a.id+'\')">\u274c Avoir / Annuler</button>';
@@ -39815,10 +39852,23 @@ async function _lxTicketBase(a){
   if(a.dbId){ try{ var r2=await _sb.from("tickets").select("id,num,date_ticket,total_ttc,total_ht,total_tva,taux_tva,client_id,status").eq("id",a.dbId).limit(1); if(r2&&!r2.error&&r2.data&&r2.data[0]) return r2.data[0]; }catch(_e2){} }
   return null;
 }
+// 2026-10-29 (contre-audit lot 4) : AUCUNE facture en caisse de TEST (refus de la base LX_FACTURE_TEST) : une facture est une
+// pièce inaltérable rattachée au ticket ; elle empêcherait l'effacement des ventes de test et le passage en caisse réelle.
+function lxFactureBouton(apId, avoir){
+  var lib=avoir?"🧾 Facture d’avoir":"🧾 Facture";
+  if(window.LX_MODE_CAISSE==="test") return '<button class="btn bs" style="font-size:11px;padding:5px 10px;opacity:.45" title="Pas de facture en caisse de test" onclick="lxFactureTestInfo()">'+lib+'</button>';
+  return '<button class="btn bs" style="font-size:11px;padding:5px 10px" onclick="lxFactureOuvrir(\''+apId+'\')">'+lib+'</button>';
+}
+window.lxFactureBouton=lxFactureBouton;
+function lxFactureTestInfo(){
+  showAlert("Pas de facture en caisse de test : les ventes de test n’ont aucune valeur et sont effacées au passage en caisse réelle (une facture, elle, ne peut jamais être supprimée). Les factures sont disponibles dès que la caisse réelle est activée (Paramètres › Conformité caisse › passer en caisse réelle).","info");
+}
+window.lxFactureTestInfo=lxFactureTestInfo;
 async function lxFactureOuvrir(apId){
   var a=null; for(var i=0;i<AP.length;i++){ if(AP[i]&&AP[i].id===apId){ a=AP[i]; break; } }
   if(!a){ toast("Ticket introuvable","error"); return; }
   if(window._lxDemo){ showAlert("Démonstration : la facture n’est pas enregistrée.","info"); return; }
+  if(window.LX_MODE_CAISSE==="test"){ lxFactureTestInfo(); return; }
   if(typeof _sb==="undefined"||!_sb||!_salonId){ showAlert("Connexion nécessaire pour établir une facture (numérotation par le serveur).","warning"); return; }
   var t=await _lxTicketBase(a);
   if(!t){ showAlert("Ce ticket n’est pas encore enregistré sur le serveur : réessayez dans un instant (la facture reprend le ticket enregistré).","warning"); return; }
@@ -39828,22 +39878,30 @@ async function lxFactureOuvrir(apId){
   var v=function(x){ return _lxFcEsc(x||""); };
   var inp=function(id,lab,val,ph){ return '<label style="font-size:12px;color:var(--text3);display:block;margin:8px 0 3px">'+lab+'</label><input id="'+id+'" value="'+v(val)+'" placeholder="'+v(ph||"")+'" style="width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.06);color:#fff;font-size:14px">'; };
   var h='<div class="mbox" style="max-width:460px;max-height:90vh;overflow-y:auto"><h2>🧾 '+(av?"Facture d’avoir":"Facture")+' du ticket n°'+_lxFcEsc(a.tkNum||t.num)+'</h2>';
-  h+='<div style="font-size:12px;color:var(--text2);line-height:1.5;margin-bottom:6px">La facture reprend le ticket <strong>'+_lxFcEur(t.total_ttc)+'</strong> du '+_lxFcDate(t.date_ticket)+' (lignes, TVA par taux). Elle ne crée aucune nouvelle recette. Une fois émise, elle est numérotée et ne peut plus être modifiée : vérifiez les coordonnées du client.</div>';
-  h+='<div style="display:flex;gap:8px;margin-top:6px"><label style="flex:1;font-size:13px"><input type="radio" name="fcType" value="particulier" checked onchange="document.getElementById(\'fcPro\').style.display=\'none\'"> Particulier</label><label style="flex:1;font-size:13px"><input type="radio" name="fcType" value="professionnel" onchange="document.getElementById(\'fcPro\').style.display=\'block\'"> Professionnel</label></div>';
-  h+=inp("fcNom","Nom ou raison sociale *",cl?cl.nom:"")+inp("fcPrenom","Prénom",cl?cl.pre:"")+inp("fcAdr","Adresse *",cl?cl.adresse:"")+'<div style="display:flex;gap:8px"><div style="flex:1">'+inp("fcCp","Code postal *",cl?cl.cp:"")+'</div><div style="flex:2">'+inp("fcVille","Ville *",cl?cl.ville:"")+'</div></div>'+inp("fcEmail","E-mail",cl?cl.email:"");
-  h+='<div id="fcPro" style="display:none">'+inp("fcSiren","SIREN ou SIRET du client *","","9 ou 14 chiffres")+inp("fcTva","N° de TVA intracommunautaire du client","","FR…")+'</div>';
-  h+='<div style="display:flex;gap:8px;margin-top:14px"><button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Annuler</button><button class="btn bg" style="flex:2;font-weight:800" onclick="lxFactureEmettre(\''+a.id+'\',\''+t.id+'\')">Émettre la facture</button></div></div>';
+  if(av){
+    h+='<div style="font-size:12px;color:var(--text2);line-height:1.5;margin-bottom:6px">La facture d’avoir reprend le contre-ticket <strong>'+_lxFcEur(t.total_ttc)+'</strong> du '+_lxFcDate(t.date_ticket)+'. Elle rectifie la facture émise pour le ticket d’origine, au nom du <strong>même client</strong>. Sans facture d’origine, aucune facture d’avoir n’est possible : le contre-ticket suffit.</div>';
+  } else {
+    h+='<div style="font-size:12px;color:var(--text2);line-height:1.5;margin-bottom:6px">La facture reprend le ticket <strong>'+_lxFcEur(t.total_ttc)+'</strong> du '+_lxFcDate(t.date_ticket)+' (lignes, remise, TVA par taux). Elle ne crée aucune nouvelle recette. Une fois émise, elle est numérotée et ne peut plus être modifiée : vérifiez les coordonnées du client.</div>';
+    h+='<div style="display:flex;gap:8px;margin-top:6px"><label style="flex:1;font-size:13px"><input type="radio" name="fcType" value="particulier" checked onchange="document.getElementById(\'fcPro\').style.display=\'none\'"> Particulier</label><label style="flex:1;font-size:13px"><input type="radio" name="fcType" value="professionnel" onchange="document.getElementById(\'fcPro\').style.display=\'block\'"> Professionnel</label></div>';
+    h+=inp("fcNom","Nom ou raison sociale *",cl?cl.nom:"")+inp("fcPrenom","Prénom",cl?cl.pre:"")+inp("fcAdr","Adresse *",cl?cl.adresse:"")+'<div style="display:flex;gap:8px"><div style="flex:1">'+inp("fcCp","Code postal *",cl?cl.cp:"")+'</div><div style="flex:2">'+inp("fcVille","Ville *",cl?cl.ville:"")+'</div></div>'+inp("fcEmail","E-mail",cl?cl.email:"");
+    h+='<div id="fcPro" style="display:none">'+inp("fcSiren","SIREN ou SIRET du client *","","9 ou 14 chiffres")+inp("fcTva","N° de TVA intracommunautaire du client","","FR…")+'</div>';
+  }
+  h+='<div style="display:flex;gap:8px;margin-top:14px"><button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Annuler</button><button class="btn bg" style="flex:2;font-weight:800" onclick="lxFactureEmettre(\''+a.id+'\',\''+t.id+'\','+(av?'true':'false')+')">Émettre '+(av?'la facture d’avoir':'la facture')+'</button></div></div>';
   document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+h+'</div></div>';
 }
 window.lxFactureOuvrir=lxFactureOuvrir;
-async function lxFactureEmettre(apId, ticketId){
+async function lxFactureEmettre(apId, ticketId, avoir){
   if(guardDoubleClick&&guardDoubleClick("facture")) return;
+  if(window.LX_MODE_CAISSE==="test"){ lxFactureTestInfo(); return; }
   var g=function(id){ var e=document.getElementById(id); return e?String(e.value||"").trim():""; };
-  var typ=(document.querySelector('input[name="fcType"]:checked')||{}).value||"particulier";
-  var c={type:typ, nom:g("fcNom"), prenom:g("fcPrenom"), adresse:g("fcAdr"), cp:g("fcCp"), ville:g("fcVille"), email:g("fcEmail"), siren:g("fcSiren"), tva_intracom:g("fcTva")};
-  if(!c.nom||!c.adresse||!c.cp||!c.ville){ showAlert("Nom et adresse complète du client obligatoires sur une facture.","warning"); return; }
-  if(typ==="professionnel"&&!/^\d{9}(\d{5})?$/.test(c.siren.replace(/\s/g,""))){ showAlert("SIREN (9 chiffres) ou SIRET (14 chiffres) du client professionnel obligatoire.","warning"); return; }
-  if(typ==="professionnel"&&c.siren.replace(/\s/g,"").length===14){ c.siret=c.siren.replace(/\s/g,""); c.siren=c.siret.slice(0,9); }
+  var c={};
+  if(!avoir){ // facture d'avoir : la base reprend le client de la facture rectifiée
+    var typ=(document.querySelector('input[name="fcType"]:checked')||{}).value||"particulier";
+    c={type:typ, nom:g("fcNom"), prenom:g("fcPrenom"), adresse:g("fcAdr"), cp:g("fcCp"), ville:g("fcVille"), email:g("fcEmail"), siren:g("fcSiren"), tva_intracom:g("fcTva")};
+    if(!c.nom||!c.adresse||!c.cp||!c.ville){ showAlert("Nom et adresse complète du client obligatoires sur une facture.","warning"); return; }
+    if(typ==="professionnel"&&!/^\d{9}(\d{5})?$/.test(c.siren.replace(/\s/g,""))){ showAlert("SIREN (9 chiffres) ou SIRET (14 chiffres) du client professionnel obligatoire.","warning"); return; }
+    if(typ==="professionnel"&&c.siren.replace(/\s/g,"").length===14){ c.siret=c.siren.replace(/\s/g,""); c.siren=c.siret.slice(0,9); }
+  }
   var op=(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR)?((CURRENT_OPERATOR.prenom||"")+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:"")).trim():null;
   var r=await _sb.rpc("lx_facture_emettre",{p_ticket:ticketId, p_client:c, p_operateur:op});
   if(!r||r.error||!r.data||!r.data.ok){ showAlert("Facture non émise : "+String((r&&r.error&&r.error.message)||"erreur").replace(/^LX_\w+ : /,""),"warning"); return; }
@@ -39853,65 +39911,84 @@ async function lxFactureEmettre(apId, ticketId){
   if(f&&f.data&&f.data[0]) lxFactureAfficher(f.data[0]);
 }
 window.lxFactureEmettre=lxFactureEmettre;
-// Lignes de la facture : HT de chaque ligne ajusté au centime pour que la somme par taux = HT ENREGISTRÉ du ticket (par_taux)
+// Lignes de la facture. Depuis le 29/10/2026 : calculées et ENREGISTRÉES par la base (factures_clients.lignes, lx_prive.facture_lignes) —
+// lignes du ticket + ligne « Remise » négative par taux pour la remise globale du ticket ; somme des lignes = ventilation = ticket.
+// Repli (facture sans colonne lignes) : même règle recalculée ici à partir de par_taux.
 function _lxFactureLignes(f){
+  if(Array.isArray(f.lignes)&&f.lignes.length) return f.lignes.map(function(l){ return {nom:String(l.nom||""), qte:Number(l.qte)||1, ttc:Number(l.ttc)||0, ht:Number(l.ht)||0, taux:(l.taux==null?null:Number(l.taux)), remise:l.remise===true}; });
   var its=(Array.isArray(f.items)?f.items:[]).filter(function(it){ return it&&!it.isSep&&!it.isAcompteData; });
-  var tx=Number(f.taux_tva)||0, par=Array.isArray(f.par_taux)?f.par_taux:[], tp=(SALON_CONFIG&&SALON_CONFIG.tvaProduits!=null)?Number(SALON_CONFIG.tvaProduits):tx;
-  var L=its.map(function(it){ var ttc=(typeof _lxItemMontant==="function")?_lxItemMontant(it):(Number(it.price)||0)*(Number(it.qty)||1);
-    var bum=(typeof _lxEstBum==="function")&&_lxEstBum(it), t=bum?null:((typeof _lxTauxLigne==="function")?_lxTauxLigne(it,tx,tp):tx);
-    return {nom:String(it.name||""), qte:Number(it.qty)||1, ttc:Math.round(ttc*100)/100, taux:t, horsChamp:bum}; });
-  var G={}; L.forEach(function(l){ var k=l.horsChamp?"HC":String(l.taux); (G[k]=G[k]||[]).push(l); });
-  Object.keys(G).forEach(function(k){ var grp=G[k], p=null; par.forEach(function(x){ if((k==="HC"&&x.hors_champ)||(!x.hors_champ&&String(Number(x.taux))===String(Number(k)))) p=x; });
-    var gt=0; grp.forEach(function(l){ gt+=l.ttc; }); var cible=p?Number(p.ht):null, cum=0;
-    grp.forEach(function(l,i){ if(cible==null||Math.abs(gt)<0.005){ l.ht=l.horsChamp?l.ttc:Math.round(l.ttc/(1+(Number(l.taux)||0)/100)*100)/100; }
-      else if(i===grp.length-1){ l.ht=Math.round((cible-cum)*100)/100; } else { l.ht=Math.round(cible*l.ttc/gt*100)/100; cum=Math.round((cum+l.ht)*100)/100; } }); });
-  return L;
+  var tx=Number(f.taux_tva)||0, par=Array.isArray(f.par_taux)?f.par_taux:[], tp=(SALON_CONFIG&&SALON_CONFIG.tvaProduits!=null)?Number(SALON_CONFIG.tvaProduits):tx, R2=function(x){ return Math.round(x*100)/100; };
+  var L=its.map(function(it){ var ttc=R2((typeof _lxItemMontant==="function")?_lxItemMontant(it):(Number(it.price)||0)*(Number(it.qty)||1)), t=(typeof _lxTauxLigne==="function")?_lxTauxLigne(it,tx,tp):tx;
+    return {nom:String(it.name||""), qte:Number(it.qty)||1, ttc:ttc, taux:Number(t)||0, ht:R2(ttc/(1+(Number(t)||0)/100)), remise:false}; });
+  var out=[];
+  par.forEach(function(p){ var t=Number(p.taux)||0, grp=L.filter(function(l){ return l.taux===t; }), st=0, sh=0; grp.forEach(function(l){ st+=l.ttc; sh+=l.ht; });
+    var dt=R2(Number(p.ttc)-st), dh=R2(Number(p.ht)-sh);
+    if(Math.abs(dt)>=0.005) grp.push({nom:(dt<0?"Remise":"Ajustement")+(par.length>1?" (TVA "+String(t).replace(".",",")+" %)":""), qte:1, ttc:dt, ht:dh, taux:t, remise:true});
+    else if(Math.abs(dh)>=0.005&&grp.length){ var im=0; grp.forEach(function(l,i){ if(Math.abs(l.ttc)>Math.abs(grp[im].ttc)) im=i; }); grp[im].ht=R2(grp[im].ht+dh); }
+    out=out.concat(grp); });
+  return out;
 }
 function lxFactureHtml(f){
   var av=f.type==="avoir", M=f.mentions||{}, L=_lxFactureLignes(f), S=SALON_CONFIG||{};
-  var h='<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>'+_lxFcEsc(f.numero||("Facture "+f.num))+'</title><style>body{font-family:Arial,Helvetica,sans-serif;color:#111;margin:28px;font-size:12px}h1{font-size:20px;margin:0 0 4px}table{width:100%;border-collapse:collapse;margin-top:10px}th,td{border-bottom:1px solid #ddd;padding:6px 5px;text-align:left}th{background:#f3f3f3;font-size:11px}.r{text-align:right}.blk{display:flex;justify-content:space-between;gap:20px;margin-top:14px}.box{flex:1;border:1px solid #ccc;border-radius:6px;padding:10px;line-height:1.5}.m{font-size:11px;color:#333;margin-top:4px;line-height:1.45}.tot td{font-weight:700}@media print{.np{display:none}}</style></head><body>';
+  var h='<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>'+_lxFcEsc(f.numero||("Facture "+f.num))+'</title><style>body{font-family:Arial,Helvetica,sans-serif;color:#111;margin:28px;font-size:12px}h1{font-size:20px;margin:0 0 4px}table{width:100%;border-collapse:collapse;margin-top:10px}th,td{border-bottom:1px solid #ddd;padding:6px 5px;text-align:left}th{background:#f3f3f3;font-size:11px}.r{text-align:right}.blk{display:flex;justify-content:space-between;gap:20px;margin-top:14px}.box{flex:1;border:1px solid #ccc;border-radius:6px;padding:10px;line-height:1.5}.m{font-size:11px;color:#333;margin-top:4px;line-height:1.45}.tot td{font-weight:700}.rem td{font-style:italic}@media print{.np{display:none}}</style></head><body>';
   h+='<div class="np" style="margin-bottom:12px"><button onclick="window.print()">Imprimer / PDF</button></div>';
-  if(M.test) h+='<div style="border:2px dashed #000;padding:6px;margin-bottom:10px;font-weight:900;text-align:center">'+_lxFcEsc(M.test)+'</div>';
   h+='<h1>'+(av?"FACTURE D’AVOIR":"FACTURE")+' n° '+_lxFcEsc(f.numero||f.num)+'</h1>';
   h+='<div>Date d’émission : <strong>'+_lxFcDate(f.date_facture)+'</strong> — date de la '+(M.categorie==="Livraisons de biens"?"vente":"prestation")+' : '+_lxFcDate(f.date_operation||f.date_facture)+' — ticket de caisse n° '+_lxFcEsc(f.ticket_num||"")+'</div>';
   if(M.rectifie) h+='<div class="m"><strong>'+_lxFcEsc(M.rectifie)+'</strong></div>';
-  h+='<div class="blk"><div class="box"><strong>'+_lxFcEsc(f.salon_nom)+'</strong>'+(f.salon_forme?' ('+_lxFcEsc(f.salon_forme)+')':'')+'<br>'+_lxFcEsc(f.salon_adresse||"")+'<br>SIRET '+_lxFcEsc(f.salon_siret||"")+(f.salon_tva_intracom?'<br>N° TVA '+_lxFcEsc(f.salon_tva_intracom):'')+(S.tel?'<br>'+_lxFcEsc(S.tel):'')+'</div>';
+  var adrV=(f.salon_rue||f.salon_cp)?(_lxFcEsc(f.salon_rue||"")+'<br>'+_lxFcEsc(((f.salon_cp||"")+" "+(f.salon_ville||"")).trim())):_lxFcEsc(f.salon_adresse||"");
+  h+='<div class="blk"><div class="box"><strong>'+_lxFcEsc(f.salon_nom)+'</strong>'+(f.salon_forme?' ('+_lxFcEsc(f.salon_forme)+')':'')+'<br>'+adrV+'<br>SIRET '+_lxFcEsc(f.salon_siret||"")+(f.salon_tva_intracom?'<br>N° TVA '+_lxFcEsc(f.salon_tva_intracom):'')+(M.vendeur?'<br><span style="font-size:11px">'+_lxFcEsc(M.vendeur)+'</span>':'')+(S.tel?'<br>'+_lxFcEsc(S.tel):'')+'</div>';
   h+='<div class="box"><strong>Client</strong><br>'+_lxFcEsc([f.client_prenom,f.client_nom].filter(Boolean).join(" "))+'<br>'+_lxFcEsc(f.client_adresse||"")+'<br>'+_lxFcEsc((f.client_cp||"")+" "+(f.client_ville||""))+(f.client_siren?'<br>SIREN '+_lxFcEsc(f.client_siren):'')+(f.client_tva_intracom?'<br>N° TVA '+_lxFcEsc(f.client_tva_intracom):'')+'</div></div>';
   h+='<table><tr><th>Désignation</th><th class="r">Qté</th><th class="r">Prix unitaire HT</th><th class="r">TVA</th><th class="r">Total HT</th><th class="r">Total TTC</th></tr>';
-  L.forEach(function(l){ h+='<tr><td>'+_lxFcEsc(l.nom)+'</td><td class="r">'+l.qte+'</td><td class="r">'+_lxFcEur(l.ht/(l.qte||1))+'</td><td class="r">'+(l.horsChamp?"hors champ":String(l.taux).replace(".",",")+" %")+'</td><td class="r">'+_lxFcEur(l.ht)+'</td><td class="r">'+_lxFcEur(l.ttc)+'</td></tr>'; });
+  L.forEach(function(l){ h+='<tr'+(l.remise?' class="rem"':'')+'><td>'+_lxFcEsc(l.nom)+'</td><td class="r">'+(l.remise?'':l.qte)+'</td><td class="r">'+(l.remise?'':_lxFcEur(l.ht/(l.qte||1)))+'</td><td class="r">'+String(Number(l.taux)||0).replace(".",",")+' %</td><td class="r">'+_lxFcEur(l.ht)+'</td><td class="r">'+_lxFcEur(l.ttc)+'</td></tr>'; });
   h+='</table><table style="width:60%;margin-left:40%"><tr><th>Taux</th><th class="r">Base HT</th><th class="r">TVA</th><th class="r">TTC</th></tr>';
-  (Array.isArray(f.par_taux)?f.par_taux:[]).forEach(function(x){ h+='<tr><td>'+(x.hors_champ?"Hors champ (bon à usage multiple)":String(Number(x.taux)).replace(".",",")+" %")+'</td><td class="r">'+_lxFcEur(x.ht)+'</td><td class="r">'+_lxFcEur(x.tva)+'</td><td class="r">'+_lxFcEur(x.ttc)+'</td></tr>'; });
+  (Array.isArray(f.par_taux)?f.par_taux:[]).forEach(function(x){ h+='<tr><td>'+String(Number(x.taux)||0).replace(".",",")+' %</td><td class="r">'+_lxFcEur(x.ht)+'</td><td class="r">'+_lxFcEur(x.tva)+'</td><td class="r">'+_lxFcEur(x.ttc)+'</td></tr>'; });
   h+='<tr class="tot"><td>Total</td><td class="r">'+_lxFcEur(f.total_ht)+'</td><td class="r">'+_lxFcEur(f.total_tva)+'</td><td class="r">'+_lxFcEur(f.total_ttc)+'</td></tr></table>';
   ["acquittee","tva","categorie","recette","escompte","penalites"].forEach(function(k){ if(M[k]) h+='<div class="m">'+(k==="categorie"?"Nature de l’opération : ":"")+_lxFcEsc(M[k])+'</div>'; });
   h+='<div class="m" style="margin-top:14px;color:#666">Empreinte '+_lxFcEsc(f.hash||"")+' — facture numérotée et inaltérable, établie par Luxyra '+_lxFcEsc(typeof LX_VERSION!=="undefined"?LX_VERSION:"")+'.</div>';
   return h+'</body></html>';
 }
 function _lxXml(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&apos;"}[c]; }); }
-function _lxN2(x){ return (Math.round((Number(x)||0)*100)/100).toFixed(2); }
-// Données structurées de la facture, syntaxe CII (UN/CEFACT Cross Industry Invoice D16B) au profil EN 16931 (Factur-X / ZUGFeRD)
+function _lxN2(x){ var v=Math.round((Number(x)||0)*100)/100; return (v===0?0:v).toFixed(2); }
+// Données structurées de la facture, syntaxe CII (UN/CEFACT Cross Industry Invoice D16B) au profil EN 16931 (Factur-X / ZUGFeRD).
+// 2026-10-29 : remise globale = remise de pied de document PAR TAUX (BG-20, SpecifiedTradeAllowanceCharge), prix nets jamais
+// négatifs (BR-27 : quantité -1 pour une ligne négative), adresse du vendeur découpée (BT-35 rue, BT-38 CP, BT-37 ville, BT-40 pays),
+// mentions légales du vendeur (BT-33), franchise : catégorie E au taux 0 + VATEX-FR-FRANCHISE ; aucune catégorie « hors champ » (O) :
+// la vente d'un bon à usage multiple n'est jamais facturée (refus de la base) — BR-O-11 à 14 interdisent de mêler O et une catégorie taxée.
+// Validé avec le schéma XSD et le schématron Factur-X 1.09 EN16931 (banc /tmp/lot4b/valider.py).
 function lxFactureCII(f){
-  var av=f.type==="avoir", L=_lxFactureLignes(f), sg=av?-1:1, d=String(f.date_facture||"").slice(0,10).replace(/-/g,""), dop=String(f.date_operation||f.date_facture||"").slice(0,10).replace(/-/g,"");
-  var franchise=!!(f.mentions&&f.mentions.tva);
-  var cat=function(l){ return l.horsChamp?"O":(franchise||!(Number(l.taux)>0)?"E":"S"); };
+  var av=f.type==="avoir", L=_lxFactureLignes(f), sg=av?-1:1, M=f.mentions||{}, d=String(f.date_facture||"").slice(0,10).replace(/-/g,""), dop=String(f.date_operation||f.date_facture||"").slice(0,10).replace(/-/g,"");
+  var franchise=!!M.tva, R2=function(x){ return Math.round((Number(x)||0)*100)/100; };
+  var cat=function(t){ return (franchise||!(Number(t)>0))?"E":"S"; };
+  var taxe=function(t){ var c=cat(t); return '<ram:TypeCode>VAT</ram:TypeCode><ram:CategoryCode>'+c+'</ram:CategoryCode><ram:RateApplicablePercent>'+(c==="S"?Number(t):0)+'</ram:RateApplicablePercent>'; };
   var adr=function(ad,cp,ville){ return '<ram:PostalTradeAddress><ram:PostcodeCode>'+_lxXml(cp||"")+'</ram:PostcodeCode><ram:LineOne>'+_lxXml(ad||"")+'</ram:LineOne><ram:CityName>'+_lxXml(ville||"")+'</ram:CityName><ram:CountryID>FR</ram:CountryID></ram:PostalTradeAddress>'; };
   var x='<?xml version="1.0" encoding="UTF-8"?>\n<rsm:CrossIndustryInvoice xmlns:rsm="urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100" xmlns:ram="urn:un:unece:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:100" xmlns:udt="urn:un:unece:uncefact:data:standard:UnqualifiedDataType:100">\n';
   x+='<rsm:ExchangedDocumentContext><ram:GuidelineSpecifiedDocumentContextParameter><ram:ID>urn:cen.eu:en16931:2017</ram:ID></ram:GuidelineSpecifiedDocumentContextParameter></rsm:ExchangedDocumentContext>\n';
   x+='<rsm:ExchangedDocument><ram:ID>'+_lxXml(f.numero||f.num)+'</ram:ID><ram:TypeCode>'+(av?"381":"380")+'</ram:TypeCode><ram:IssueDateTime><udt:DateTimeString format="102">'+d+'</udt:DateTimeString></ram:IssueDateTime>';
-  ["test","acquittee","tva","recette","escompte","penalites","rectifie"].forEach(function(k){ if(f.mentions&&f.mentions[k]) x+='<ram:IncludedNote><ram:Content>'+_lxXml(f.mentions[k])+'</ram:Content></ram:IncludedNote>'; });
+  ["acquittee","tva","recette","escompte","penalites","rectifie"].forEach(function(k){ if(M[k]) x+='<ram:IncludedNote><ram:Content>'+_lxXml(M[k])+'</ram:Content></ram:IncludedNote>'; });
   x+='</rsm:ExchangedDocument>\n<rsm:SupplyChainTradeTransaction>\n';
-  L.forEach(function(l,i){ var ht=sg*l.ht;
-    x+='<ram:IncludedSupplyChainTradeLineItem><ram:AssociatedDocumentLineDocument><ram:LineID>'+(i+1)+'</ram:LineID></ram:AssociatedDocumentLineDocument><ram:SpecifiedTradeProduct><ram:Name>'+_lxXml(l.nom+(l.qte!==1?" (x"+l.qte+")":""))+'</ram:Name></ram:SpecifiedTradeProduct>';
-    x+='<ram:SpecifiedLineTradeAgreement><ram:NetPriceProductTradePrice><ram:ChargeAmount>'+_lxN2(ht)+'</ram:ChargeAmount></ram:NetPriceProductTradePrice></ram:SpecifiedLineTradeAgreement><ram:SpecifiedLineTradeDelivery><ram:BilledQuantity unitCode="C62">1</ram:BilledQuantity></ram:SpecifiedLineTradeDelivery>';
-    x+='<ram:SpecifiedLineTradeSettlement><ram:ApplicableTradeTax><ram:TypeCode>VAT</ram:TypeCode><ram:CategoryCode>'+cat(l)+'</ram:CategoryCode>'+(cat(l)==="S"?'<ram:RateApplicablePercent>'+Number(l.taux)+'</ram:RateApplicablePercent>':'')+'</ram:ApplicableTradeTax><ram:SpecifiedTradeSettlementLineMonetarySummation><ram:LineTotalAmount>'+_lxN2(ht)+'</ram:LineTotalAmount></ram:SpecifiedTradeSettlementLineMonetarySummation></ram:SpecifiedLineTradeSettlement></ram:IncludedSupplyChainTradeLineItem>\n'; });
-  x+='<ram:ApplicableHeaderTradeAgreement><ram:SellerTradeParty><ram:Name>'+_lxXml(f.salon_nom)+'</ram:Name><ram:SpecifiedLegalOrganization><ram:ID schemeID="0002">'+_lxXml(String(f.salon_siret||"").replace(/\s/g,"").slice(0,9))+'</ram:ID></ram:SpecifiedLegalOrganization>'+adr(f.salon_adresse,"","")+(f.salon_tva_intracom?'<ram:SpecifiedTaxRegistration><ram:ID schemeID="VA">'+_lxXml(f.salon_tva_intracom)+'</ram:ID></ram:SpecifiedTaxRegistration>':'')+'</ram:SellerTradeParty>';
+  var n=0, sLignes=0, sRem=0, sChg=0, ac='';
+  L.forEach(function(l){ var a=R2(sg*l.ht);
+    if(l.remise){ if(Math.abs(a)<0.005) return; var chg=a>0; if(chg) sChg=R2(sChg+a); else sRem=R2(sRem-a);
+      ac+='<ram:SpecifiedTradeAllowanceCharge><ram:ChargeIndicator><udt:Indicator>'+(chg?"true":"false")+'</udt:Indicator></ram:ChargeIndicator><ram:ActualAmount>'+_lxN2(Math.abs(a))+'</ram:ActualAmount><ram:Reason>'+_lxXml(l.nom)+'</ram:Reason><ram:CategoryTradeTax>'+taxe(l.taux)+'</ram:CategoryTradeTax></ram:SpecifiedTradeAllowanceCharge>';
+      return; }
+    n++; sLignes=R2(sLignes+a);
+    x+='<ram:IncludedSupplyChainTradeLineItem><ram:AssociatedDocumentLineDocument><ram:LineID>'+n+'</ram:LineID></ram:AssociatedDocumentLineDocument><ram:SpecifiedTradeProduct><ram:Name>'+_lxXml((l.nom||"Article")+(l.qte!==1?" (x"+l.qte+")":""))+'</ram:Name></ram:SpecifiedTradeProduct>';
+    x+='<ram:SpecifiedLineTradeAgreement><ram:NetPriceProductTradePrice><ram:ChargeAmount>'+_lxN2(Math.abs(a))+'</ram:ChargeAmount></ram:NetPriceProductTradePrice></ram:SpecifiedLineTradeAgreement><ram:SpecifiedLineTradeDelivery><ram:BilledQuantity unitCode="C62">'+(a<0?"-1":"1")+'</ram:BilledQuantity></ram:SpecifiedLineTradeDelivery>';
+    x+='<ram:SpecifiedLineTradeSettlement><ram:ApplicableTradeTax>'+taxe(l.taux)+'</ram:ApplicableTradeTax><ram:SpecifiedTradeSettlementLineMonetarySummation><ram:LineTotalAmount>'+_lxN2(a)+'</ram:LineTotalAmount></ram:SpecifiedTradeSettlementLineMonetarySummation></ram:SpecifiedLineTradeSettlement></ram:IncludedSupplyChainTradeLineItem>\n'; });
+  var siren=String(f.salon_siret||"").replace(/\s/g,"").slice(0,9);
+  x+='<ram:ApplicableHeaderTradeAgreement><ram:SellerTradeParty><ram:Name>'+_lxXml(f.salon_nom)+'</ram:Name>'+(M.vendeur?'<ram:Description>'+_lxXml(M.vendeur)+'</ram:Description>':'')+'<ram:SpecifiedLegalOrganization><ram:ID schemeID="0002">'+_lxXml(siren)+'</ram:ID></ram:SpecifiedLegalOrganization>'+adr(f.salon_rue||f.salon_adresse,f.salon_cp,f.salon_ville)+(f.salon_tva_intracom?'<ram:SpecifiedTaxRegistration><ram:ID schemeID="VA">'+_lxXml(f.salon_tva_intracom)+'</ram:ID></ram:SpecifiedTaxRegistration>':'')+'</ram:SellerTradeParty>';
   x+='<ram:BuyerTradeParty><ram:Name>'+_lxXml([f.client_prenom,f.client_nom].filter(Boolean).join(" "))+'</ram:Name>'+(f.client_siren?'<ram:SpecifiedLegalOrganization><ram:ID schemeID="0002">'+_lxXml(f.client_siren)+'</ram:ID></ram:SpecifiedLegalOrganization>':'')+adr(f.client_adresse,f.client_cp,f.client_ville)+(f.client_tva_intracom?'<ram:SpecifiedTaxRegistration><ram:ID schemeID="VA">'+_lxXml(f.client_tva_intracom)+'</ram:ID></ram:SpecifiedTaxRegistration>':'')+'</ram:BuyerTradeParty></ram:ApplicableHeaderTradeAgreement>\n';
   x+='<ram:ApplicableHeaderTradeDelivery><ram:ActualDeliverySupplyChainEvent><ram:OccurrenceDateTime><udt:DateTimeString format="102">'+dop+'</udt:DateTimeString></ram:OccurrenceDateTime></ram:ActualDeliverySupplyChainEvent></ram:ApplicableHeaderTradeDelivery>\n';
   x+='<ram:ApplicableHeaderTradeSettlement><ram:InvoiceCurrencyCode>EUR</ram:InvoiceCurrencyCode>';
-  (Array.isArray(f.par_taux)?f.par_taux:[]).forEach(function(p){ var c=p.hors_champ?"O":(franchise||!(Number(p.taux)>0)?"E":"S");
-    x+='<ram:ApplicableTradeTax><ram:CalculatedAmount>'+_lxN2(sg*Number(p.tva))+'</ram:CalculatedAmount><ram:TypeCode>VAT</ram:TypeCode>'+(c==="E"?'<ram:ExemptionReason>TVA non applicable, art. 293 B du CGI</ram:ExemptionReason>':(c==="O"?'<ram:ExemptionReason>Bon a usage multiple : hors champ de la TVA (CGI art. 256 ter)</ram:ExemptionReason>':''))+'<ram:BasisAmount>'+_lxN2(sg*Number(p.ht))+'</ram:BasisAmount><ram:CategoryCode>'+c+'</ram:CategoryCode>'+(c==="S"?'<ram:RateApplicablePercent>'+Number(p.taux)+'</ram:RateApplicablePercent>':'')+'</ram:ApplicableTradeTax>'; });
-  x+='<ram:SpecifiedTradePaymentTerms><ram:Description>'+_lxXml((f.mentions&&f.mentions.acquittee)||"Facture acquittee")+'</ram:Description></ram:SpecifiedTradePaymentTerms>';
-  x+='<ram:SpecifiedTradeSettlementHeaderMonetarySummation><ram:LineTotalAmount>'+_lxN2(sg*Number(f.total_ht))+'</ram:LineTotalAmount><ram:TaxBasisTotalAmount>'+_lxN2(sg*Number(f.total_ht))+'</ram:TaxBasisTotalAmount><ram:TaxTotalAmount currencyID="EUR">'+_lxN2(sg*Number(f.total_tva))+'</ram:TaxTotalAmount><ram:GrandTotalAmount>'+_lxN2(sg*Number(f.total_ttc))+'</ram:GrandTotalAmount><ram:TotalPrepaidAmount>'+_lxN2(sg*Number(f.total_ttc))+'</ram:TotalPrepaidAmount><ram:DuePayableAmount>0.00</ram:DuePayableAmount></ram:SpecifiedTradeSettlementHeaderMonetarySummation>';
-  if(f.facture_origine_id&&f.mentions&&f.mentions.rectifie){ var mR=/(F-\d{6})/.exec(f.mentions.rectifie); if(mR) x+='<ram:InvoiceReferencedDocument><ram:IssuerAssignedID>'+mR[1]+'</ram:IssuerAssignedID></ram:InvoiceReferencedDocument>'; }
+  var sBase=0, sTva=0;
+  (Array.isArray(f.par_taux)?f.par_taux:[]).forEach(function(p){ var c=cat(p.taux), b=R2(sg*Number(p.ht)), tv=R2(sg*Number(p.tva)); sBase=R2(sBase+b); sTva=R2(sTva+tv);
+    x+='<ram:ApplicableTradeTax><ram:CalculatedAmount>'+_lxN2(tv)+'</ram:CalculatedAmount><ram:TypeCode>VAT</ram:TypeCode>'+(c==="E"?'<ram:ExemptionReason>TVA non applicable, art. 293 B du CGI</ram:ExemptionReason>':'')+'<ram:BasisAmount>'+_lxN2(b)+'</ram:BasisAmount><ram:CategoryCode>'+c+'</ram:CategoryCode>'+(c==="E"?'<ram:ExemptionReasonCode>VATEX-FR-FRANCHISE</ram:ExemptionReasonCode>':'')+'<ram:RateApplicablePercent>'+(c==="S"?Number(p.taux):0)+'</ram:RateApplicablePercent></ram:ApplicableTradeTax>'; });
+  x+=ac;
+  x+='<ram:SpecifiedTradePaymentTerms><ram:Description>'+_lxXml(M.acquittee||"Facture acquittee")+'</ram:Description></ram:SpecifiedTradePaymentTerms>';
+  var grand=R2(sBase+sTva);
+  x+='<ram:SpecifiedTradeSettlementHeaderMonetarySummation><ram:LineTotalAmount>'+_lxN2(sLignes)+'</ram:LineTotalAmount>'+(ac?'<ram:ChargeTotalAmount>'+_lxN2(sChg)+'</ram:ChargeTotalAmount><ram:AllowanceTotalAmount>'+_lxN2(sRem)+'</ram:AllowanceTotalAmount>':'')+'<ram:TaxBasisTotalAmount>'+_lxN2(sBase)+'</ram:TaxBasisTotalAmount><ram:TaxTotalAmount currencyID="EUR">'+_lxN2(sTva)+'</ram:TaxTotalAmount><ram:GrandTotalAmount>'+_lxN2(grand)+'</ram:GrandTotalAmount><ram:TotalPrepaidAmount>'+_lxN2(grand)+'</ram:TotalPrepaidAmount><ram:DuePayableAmount>0.00</ram:DuePayableAmount></ram:SpecifiedTradeSettlementHeaderMonetarySummation>';
+  var ori=M.origine_numero||((/(F-\d{6})/.exec(M.rectifie||"")||[])[1]);
+  if(f.facture_origine_id&&ori) x+='<ram:InvoiceReferencedDocument><ram:IssuerAssignedID>'+_lxXml(ori)+'</ram:IssuerAssignedID></ram:InvoiceReferencedDocument>';
   x+='</ram:ApplicableHeaderTradeSettlement>\n</rsm:SupplyChainTradeTransaction>\n</rsm:CrossIndustryInvoice>\n';
   return x;
 }
@@ -39926,7 +40003,20 @@ function lxFactureAfficher(f){
 }
 window.lxFactureAfficher=lxFactureAfficher;
 function lxFactureImprimer(){ var f=window._lxFactureCourante; if(!f) return; var w=window.open("","_blank","width=820,height=960"); if(!w){ showAlert("Autorisez les fenêtres pour imprimer la facture.","warning"); return; } w.document.write(lxFactureHtml(f)); w.document.close(); setTimeout(function(){ try{ w.print(); }catch(_e){} },300); try{ if(typeof auditLog==="function") auditLog("FACTURE_IMPRIMEE", String(f.numero||f.num)); }catch(_eA){} }
-function lxFactureTelechargerXml(){ var f=window._lxFactureCourante; if(!f) return; var b=new Blob([lxFactureCII(f)],{type:"application/xml;charset=utf-8"}); var u=URL.createObjectURL(b), a=document.createElement("a"); a.href=u; a.download=String(f.numero||("facture-"+f.num))+".xml"; document.body.appendChild(a); a.click(); setTimeout(function(){ document.body.removeChild(a); URL.revokeObjectURL(u); },100); }
+// 2026-10-29 : contrôles EN 16931 que les montants SCELLÉS du ticket peuvent ne pas satisfaire (jamais modifiés pour le XML) :
+// BR-CO-17 / BR-S-09 (TVA d'un taux = base HT × taux, tolérance de 1,00 dans le schématron officiel : seule une ventilation très
+// éloignée — taux modifié entre la vente et l'annulation — peut échouer) ; BR-E-02 / BR-E-03 (franchise : identifiant TVA du vendeur).
+function lxFactureControleEN(f){
+  var P=[], franchise=!!(f&&f.mentions&&f.mentions.tva);
+  (Array.isArray(f&&f.par_taux)?f.par_taux:[]).forEach(function(p){ var t=Number(p.taux)||0; if(franchise||!(t>0)) return;
+    var c=Math.round(Math.abs(Number(p.ht))*t+1e-7)/100; if(Math.abs(c-Math.abs(Number(p.tva)))>1) P.push("BR-CO-17 (TVA "+String(t).replace(".",",")+" % : "+_lxN2(Math.abs(p.ht))+" × "+String(t).replace(".",",")+" % = "+_lxN2(c)+" ≠ "+_lxN2(Math.abs(p.tva))+" enregistrés sur le ticket)"); });
+  if(franchise && !f.salon_tva_intracom) P.push("BR-E-02 / BR-E-03 (franchise de TVA sans n° de TVA intracommunautaire du vendeur)");
+  return P;
+}
+window.lxFactureControleEN=lxFactureControleEN;
+function lxFactureTelechargerXml(){ var f=window._lxFactureCourante; if(!f) return;
+  var pb=lxFactureControleEN(f); if(pb.length) showAlert("Données téléchargées, mais elles ne passeront pas le contrôle EN 16931 de la plateforme : "+pb.join(" ; ")+". Les montants du ticket enregistré ne sont jamais modifiés : transmettez à votre plateforme agréée la facture PDF (« Imprimer / PDF »)"+(pb.join(" ").indexOf("BR-E")>=0?" ou demandez votre n° de TVA intracommunautaire au service des impôts des entreprises (Paramètres › Infos établissement)":"")+".","warning");
+  var b=new Blob([lxFactureCII(f)],{type:"application/xml;charset=utf-8"}); var u=URL.createObjectURL(b), a=document.createElement("a"); a.href=u; a.download=String(f.numero||("facture-"+f.num))+".xml"; document.body.appendChild(a); a.click(); setTimeout(function(){ document.body.removeChild(a); URL.revokeObjectURL(u); },100); }
 window.lxFactureImprimer=lxFactureImprimer; window.lxFactureTelechargerXml=lxFactureTelechargerXml;
 // Registre des factures émises (CSV, mois affiché) — conservation / contrôle
 async function expFacturesClients(mois){
