@@ -413,12 +413,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261029-5"></script>
+<script src="luxyra-supabase.js?v=20261029-6"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261029-5";
+  var attendu="20261029-6";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -43540,7 +43540,11 @@ function refreshCurrentView(){
     btn.disabled=true;
     try{
       var pieces=S.files.length?await televerser(S.active.id):[];
-      var ins=await _sb.from('support_messages').insert({salon_id:_salonId,conversation_id:S.active.id,sender:'client',message:txt||(pieces.length?'📎 Capture envoyée':''),pieces:pieces,read_by_admin:false,read_by_client:true}).select().single();
+      // 2026-10-29 : conformité Google Play — message envoyé depuis l'appli Android « Luxyra Pro » : play=true
+      // (colonne support_messages.play) -> bot-reply v17 n'oriente vers aucun autre moyen de payer l'abonnement ou les SMS.
+      var lxMsg={salon_id:_salonId,conversation_id:S.active.id,sender:'client',message:txt||(pieces.length?'📎 Capture envoyée':''),pieces:pieces,read_by_admin:false,read_by_client:true};
+      if(typeof lxPlay==="function"&&lxPlay())lxMsg.play=true;
+      var ins=await _sb.from('support_messages').insert(lxMsg).select().single();
       if(ins.error){console.error('lxChat insert error:',ins.error);showAlert('Erreur envoi : '+ins.error.message,"error");}
       else if(ins.data){S.msgs.push(ins.data);addBubble(ins.data);inp.value='';S.files=[];renderFiles();}
     }catch(e){console.error('lxChat sendMsg exception:',e);showAlert('Erreur envoi : '+(e.message||e),"error");}
