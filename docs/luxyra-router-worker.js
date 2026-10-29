@@ -1950,7 +1950,8 @@ async function lxStripeVersementEnregistrer(env, compte, po) {
   if (p.status !== "paid") return { ok: false, raison: "statut " + p.status };
   let ops = [], apres = null;
   for (let i = 0; i < 50; i++) {
-    const r = await stripeAPI(env, `balance_transactions?payout=${encodeURIComponent(pid)}&limit=100` + (apres ? `&starting_after=${encodeURIComponent(apres)}` : ""), null, "GET", compte);
+    // 2026-10-29 : source développée (expand[]=data.source) -> payment_intent de la charge / du remboursement renseigné (lecture seule)
+    const r = await stripeAPI(env, `balance_transactions?payout=${encodeURIComponent(pid)}&limit=100&expand%5B%5D=data.source` + (apres ? `&starting_after=${encodeURIComponent(apres)}` : ""), null, "GET", compte);
     if (!r || r.error || !Array.isArray(r.data)) throw new Error("opérations du versement illisibles " + pid);
     ops = ops.concat(r.data); if (!r.has_more || !r.data.length) break; apres = r.data[r.data.length - 1].id;
   }
@@ -4657,6 +4658,8 @@ function lxEcCorpsMail(salon, cfg, mois, zm, fichiers, notes, opts) {
   if ((notes || []).includes("fec_vide")) N.push("FEC non joint : aucun ticket sur la période.");
   if ((notes || []).includes("test_sans_documents_ecart")) N.push("Documents non joints à ce test : les données de l'appareil ne correspondaient pas à la clôture du mois.");
   if (N.length) h += `<p style="margin:12px 0 0;font-size:12.5px;color:#666">${N.map(ccEsc).join("<br>")}</p>`;
+  // 2026-10-29 (contre-audit lot 4, réserve) : TVA sur les frais Stripe — information, aucune écriture générée par Luxyra
+  if (zm) h += `<p style="margin:12px 0 0;font-size:12px;color:#666">Paiements en ligne (Stripe) : les frais Stripe (compte 627, versements relevés au journal de banque) sont facturés par Stripe Payments Europe Ltd (Irlande), sans TVA française. Selon leur nature, exonération (services de paiement, CGI art. 261 C) ou TVA due par l'établissement en autoliquidation (CGI art. 283-2) : à vérifier sur les factures mensuelles de Stripe. Luxyra ne génère aucune écriture de TVA sur ces frais.</p>`;
   // 2026-10-28 (-5, Luxyra 6.8.3) : ventes reportées (date réelle de vente ≠ date d'enregistrement au journal)
   const VR = Array.isArray(opts.reportees) ? opts.reportees : [];
   if (VR.length) {
