@@ -2160,3 +2160,7 @@ Audit approuvé : `docs/admin-audit-1015.md` (P1 + P2, sauf le chat support fait
 ## 29/10/2026 au soir — évènements Stripe actifs (registre : « 2026-10-29 (-8 / -2, évènements Stripe) »)
 - Webhook « comptes connectés » we_1UOh66Pk42Psx94T72zzMLeL : account.updated, charge.dispute.created, charge.refunded, checkout.session.async_payment_succeeded, checkout.session.completed, payout.paid. Webhook plateforme : 7 évènements, 0 échec ; account.external_account.updated non traité (ignoré). Comptes connectés : Excellence « Activé », Luxyra Démo et Delphinecoiff « Limité ».
 - Pas encore vérifié en réel (aucun charge.refunded / payout.paid reçu au 29/10 20:20 UTC) : contrôler au 1er versement `stripe_versements` et `app_secrets.stripe_webhook_connect_dernier`.
+
+## EN ATTENTE (décision d'Alexandre, 29/10/2026)
+- **LOT 5 — conservation / archivage 6 ans (L102 B LPF) : MIS DE CÔTÉ.** Constat de l'audit indépendant (M8) : base Supabase en offre gratuite sans sauvegarde garantie ; seule la sauvegarde chiffrée nocturne (Google Drive, 60 jours) existe. À lancer quand Alexandre passe Supabase en Pro (dès les premiers abonnés) : archivage externe automatique et durable sur 6 ans + procédure de restauration testée. Toujours avec agent expert + contre-audit indépendant. Le rappeler à Alexandre au premier abonné payant.
+- Version de l'app affichée en petit en bas de l'accueil depuis le 29/10/2026 (rHome, « Luxyra vX · données »).
