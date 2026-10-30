@@ -214,6 +214,70 @@
     if (!token) return { ok: false, status: 401, data: { error: "Pas de session" } };
     return await call("lx-profile", { session_token: token, action: "send_verification" });
   }
+  // 2026-10-30 : correction de l'adresse e-mail tant qu'elle n'est pas confirmée (mot de passe exigé ; nouveau lien envoyé
+  // à la nouvelle adresse ; les autres appareils sont déconnectés, cet appareil reçoit un nouveau jeton)
+  async function lxChangeEmail(newEmail, password){
+    var token = getToken();
+    if (!token) return { ok: false, status: 401, data: { error: "Pas de session" } };
+    var res = await call("lx-profile", { session_token: token, action: "change_email", new_email: String(newEmail || "").trim(), password: password || "" });
+    if (res.ok && res.data) { if (res.data.session_token) setToken(res.data.session_token); if (res.data.user) setUser(res.data.user); }
+    return res;
+  }
+  // 2026-10-30 : fautes de frappe courantes dans le domaine (« gmial.com », « hotmail.fe », « laposte.fr »…).
+  // Renvoie l'adresse corrigée proposée, ou "" s'il n'y a rien à proposer. Jamais bloquant.
+  var LX_DOMAINES = ["gmail.com","hotmail.fr","hotmail.com","outlook.fr","outlook.com","live.fr","live.com","msn.com","yahoo.fr","yahoo.com","icloud.com","me.com","laposte.net","orange.fr","wanadoo.fr","free.fr","sfr.fr","neuf.fr","bbox.fr","aliceadsl.fr","numericable.fr","gmx.fr","gmx.de","gmx.net","web.de","t-online.de","aol.com","protonmail.com","proton.me"];
+  var LX_FAUTES = { "laposte.fr": "laposte.net", "lapost.net": "laposte.net", "gmail.fr": "gmail.com", "gmal.com": "gmail.com", "gmial.com": "gmail.com", "gamil.com": "gmail.com", "gmai.com": "gmail.com", "gnail.com": "gmail.com", "hotmial.fr": "hotmail.fr", "hotmal.fr": "hotmail.fr", "hotmail.fe": "hotmail.fr", "hotmial.com": "hotmail.com", "outlok.fr": "outlook.fr", "outlok.com": "outlook.com", "yahooo.fr": "yahoo.fr", "yaho.fr": "yahoo.fr", "orange.fe": "orange.fr", "free.fe": "free.fr", "sfr.fe": "sfr.fr", "icloud.co": "icloud.com", "icloud.fr": "icloud.com", "wanado.fr": "wanadoo.fr", "wanadoo.com": "wanadoo.fr" };
+  function lxDistance(a, b){
+    if (Math.abs(a.length - b.length) > 2) return 9;
+    var d = []; for (var i = 0; i <= a.length; i++){ d[i] = [i]; } for (var j = 1; j <= b.length; j++) d[0][j] = j;
+    for (i = 1; i <= a.length; i++) for (j = 1; j <= b.length; j++){
+      d[i][j] = Math.min(d[i-1][j] + 1, d[i][j-1] + 1, d[i-1][j-1] + (a[i-1] === b[j-1] ? 0 : 1));
+      if (i > 1 && j > 1 && a[i-1] === b[j-2] && a[i-2] === b[j-1]) d[i][j] = Math.min(d[i][j], d[i-2][j-2] + 1); // lettres inversées
+    }
+    return d[a.length][b.length];
+  }
+  function lxSuggererEmail(email){
+    var e = String(email || "").trim().toLowerCase();
+    var m = /^([^\s@]+)@([^\s@]+)$/.exec(e); if (!m) return "";
+    var loc = m[1], dom = m[2].replace(/\.+$/, "");
+    if (LX_DOMAINES.indexOf(dom) >= 0) return "";
+    if (LX_FAUTES[dom]) return loc + "@" + LX_FAUTES[dom];
+    var dom2 = dom.replace(/\.(con|cmo|ocm|vom|comm|co)$/, ".com").replace(/\.(fe|frr|ft|rf|fr\.)$/, ".fr");
+    if (dom2 !== dom && LX_DOMAINES.indexOf(dom2) >= 0) return loc + "@" + dom2;
+    var mieux = "", best = 9;
+    for (var k = 0; k < LX_DOMAINES.length; k++){ var dd = lxDistance(dom2, LX_DOMAINES[k]); if (dd < best){ best = dd; mieux = LX_DOMAINES[k]; } }
+    // 1 faute (ou 2 sur un nom long) sur un domaine connu ; jamais sur un domaine d'entreprise très différent
+    if (mieux && (best === 1 || (best === 2 && dom2.length >= 9))) return loc + "@" + mieux;
+    return "";
+  }
+  // Branche la suggestion sous un champ e-mail : « Vouliez-vous dire … ? » (cliquable) + rappel de l'adresse saisie.
+  function lxBrancherSuggestionEmail(input, opts){
+    if (!input || input._lxSugg) return; input._lxSugg = true; opts = opts || {};
+    var box = document.createElement("div");
+    box.className = "lx-email-sugg"; box.setAttribute("aria-live", "polite");
+    box.style.cssText = "font-size:12.5px;line-height:1.45;margin-top:6px;display:none";
+    input.insertAdjacentElement("afterend", box);
+    function maj(){
+      var v = String(input.value || "").trim(), sg = lxSuggererEmail(v);
+      box.innerHTML = ""; box.style.display = "none";
+      if (!v || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return;
+      box.style.display = "block";
+      if (sg){
+        var t = document.createElement("span"); t.style.color = "#fbbf24"; t.textContent = "Vouliez-vous dire ";
+        var a = document.createElement("a"); a.href = "#"; a.style.cssText = "color:#e6c066;font-weight:800;text-decoration:underline"; a.textContent = sg;
+        a.onclick = function(ev){ ev.preventDefault(); input.value = sg; try { input.dispatchEvent(new Event("input", { bubbles: true })); } catch(_){} maj(); input.focus(); };
+        box.appendChild(t); box.appendChild(a); box.appendChild(document.createTextNode(" ?"));
+      } else if (opts.rappel !== false){
+        var r = document.createElement("span"); r.style.color = "rgba(255,255,255,.55)";
+        r.textContent = opts.texte || "Le lien de confirmation sera envoyé à : "; var b = document.createElement("b"); b.style.color = "rgba(255,255,255,.85)"; b.textContent = v;
+        r.appendChild(b); box.appendChild(r);
+      }
+    }
+    input.addEventListener("input", maj); input.addEventListener("blur", maj); maj();
+  }
+  // Branchement automatique : tout champ <input data-lx-sugg="..."> reçoit la suggestion dès qu'on y entre
+  // (valeur « 1 » = texte de rappel par défaut, « 0 » = pas de rappel, autre = texte de rappel).
+  try { document.addEventListener("focusin", function(ev){ var t = ev.target; if (t && t.tagName === "INPUT" && t.hasAttribute("data-lx-sugg")){ var v = t.getAttribute("data-lx-sugg"); lxBrancherSuggestionEmail(t, v === "0" ? { rappel: false } : (v && v !== "1" ? { texte: v } : {})); } }, true); } catch(_){}
   // 2026-10-14 : déconnecter tous les AUTRES appareils (cet appareil reçoit un nouveau jeton)
   async function lxLogoutAll(){
     var token = getToken();
@@ -226,6 +290,9 @@
   // Expose globalement
   window.LX = {
     verifyEmail: lxVerifyEmail,
+    changeEmail: lxChangeEmail,
+    suggererEmail: lxSuggererEmail,
+    brancherSuggestionEmail: lxBrancherSuggestionEmail,
     sendVerification: lxSendVerification,
     logoutAll: lxLogoutAll,
     requestReset: lxRequestReset,
