@@ -1,3 +1,5 @@
+// lx-password-reset v7 — 2026-10-30 SECURITE (contre-audit B1) : le jeton garde l'adresse d'envoi ; la confirmation ne
+//   vérifie l'adresse que si elle est inchangée (sinon : mot de passe changé, adresse non vérifiée).
 // lx-password-reset v5 — 2026-10-14 SECURITE : après réinitialisation, la version de session du compte est
 //   incrémentée (lx_client_session_bump) : tous les appareils encore connectés sont déconnectés.
 // lx-password-reset v1 — 2026-10-08 : « mot de passe oublie » pour les comptes clientes Luxyra.
@@ -58,7 +60,7 @@ Deno.serve(async (req) => {
       const { count } = await sb.from("client_password_resets").select("id", { count: "exact", head: true }).eq("client_id", u.id).gte("created_at", depuis);
       if ((count || 0) >= 3) return json(200, neutre);
       const token = toHex(crypto.getRandomValues(new Uint8Array(32)));
-      const { error: insErr } = await sb.from("client_password_resets").insert({ client_id: u.id, token_hash: await sha256Hex(token), expires_at: new Date(Date.now() + 3600 * 1000).toISOString() });
+      const { error: insErr } = await sb.from("client_password_resets").insert({ client_id: u.id, email: String(u.email || "").toLowerCase(), token_hash: await sha256Hex(token), expires_at: new Date(Date.now() + 3600 * 1000).toISOString() });
       if (insErr) { await report("insert reset: " + insErr.message); return json(500, { error: "Erreur interne" }); }
       const retour = retourSur(body.retour);
       const lien = `https://luxyra.fr/compte.html?reset=${token}` + (retour ? `&retour=${encodeURIComponent(retour)}` : "");
@@ -72,12 +74,19 @@ Deno.serve(async (req) => {
       const password = String(body.password || "");
       if (!/^[0-9a-f]{64}$/.test(token)) return json(400, { error: "Lien invalide ou expiré. Refaites une demande." });
       if (password.length < 8) return json(400, { error: "Mot de passe : 8 caractères minimum" });
-      const { data: rs } = await sb.from("client_password_resets").select("id, client_id, expires_at, used_at").eq("token_hash", await sha256Hex(token)).maybeSingle();
+      const { data: rs } = await sb.from("client_password_resets").select("id, client_id, email, expires_at, used_at").eq("token_hash", await sha256Hex(token)).maybeSingle();
       if (!rs || rs.used_at || new Date(rs.expires_at).getTime() < Date.now()) return json(400, { error: "Lien invalide ou expiré. Refaites une demande." });
       const { data: marque } = await sb.from("client_password_resets").update({ used_at: new Date().toISOString() }).eq("id", rs.id).is("used_at", null).select("id");
       if (!marque || !marque.length) return json(400, { error: "Lien déjà utilisé. Refaites une demande." });
-      // Le lien a été reçu dans la boîte mail : l'adresse est donc vérifiée.
-      const { data: u, error: upErr } = await sb.from("clients_luxyra").update({ password_hash: await hashPassword(password), email_verified: true, verification_code: null, verification_expires_at: null, updated_at: new Date().toISOString() }).eq("id", rs.client_id).select("email").single();
+      // Le lien a été reçu dans la boîte mail : l'adresse est vérifiée — SEULEMENT si c'est toujours l'adresse à laquelle le lien
+      // a été envoyé (30/10/2026, contre-audit B1 : sinon un lien demandé avant un changement d'adresse confirmerait l'adresse d'un tiers).
+      const { data: cur } = await sb.from("clients_luxyra").select("email").eq("id", rs.client_id).maybeSingle();
+      const memeAdresse = !!(rs.email && cur && String(cur.email || "").toLowerCase() === String(rs.email).toLowerCase());
+      const patchMdp: Record<string, unknown> = { password_hash: await hashPassword(password), updated_at: new Date().toISOString() };
+      if (memeAdresse) { patchMdp.email_verified = true; patchMdp.verification_code = null; patchMdp.verification_expires_at = null; }
+      let q = sb.from("clients_luxyra").update(patchMdp).eq("id", rs.client_id);
+      if (memeAdresse) q = q.eq("email", cur!.email); // course avec un changement d'adresse : rien n'est écrit
+      const { data: u, error: upErr } = await q.select("email").single();
       if (upErr || !u) { await report("update mot de passe: " + (upErr?.message || "?")); return json(500, { error: "Erreur interne" }); }
       // 2026-10-14 : déconnexion de tous les appareils (les anciens jetons portent l'ancienne version)
       const { error: bumpErr } = await sb.rpc("lx_client_session_bump", { p_id: rs.client_id });
