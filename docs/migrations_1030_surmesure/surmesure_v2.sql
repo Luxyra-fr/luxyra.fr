@@ -872,6 +872,10 @@ begin
   if TG_OP = 'INSERT' then
     NEW.proposal_version := 1; NEW.envoi := 0; NEW.expire_heures := null; NEW.option_choisie_id := null; NEW.checkout_option_id := null;
     NEW.checkout_session_id := null; NEW.checkout_expires_at := null; NEW.vue_at := null; NEW.relance_at := null; NEW.rappel_salon_at := null;
+    -- contre-audit final 30/10 (réserve 1) : colonnes de proposition / verrou / paiement de l'ancien format aussi
+    NEW.proposed_data := null; NEW.proposal_token := null; NEW.proposal_expires_at := null; NEW.refuse_reason := null;
+    NEW.rdv_online_id := null; NEW.proposed_at := null; NEW.confirmed_at := null; NEW.refused_at := null;
+    NEW.confirm_claim_at := null; NEW.stripe_session_id := null;
     return NEW;
   end if;
   if (to_jsonb(NEW) - v_libres) is distinct from (to_jsonb(OLD) - v_libres)
@@ -899,7 +903,7 @@ create trigger a_lx_rdv_demandes_garde before insert or update on public.rdv_dem
 -- options de l'envoi en cours selon le statut de la demande (tous les chemins, ancien code compris)
 create or replace function lx_prive.trg_rdv_demandes_options_suivi()
  returns trigger language plpgsql security definer set search_path to 'public', 'pg_temp' as $f$
-declare v_nom text := coalesce(nullif(trim(coalesce(NEW.client_prenom, '') || ' ' || coalesce(NEW.client_nom, '')), ''), 'Client');
+declare v_nom text := coalesce(nullif(trim(coalesce(NEW.client_prenom, '') || ' ' || coalesce(NEW.client_nom, '')), ''), 'Client'); v_n int;
 begin
   if NEW.status is distinct from OLD.status and OLD.status = 'proposed' then
     if NEW.status = 'pending' then
@@ -912,6 +916,11 @@ begin
       values (NEW.salon_id, 'rdv_demande_expiree', '⌛ Proposition expirée', v_nom || ' n''a choisi aucune option. Vous pouvez le recontacter.',
               jsonb_build_object('demande_id', NEW.id), 'rdv_demandes_expiree_' || NEW.envoi, NEW.id)
       on conflict (source_table, source_id) do nothing;
+      -- contre-audit final 30/10 (réserve 6) : e-mail « proposition expirée » au client quel que soit le chemin d'expiration
+      -- (tâche */15, fn_auto_expire_all de 02:30, lecture par le client, edge de l'ancien format), UNE fois par envoi :
+      -- la notification ci-dessus (unique par envoi) sert de jeton.
+      get diagnostics v_n = row_count;
+      if v_n = 1 and coalesce(NEW.proposal_version, 1) = 2 then perform lx_prive.sm_notifier_worker(NEW.id, 'expiree'); end if;
     end if;
   end if;
   if NEW.vue_at is not null and OLD.vue_at is null and coalesce(NEW.proposal_version, 1) = 2 then
@@ -974,8 +983,7 @@ begin
               and coalesce(checkout_expires_at, '-infinity') + interval '60 minutes' < now() and coalesce(confirm_claim_at, '-infinity') < now() - interval '3 minutes'
             order by proposal_expires_at limit 200 for update skip locked loop
     update public.rdv_demandes set status = 'expired' where id = r.id and status = 'proposed';
-    n_exp := n_exp + 1;
-    if r.proposal_version = 2 then perform lx_prive.sm_notifier_worker(r.id, 'expiree'); end if;
+    n_exp := n_exp + 1; -- e-mail « expirée » : envoyé par trg_rdv_demandes_options_suivi (tous les chemins, une fois)
   end loop;
   -- 2) relance du client, UNE fois, dans les 24 h avant l'expiration (au moins 12 h après l'envoi, rien de choisi)
   for r in select id from public.rdv_demandes

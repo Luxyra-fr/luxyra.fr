@@ -353,6 +353,38 @@ await garde("CA-B1-rb", async () => {
   await db.exec(`alter function public.lx_demande_paiement_finaliser_x(text, text, uuid, text, text, bigint) rename to lx_demande_paiement_finaliser`);
   ok("B1 : finalisation impossible (fonction absente) -> remboursé + alerte, pas de 503 sans fin", r.status === 200 && r.body.code === "erreur" && monde.stripe.refunds.length === rf0 + 1, r);
 });
+await garde("CA2-deja", async () => {
+  // contre-audit final (BLOQUANT) : paiement DÉJÀ enregistré (RDV + ticket) puis 404 / lien inconnu -> jamais de remboursement
+  const id = await demande();
+  let r = await appelEdge(propose, { demande_id: id, options: [opt(1, { date: jourCA(), items: [{ type: "service", id: 9002 }], acompte_mode: "pct", acompte_valeur: 30, heure: "19:00" })], forcer: true }, "jwt-A");
+  const token = r.body.proposal_token, B = r.body.options[0];
+  r = await appelWorker(monde, "/api/rdv-demande/connect-pay", { token, option_id: B.id }); const s = monde.payer(r.body.session_id);
+  r = await appelWorker(monde, "/api/rdv-demande/finalize", { token, session_id: s.id });
+  const rdvId = r.body.rdv_online_id;
+  const rf0 = monde.stripe.refunds.length, tk0 = await nbTickets();
+  await db.exec(`alter function public.lx_demande_paiement_finaliser(text, text, uuid, text, text, bigint) rename to lx_demande_paiement_finaliser_x`);
+  let r404;
+  try { r404 = await appelWorker(monde, "/api/rdv-demande/finalize", { token, session_id: s.id });
+    // la vérification elle-même échoue (PostgREST en panne sur rdv_online) -> 503 « paiement reçu », aucun remboursement
+    const f0 = globalThis.fetch;
+    globalThis.fetch = async (input, init) => { const u = new URL(input instanceof Request ? input.url : String(input)); if (u.pathname === "/rest/v1/rdv_online") return new Response("panne", { status: 500 }); return f0(input, init); };
+    try { r = await appelWorker(monde, "/api/rdv-demande/finalize", { token, session_id: s.id }); } finally { globalThis.fetch = f0; }
+  } finally { await db.exec(`alter function public.lx_demande_paiement_finaliser_x(text, text, uuid, text, text, bigint) rename to lx_demande_paiement_finaliser`); }
+  ok("BLOQUANT final : RDV déjà enregistré + fonction absente (404) -> ok / already_confirmed, aucun remboursement", r404.status === 200 && r404.body.ok === true && r404.body.already_confirmed === true && r404.body.rdv_online_id === rdvId && monde.stripe.refunds.length === rf0 && (await nbTickets()) === tk0 && !/n'a pas pu être enregistré/.test(JSON.stringify(r404.body)), r404);
+  ok("BLOQUANT final : vérification impossible -> 503 « Paiement reçu, confirmation en cours », aucun remboursement", r.status === 503 && r.body.paiement_recu === true && /Paiement reçu/.test(r.body.error) && monde.stripe.refunds.length === rf0, r);
+  // lien inconnu (jeton changé) alors que le paiement est enregistré -> ok, aucun remboursement
+  const tokX = ("zz" + Math.random().toString(16).slice(2) + "0".repeat(40)).slice(0, 40);
+  await db.query(`update rdv_demandes set proposal_token=$2 where id=$1`, [id, tokX]);
+  const fx = await db.query(`select public.lx_demande_paiement_finaliser($1, $2, $3, $4, 'acct_TESTA', $5) r`, [token, s.id, B.id, s.payment_intent, s.amount_total]);
+  r = await appelWorker(monde, "/api/rdv-demande/finalize", { token, session_id: s.id });
+  ok("BLOQUANT final : lien inconnu (introuvable) alors que le RDV existe -> ok / already_confirmed, aucun remboursement", fx.rows[0].r.code === "introuvable" && r.status === 200 && r.body.ok === true && r.body.already_confirmed === true && monde.stripe.refunds.length === rf0, { fx: fx.rows[0].r, r });
+  // paiement JAMAIS enregistré + lien inconnu -> remboursé (inchangé)
+  const sz = { id: "cs_test_Z" + Date.now(), object: "checkout.session", status: "complete", payment_status: "paid", payment_intent: "pi_Z" + Date.now(), amount_total: 1000, metadata: { type: "rdv_demande_acompte", proposal_token: token, option_id: B.id, demande_id: id } };
+  monde.stripe.sessions.set(sz.id, sz);
+  r = await appelWorker(monde, "/api/rdv-demande/finalize", { token, session_id: sz.id });
+  ok("BLOQUANT final : paiement non enregistré sur un lien inconnu -> toujours remboursé", r.status === 200 && r.body.rembourse === true && r.body.code === "introuvable" && monde.stripe.refunds.length === rf0 + 1 && monde.stripe.refunds[rf0].payment_intent === sz.payment_intent, r);
+  await db.query(`update rdv_demandes set proposal_token=$2 where id=$1`, [id, token]);
+});
 await garde("CA-g", async () => {
   const id = await demande();
   const e0 = monde.emails.length;

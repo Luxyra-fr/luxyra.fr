@@ -2976,7 +2976,7 @@ async function handleRdvDemandeConnectPay(request, env) {
     if (!Array.isArray(dRows) || !dRows[0]) return jsonResponse({ error: "Proposition introuvable" }, 404);
     const demande = dRows[0];
 
-    if (Number(demande.proposal_version) === 2) return jsonResponse({ error: "Cette proposition comporte plusieurs options : rechargez la page pour choisir. Aucun paiement n'a été effectué." }, 409); // 2026-10-30
+    if (Number(demande.proposal_version) === 2) return jsonResponse({ error: "Le paiement de cette proposition n'est pas disponible depuis cette page. Aucun paiement n'a été effectué : rechargez la page dans quelques instants ou contactez l'établissement." }, 409); // 2026-10-30 (texte exact aussi pendant un retour arrière : ancienne page, 1 option)
     if (demande.status === "confirmed") return jsonResponse({ error: "Cette proposition est déjà confirmée." }, 409);
     if (demande.status === "pending") return jsonResponse({ error: "L'établissement prépare une nouvelle proposition : vous allez la recevoir. Aucun paiement n'a été effectué." }, 409); // 2026-10-14
     if (["refused", "cancelled_by_salon", "expired"].includes(demande.status)) {
@@ -3348,6 +3348,25 @@ async function lxSmRembourser(env, session, compte, motif, paiementId) {
   return okR;
 }
 
+// 2026-10-30 (contre-audit final, BLOQUANT) : avant tout remboursement « lien inconnu / fonction absente / refus de la base »,
+// le paiement est-il DÉJÀ enregistré (RDV confirmé avec ce payment_intent, ex. rechargement de la page de retour Stripe après
+// un retour arrière SQL) ? { oui: id } -> jamais de remboursement ; { erreur: true } -> 503 (Stripe rejoue) ; {} -> non.
+async function lxSmDejaEnregistre(env, pi) {
+  if (!pi) return {};
+  try {
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?payment_intent_id=eq.${encodeURIComponent(pi)}&acompte_paye=is.true&select=id&limit=1`, { headers: _sbHeaders(env) });
+    if (!r.ok) return { erreur: true };
+    const a = await r.json();
+    if (!Array.isArray(a)) return { erreur: true };
+    return a[0] && a[0].id ? { oui: a[0].id } : {};
+  } catch (_) { return { erreur: true }; }
+}
+async function lxSmDejaReponse(env, session, md, verif) {
+  if (verif.oui) return jsonResponse({ ok: true, rdv_online_id: verif.oui, already_confirmed: true });
+  await reportWorkerError(env, "worker:rdv-demande-finalize", new Error("Finalisation sur mesure : vérification du paiement déjà enregistré impossible (aucun remboursement, rejoué)"), { session: session.id, demande_id: md.demande_id }, "critical");
+  return jsonResponse({ error: "Paiement reçu, confirmation en cours de finalisation.", paiement_recu: true, en_cours: true }, 503);
+}
+
 async function lxSmFinaliser(env, token, session, compte) {
   const md = session.metadata || {};
   const pi = session.payment_intent ? String(session.payment_intent) : null;
@@ -3358,6 +3377,8 @@ async function lxSmFinaliser(env, token, session, compte) {
     // 2026-10-30 (contre-audit, BLOQUANT 1) : erreur DÉFINITIVE (fonction absente après un retour arrière, refus de la base) ->
     // remboursement automatique + alerte ; erreur passagère (5xx, réseau) -> 503, Stripe rejouera le webhook.
     if (f.http === 400 || f.http === 404) {
+      const v = await lxSmDejaEnregistre(env, pi);
+      if (v.oui || v.erreur) return await lxSmDejaReponse(env, session, md, v);
       const okR = await lxSmRembourser(env, session, compte, "erreur_base_" + f.http, null);
       return jsonResponse({ ok: false, rembourse: okR, code: "erreur", error: okR ? msgErr : "Votre rendez-vous n'a pas pu être enregistré. L'établissement a été prévenu et va vous rembourser." });
     }
@@ -3377,6 +3398,8 @@ async function lxSmFinaliser(env, token, session, compte) {
   }
   // lien inconnu (remplacé par une nouvelle proposition, demande supprimée) : aucune ligne de paiement possible -> remboursé
   if (d.code === "introuvable" || d.code === "parametres") {
+    const v = await lxSmDejaEnregistre(env, pi);
+    if (v.oui || v.erreur) return await lxSmDejaReponse(env, session, md, v);
     const okR = await lxSmRembourser(env, session, compte, d.code, null);
     return jsonResponse({ ok: false, rembourse: okR, code: d.code, error: okR ? msgOk : "Ce paiement n'a pas pu être utilisé. L'établissement a été prévenu et va vous rembourser." });
   }

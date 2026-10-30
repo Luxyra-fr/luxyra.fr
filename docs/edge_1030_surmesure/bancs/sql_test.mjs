@@ -556,6 +556,39 @@ await garde(async () => {
   ok("compat : 2 options -> proposed_data vide (options dans rdv_demande_options)", b === null, b);
 });
 
+await garde(async () => {
+  // contre-audit final (réserve 1) : insertion anonyme -> colonnes de proposition / verrou / paiement remises à zéro
+  const x = await commeRole(db, "anon", null, async () => { try { await db.query(`insert into rdv_demandes(id, salon_id, client_nom, client_tel, demande_text, status, confirm_claim_at, stripe_session_id, proposal_expires_at, refuse_reason, proposed_at, confirmed_at, refused_at) values ('99999999-9999-4999-8999-999999999998',$1,'X','06','t','pending', now() + interval '1 day', 'cs_pirate2', now() + interval '30 days', 'motif forgé', now(), now(), now())`, [S]); return "ok"; } catch (e) { return e.message; } });
+  const r = (await db.query(`select confirm_claim_at, stripe_session_id, proposal_expires_at, refuse_reason, proposed_at, confirmed_at, refused_at, proposed_data, proposal_token, rdv_online_id from rdv_demandes where id='99999999-9999-4999-8999-999999999998'`)).rows[0];
+  ok("réserve 1 : insertion anonyme : confirm_claim_at, stripe_session_id, proposal_expires_at, refuse_reason… forcés à NULL", x === "ok" && r && Object.values(r).every((v) => v === null), { x, r });
+});
+await garde(async () => {
+  // contre-audit final (réserve 6) : e-mail « expirée » quel que soit le chemin, une seule fois
+  const nExp = async (id) => (await db.query(`select count(*)::int n from net.lx_appels where body->>'type'='expiree' and body->>'demande_id'=$1`, [id])).rows[0].n;
+  const { id: ia } = await prop([optAc(115)]);
+  await db.query(`update rdv_demandes set proposal_expires_at = now() - interval '1 minute' where id=$1`, [ia]);
+  await db.query(`select public.fn_auto_expire_all()`);
+  const sa = (await db.query(`select status from rdv_demandes where id=$1`, [ia])).rows[0].status;
+  const na1 = await nExp(ia);
+  await db.query(`select lx_prive.demandes_sur_mesure_echeances()`); await db.query(`select public.fn_auto_expire_all()`);
+  const na2 = await nExp(ia);
+  ok("réserve 6 : expiration par la tâche de 02:30 (fn_auto_expire_all) : e-mail « expirée » demandé une fois (pas de second envoi par la tâche */15)", sa === "expired" && na1 === 1 && na2 === 1, { sa, na1, na2 });
+  const { id: ib, p: pb } = await prop([optAc(116)]);
+  await db.query(`update rdv_demandes set proposal_expires_at = now() - interval '1 minute' where id=$1`, [ib]);
+  await rpc(db, "lx_demande_consulter", [pb.token]); await rpc(db, "lx_demande_consulter", [pb.token]);
+  await db.query(`select lx_prive.demandes_sur_mesure_echeances()`);
+  const sb = (await db.query(`select status from rdv_demandes where id=$1`, [ib])).rows[0].status;
+  ok("réserve 6 : expiration à la lecture par le client : e-mail « expirée » demandé une fois", sb === "expired" && (await nExp(ib)) === 1, { sb, n: await nExp(ib) });
+  const { id: ic } = await prop([optAc(117)]);
+  await db.query(`update rdv_demandes set proposal_expires_at = now() - interval '1 minute' where id=$1`, [ic]);
+  await db.query(`select lx_prive.demandes_sur_mesure_echeances()`); await db.query(`select lx_prive.demandes_sur_mesure_echeances()`);
+  ok("réserve 6 : expiration par la tâche */15 : e-mail « expirée » demandé une fois", (await nExp(ic)) === 1, await nExp(ic));
+  const id1 = await demande(db);
+  await db.query(`update rdv_demandes set status='proposed', proposal_token=md5(random()::text)||md5(random()::text), proposed_data='{}'::jsonb, proposal_expires_at=now()-interval '1 minute' where id=$1`, [id1]);
+  await db.query(`select public.fn_auto_expire_all()`);
+  ok("réserve 6 : ancien format (v1) expiré : pas d'e-mail serveur (inchangé)", (await nExp(id1)) === 0, await nExp(id1));
+});
+
 console.log(`SQL sur mesure v2 : ${nOk}/${nOk + nKo} OK (${((Date.now() - T0) / 1000).toFixed(1)} s)`);
 if (kos.length) console.log("ÉCHECS :\n- " + kos.join("\n- "));
 process.exit(nKo ? 1 : 0);
