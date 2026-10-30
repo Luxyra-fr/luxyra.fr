@@ -3578,12 +3578,25 @@ async function lxSmNotifier(env, demandeId, type) {
   }
   // pas d'e-mail utilisable : SMS court (proposition / relance), mêmes règles et crédits que les SMS de l'établissement
   if (res.email !== "envoye" && res.email !== "deja" && m.sms && d.client_tel) {
+    // 30/10/2026 contre-audit m4 : anti-doublon du SMS (un nouvel essai du notifier ne renvoie pas le SMS, payé par l'établissement)
+    const cleSms = `${d.salon_id}|sur_mesure_${type}|${d.id}|${Number(d.envoi) || 1}|sms`;
+    let reserve = false;
     try {
-      const rq = new Request("https://luxyra.fr/interne", { method: "POST", headers: { "Content-Type": "application/json", "x-lx-internal": env.SUPABASE_SERVICE_KEY },
-        body: JSON.stringify({ telephone: d.client_tel, message: m.sms, salonName: salon.nom || "", salon_id: d.salon_id }) });
-      const rs = await handleSmsCustom(rq, env);
-      res.sms = rs.status < 300 ? "envoye" : "echec_" + rs.status;
-    } catch (e) { res.sms = "echec"; }
+      const rl = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/messaging_log`, { method: "POST", headers: _sbHeaders(env, { Prefer: "return=minimal" }),
+        body: JSON.stringify({ salon_id: d.salon_id, type: "sms", recipient: String(d.client_tel).slice(0, 40), content: ("Sur mesure : " + type).slice(0, 300), via: "brevo", context: "luxyra_auto", dedup_key: cleSms }) });
+      if (rl.ok) reserve = true;
+      else { const t = await rl.text().catch(() => ""); if (rl.status === 409 || /23505|duplicate key/i.test(t)) res.sms = "deja"; }
+    } catch (_) {}
+    if (res.sms !== "deja") {
+      try {
+        const rq = new Request("https://luxyra.fr/interne", { method: "POST", headers: { "Content-Type": "application/json", "x-lx-internal": env.SUPABASE_SERVICE_KEY },
+          body: JSON.stringify({ telephone: d.client_tel, message: m.sms, salonName: salon.nom || "", salon_id: d.salon_id }) });
+        const rs = await handleSmsCustom(rq, env);
+        res.sms = rs.status < 300 ? "envoye" : "echec_" + rs.status;
+      } catch (e) { res.sms = "echec"; }
+      // échec : la réservation est libérée pour permettre un nouvel essai
+      if (reserve && res.sms !== "envoye") { try { await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/messaging_log?dedup_key=eq.${encodeURIComponent(cleSms)}`, { method: "DELETE", headers: _sbHeaders(env) }); } catch (_) {} }
+    }
   }
   if (d.client_luxyra_id && m.notif) {
     const n = await lxSmRpc(env, "lx_notifier_client", { p_client: d.client_luxyra_id, p_type: "sur_mesure_" + type, p_titre: m.notif.titre, p_texte: m.notif.texte, p_url: m.notif.url });
@@ -6875,9 +6888,12 @@ async function handleClientInviteVerify(request, env) {
 
     // Compte client déjà existant -> jamais de changement de mot de passe ici ; la fiche est reliée
     // (le lien reçu par e-mail prouve que la personne contrôle cette adresse).
-    const ex = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/clients_luxyra?select=id&email=eq.${encodeURIComponent(email)}&limit=1`, { headers: _sbHeaders(env) });
+    const ex = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/clients_luxyra?select=id,email_verified&email=eq.${encodeURIComponent(email)}&limit=1`, { headers: _sbHeaders(env) });
     const exa = ex.ok ? await ex.json() : [];
     if (Array.isArray(exa) && exa[0]) {
+      // 30/10/2026 contre-audit M2 : jamais de rattachement à un compte dont l'adresse n'est pas confirmée
+      // (quelqu'un d'autre a pu saisir cette adresse sur son propre compte).
+      if (exa[0].email_verified !== true) return jsonResponse({ error: "Un compte non confirmé utilise déjà cette adresse e-mail. Écrivez à contact@luxyra.fr : nous vérifierons et relierons votre fiche.", compte_non_confirme: true }, 409);
       await lier(exa[0].id);
       return jsonResponse({ error: "Un compte client existe déjà avec cet e-mail : votre fiche y est maintenant reliée. Connectez-vous, ou utilisez « Mot de passe oublié ».", compte_existant: true, email }, 409);
     }
