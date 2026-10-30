@@ -180,6 +180,8 @@ async function __wrappedApiHandler(request, url, env) {
       if (url.pathname === "/api/email/ticket" && request.method === "POST") return await handleEmailTicket(request, env);
       if (url.pathname === "/api/email/welcome" && request.method === "POST") return await handleEmailWelcome(request, env);
       if (url.pathname === "/api/email/custom" && request.method === "POST") return await handleEmailCustom(request, env);
+      // 2026-10-30 : adresse d'un client rejetée (signalée par lx-brevo-webhook, vérifiée ici auprès de Brevo)
+      if (url.pathname === "/api/email/rejet-signale" && request.method === "POST") return await handleEmailRejetSignale(request, env);
       if (url.pathname === "/api/sms/rappel" && request.method === "POST") return await handleSmsRappel(request, env);
       if (url.pathname === "/api/sms/custom" && request.method === "POST") return await handleSmsCustom(request, env);
       // NEW: SMS Native companion app linking
@@ -3555,7 +3557,10 @@ async function lxSmNotifier(env, demandeId, type) {
   const m = lxSmMessage(type, d, Array.isArray(opts) ? opts : [], salon, rdv);
   const res = { ok: true, type, email: "absent", sms: "non", notif: false };
   const email = String(d.client_email || "").trim();
-  if (email && /@/.test(email)) {
+  // 2026-10-30 : adresse marquée « rejetée » (faute de frappe) -> pas d'e-mail en vain, SMS à la place (ci-dessous)
+  const _emRejete = !!(email && /@/.test(email) && await lxEmailClientRejete(env, email));
+  if (_emRejete) res.email = "rejete";
+  if (email && /@/.test(email) && !_emRejete) {
     const cle = `${d.salon_id}|sur_mesure_${type}|${d.id}|${Number(d.envoi) || 1}`;
     const resa = await lxEmailReserver(env, { salonId: d.salon_id, to: email, toName: [d.client_prenom, d.client_nom].filter(Boolean).join(" "), subject: m.sujet, html: m.html, dedupKey: cle });
     if (resa.doublon) res.email = "deja";
@@ -4486,6 +4491,52 @@ async function handleEmailWelcome(request, env) {
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:'Helvetica Neue',Arial,sans-serif;background:#f5f5f5;margin:0;padding:20px}.card{max-width:520px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,.08)}.header{background:#0b0b0b;padding:26px 30px 22px;text-align:center;color:#fff;border-bottom:3px solid #c8a84e}.header h1{margin:0;font-size:24px;color:#d4a843}.body{padding:30px}.creds{background:#f8f6f0;border:1px solid #e8e0d0;border-radius:10px;padding:20px;margin:20px 0;text-align:center}.creds .label{font-size:12px;color:#999;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px}.creds .value{font-size:16px;font-weight:700;color:#1a1a2e;margin-bottom:12px}.btn{display:inline-block;padding:14px 40px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#fff;text-decoration:none;border-radius:10px;font-weight:700;font-size:15px}.footer{text-align:center;padding:16px;font-size:11px;color:#999;border-top:1px solid #f0f0f0}</style></head><body><div class="card"><div class="header"><img src="https://luxyra.fr/email/luxyra-logo-128.png" width="64" height="64" alt="Luxyra" style="display:block;margin:0 auto 10px;border-radius:12px"><h1>Bienvenue sur Luxyra !</h1><p style="color:rgba(255,255,255,.7);margin-top:8px">Votre essai gratuit de 14 jours commence maintenant</p></div><div class="body"><p>Bonjour ${prenom||""} ${nom||""},</p><p>Votre établissement <strong>${nomSalon||""}</strong> est prêt.</p><div class="creds"><div class="label">Email de connexion</div><div class="value">${identifiant||email}</div><div class="label">Mot de passe</div><div class="value">${motDePasse||"(celui que vous avez choisi)"}</div></div><div style="text-align:center;margin:24px 0"><a href="https://luxyra.fr/app" class="btn">Accéder à mon salon →</a></div><p style="font-size:13px;color:#666">Votre formule d'essai <strong>${plan||"Essentiel"}</strong> est active pendant 14 jours.</p></div><div class="footer">Luxyra — Alexandre JENSEN, entrepreneur individuel — SIRET 910 928 464 00023<br>29 rue de l'Abbé Alexandre Pax, 57200 Sarreguemines — luxyra.fr — contact@luxyra.fr</div></div></body></html>`;
   const result = await brevoSendEmail(env, { to: email, toName: `${prenom||""} ${nom||""}`.trim(), senderName: "Luxyra", senderEmail: "contact@luxyra.fr", subject: "Bienvenue sur Luxyra — Vos identifiants", htmlContent: html, textContent: "", replyTo: null, attachment: null });
   return jsonResponse({ success: true, messageId: result.messageId, result });
+}
+
+// ============================================================
+// 2026-10-30 — E-MAIL CLIENT REJETÉ (adresse mal saisie)
+// Appel interne (x-lx-internal) de lx-brevo-webhook. L'URL du webhook étant publique, on ne croit pas l'appel
+// sur parole : le rejet est VÉRIFIÉ dans le journal des événements Brevo (hardBounces / invalid, 30 jours) avant
+// de marquer le compte Luxyra (clients_luxyra.email_rejete_at). Effets : bandeau « adresse incorrecte » dans
+// l'espace client (correction possible tant que l'adresse n'est pas confirmée) ; RDV sur mesure : SMS au lieu de l'e-mail.
+// Le marquage est effacé par lx-profile quand l'adresse change ou est confirmée.
+// ============================================================
+async function lxBrevoRejetVerifie(env, email) {
+  const r = await fetch(`https://api.brevo.com/v3/smtp/statistics/events?email=${encodeURIComponent(email)}&days=30&limit=50&sort=desc`, { headers: { "api-key": env.BREVO_API_KEY, Accept: "application/json" } });
+  if (!r.ok) return { ok: false, http: r.status };
+  const j = await r.json().catch(() => ({}));
+  const ev = (Array.isArray(j && j.events) ? j.events : []).find((x) => x && String(x.email || "").toLowerCase() === email && (x.event === "hardBounces" || x.event === "invalid"));
+  return { ok: true, rejet: !!ev, motif: ev ? (ev.event === "invalid" ? "Adresse invalide" : "Rejet définitif") + (ev.reason ? " — " + String(ev.reason).slice(0, 150) : "") : "" };
+}
+async function handleEmailRejetSignale(request, env) {
+  if (!(await lxIsInternal(request, env))) return jsonResponse({ error: "Accès refusé" }, 403);
+  let body = null; try { body = await request.json(); } catch (_) { body = null; }
+  const emails = [...new Set((Array.isArray(body && body.emails) ? body.emails : []).map((e) => String(e || "").toLowerCase().trim()).filter((e) => e.length <= 200 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)))].slice(0, 20);
+  const out = [];
+  for (const email of emails) {
+    try {
+      // seulement les comptes clients Luxyra existants et pas encore marqués (évite un appel Brevo inutile)
+      const q = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/clients_luxyra?select=id&email=eq.${encodeURIComponent(email)}&email_rejete_at=is.null&limit=1`, { headers: _sbHeaders(env) });
+      const rows = q.ok ? await q.json() : [];
+      if (!Array.isArray(rows) || !rows.length) { out.push({ statut: "ignore" }); continue; }
+      const v = await lxBrevoRejetVerifie(env, email);
+      if (!v.ok) { out.push({ statut: "brevo_" + v.http }); continue; }
+      if (!v.rejet) { out.push({ statut: "non_confirme" }); continue; }
+      const u = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/clients_luxyra?id=eq.${encodeURIComponent(rows[0].id)}&email=eq.${encodeURIComponent(email)}&email_rejete_at=is.null`, { method: "PATCH", headers: { ..._sbHeaders(env), "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify({ email_rejete_at: new Date().toISOString(), email_rejet_motif: v.motif.slice(0, 200) }) });
+      out.push({ statut: u.ok ? "marque" : "echec_" + u.status });
+    } catch (e) { out.push({ statut: "erreur" }); }
+  }
+  return jsonResponse({ ok: true, resultats: out });
+}
+// 2026-10-30 : adresse d'un client marquée « rejetée » (pour ne pas lui écrire en vain : SMS à la place quand c'est prévu)
+async function lxEmailClientRejete(env, email) {
+  const e = String(email || "").toLowerCase().trim();
+  if (!e) return false;
+  try {
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/clients_luxyra?select=id&email=eq.${encodeURIComponent(e)}&email_rejete_at=not.is.null&limit=1`, { headers: _sbHeaders(env) });
+    const d = r.ok ? await r.json() : [];
+    return Array.isArray(d) && d.length > 0;
+  } catch (_) { return false; }
 }
 
 async function handleEmailCustom(request, env) {
