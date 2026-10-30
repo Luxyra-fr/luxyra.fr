@@ -71,7 +71,7 @@
 // Bumper cette chaine a CHAQUE deploiement qui doit invalider l'ancien cache
 // (la strategie network-first sert deja du frais ; le bump nettoie surtout les
 // vieux caches et marque le SW comme "mis a jour").
-var LX_CACHE = 'luxyra-sw-shell-v23-2026-10-14';
+var LX_CACHE = 'luxyra-sw-shell-v24-2026-10-30';
 
 // v22 (2026-10-12) — deux correctifs de robustesse :
 //  1. CLE DE CACHE SANS PARAMETRES : avant, chaque variante d'URL (?v=, ?x=, ?demo=...)
@@ -274,22 +274,8 @@ self.addEventListener('push', function(e) {
   // Le temoin ne doit jamais retarder ni empecher l'affichage : Chrome exige qu'un
   // push aboutisse RAPIDEMENT a une notification visible. On trace donc SANS
   // e.waitUntil, en pur « au mieux ».
-  try {
-    var _sbu='https://kxdgjtvrkwugbifgppai.supabase.co';
-    var _ak='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt4ZGdqdHZya3d1Z2JpZmdwcGFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwNDE2NTgsImV4cCI6MjA4ODYxNzY1OH0.J3jVuoHSWA0wXyaWxiRzILEWVNr8hbbgVYg73UEDTuI';
-    // 2026-10-14 SECURITE : on ne journalise PLUS le contenu du push (titre / texte = donnees personnelles :
-    // nom du client, prestation, horaire...). Seuls la taille et le type d'evenement sont traces.
-    var _taille=0, _evt=''; try { var _t = e.data ? e.data.text() : ''; _taille = _t.length; try { var _j = JSON.parse(_t); _evt = String((_j && _j.data && _j.data.event_type) || '').replace(/[^a-z0-9_\-]/gi,'').slice(0,40); } catch(_y){} } catch(_x){}
-    fetch(_sbu+'/rest/v1/rpc/report_server_error',{
-      method:'POST',
-      headers:{'Content-Type':'application/json','apikey':_ak,'Authorization':'Bearer '+_ak},
-      body:JSON.stringify({
-        p_source:'sw_push_recu',
-        p_message:'Push recu par le service worker (contenu non journalise) — '+_taille+' octets'+(_evt?' — '+_evt:''),
-        p_severity:'warning', p_stack:'', p_context:null
-      })
-    }).catch(function(){});
-  } catch(_e) {}
+  // 2026-10-30 : témoin de réception RETIRÉ (diagnostic des notifications terminé ; il remplissait le monitoring
+  // d'« erreurs » qui n'en étaient pas). Réactivable depuis l'historique git si besoin (commit du 30/10/2026).
 
   var data = {};
   try {
