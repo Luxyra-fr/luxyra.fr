@@ -198,8 +198,6 @@ await garde(async () => {
   ok("préparer B : 2400 centimes, compte du salon", x.r && x.r.ok && +x.r.montant_cents === 2400 && x.r.compte === "acct_TESTA" && x.r.session_precedente === null, x);
   x = await rpc(db, "lx_demande_paiement_enregistrer", [p.token, B.id, "cs_B1", new Date(Date.now() + 30 * 60e3).toISOString()]);
   ok("session B enregistrée", x.r && x.r.ok && x.r.session_precedente === null, x);
-  x = await rpc(db, "lx_demande_choisir", [p.token, A.id]);
-  ok("pendant un paiement : choisir une option sans acompte refusé", x.r && x.r.code === "paiement_en_cours", x);
   x = await rpc(db, "lx_demande_paiement_preparer", [p.token, C.id]);
   ok("changement d'option : la session précédente est signalée (à expirer)", x.r && x.r.session_precedente === "cs_B1", x);
   x = await rpc(db, "lx_demande_paiement_enregistrer", [p.token, C.id, "cs_C1", new Date(Date.now() + 30 * 60e3).toISOString()]);
@@ -276,7 +274,7 @@ await garde(async () => {
   const id = await demande(db);
   const p = (await rpc(db, "lx_demande_proposer", [id, U, JSON.stringify([{ ...optB, rang: 1, date: jour(16) }]), 72, false])).r;
   await rpc(db, "lx_demande_paiement_enregistrer", [p.token, p.options[0].id, "cs_morte", new Date(Date.now() + 30 * 60e3).toISOString()]);
-  await db.query(`update rdv_demandes set checkout_expires_at = now() - interval '1 minute', proposal_expires_at = now() - interval '1 minute' where id=$1`, [id]);
+  await db.query(`update rdv_demandes set checkout_expires_at = now() - interval '61 minutes', proposal_expires_at = now() - interval '1 minute' where id=$1`, [id]);
   const avant = (await db.query(`select count(*)::int n from net.lx_appels where body->>'type'='expiree'`)).rows[0].n;
   const r = (await db.query(`select lx_prive.demandes_sur_mesure_echeances() r`)).rows[0].r;
   const s = (await db.query(`select status from rdv_demandes where id=$1`, [id])).rows[0].status;
@@ -369,6 +367,193 @@ await garde(async () => {
   const f = (await commeRole(dbt, "service_role", null, () => dbt.query(`select lx_demande_paiement_finaliser($1,'cs_T',$2,'pi_T','acct_TESTA',2400) r`, [p.token, p.options[0].id]))).rows[0].r;
   const t = (await dbt.query(`select mode_caisse, total_ttc from tickets where salon_id=$1`, [S])).rows;
   ok("caisse de test : acompte payé -> ticket marqué TEST (règle existante)", f.ok && t.length === 1 && t[0].mode_caisse === "test" && +t[0].total_ttc === 24, { f, t });
+});
+
+// ---------- 9. Contre-audit du 30/10 (NO GO) : correctifs C1, C2, C3, a, b, c, e, f, j, k + « jamais d'argent sans ticket » ----------
+const nTk = async () => (await db.query(`select count(*)::int n from tickets where salon_id=$1`, [S])).rows[0].n;
+const optAc = (n, x) => Object.assign({ rang: 1, date: jour(n), heure: "10:00", collaborateur_id: C1, items: [{ type: "service", id: 9001 }], acompte_mode: "montant", acompte_valeur: 10 }, x || {});
+async function prop(opts) { const id = await demande(db); const r = await rpc(db, "lx_demande_proposer", [id, U, JSON.stringify(opts), 72, true]); return { id, p: r.r, err: r }; }
+await garde(async () => {
+  // C1 : prestation / forfait / collaborateur supprimés entre l'envoi et le paiement -> RDV + ticket (jamais l'erreur de clé étrangère)
+  await db.query(`insert into services(id, salon_id, nom, prix, phases, actif, prix_sur_devis, book_online, show_site, categorie) values (9301,$1,'TEMP C1',40,'[{"t":"w","d":30}]',true,false,true,true,'X')`, [S]);
+  await db.query(`insert into collaborateurs(id, salon_id, nom, initiales, actif, inactif) values (598,$1,'Temp','TE',true,false)`, [S]);
+  const { id, p } = await prop([optAc(90, { collaborateur_id: 598, items: [{ type: "service", id: 9301 }] })]);
+  await db.query(`delete from services where id=9301`); await db.query(`delete from collaborateurs where id=598`);
+  const t0 = await nTk();
+  await rpc(db, "lx_demande_paiement_enregistrer", [p.token, p.options[0].id, "cs_C1x", new Date(Date.now() + 31 * 60e3).toISOString()]);
+  const f = await rpc(db, "lx_demande_paiement_finaliser", [p.token, "cs_C1x", p.options[0].id, "pi_C1x", "acct_TESTA", 1000]);
+  const r = f.r && f.r.rdv_online_id ? (await db.query(`select service_id, service_nom, collaborateur_id, collaborateur_nom, acompte_paye, acompte_tk_num from rdv_online where id=$1`, [f.r.rdv_online_id])).rows[0] : null;
+  ok("C1 : prestation + collaborateur supprimés -> RDV (sans clés) + ticket scellé", f.r && f.r.ok && r && r.service_id === null && r.collaborateur_id === null && r.service_nom === "TEMP C1" && r.acompte_paye && r.acompte_tk_num && (await nTk()) === t0 + 1, { f, r });
+  const st = (await db.query(`select status from rdv_demandes where id=$1`, [id])).rows[0].status;
+  ok("C1 : demande confirmée", st === "confirmed", st);
+});
+await garde(async () => {
+  // BLOQUANT 1 : échec quelconque après paiement -> aucun RDV, aucun ticket, paiement « à rembourser » (code erreur) + alerte critique
+  await db.exec(`create or replace function public._test_panne() returns trigger language plpgsql as $$ begin if NEW.client_prenom = 'PANNE' then raise exception 'panne simulée'; end if; return NEW; end $$;
+    create trigger _test_panne before insert on public.rdv_online for each row execute function public._test_panne();`);
+  const id = (await srv(db, () => db.query(`insert into rdv_demandes(salon_id, client_nom, client_prenom, client_tel, client_email, demande_text, status) values ($1,'M.','PANNE','0600000000','p@x.test','x','pending') returning id`, [S]))).rows[0].id;
+  const p = (await rpc(db, "lx_demande_proposer", [id, U, JSON.stringify([optAc(91)]), 72, true])).r;
+  const t0 = await nTk(), e0 = (await db.query(`select count(*)::int n from server_errors where severity='critical'`)).rows[0].n;
+  const f = await rpc(db, "lx_demande_paiement_finaliser", [p.token, "cs_PANNE", p.options[0].id, "pi_PANNE", "acct_TESTA", 1000]);
+  const nr = (await db.query(`select count(*)::int n from rdv_online where payment_intent_id='pi_PANNE'`)).rows[0].n;
+  const pay = (await db.query(`select statut, detail from rdv_demande_paiements where session_id='cs_PANNE'`)).rows[0];
+  const e1 = (await db.query(`select count(*)::int n from server_errors where severity='critical'`)).rows[0].n;
+  ok("échec après paiement : code « erreur » (le worker rembourse), aucun RDV ni ticket, paiement à rembourser, alerte critique",
+    f.r && f.r.ok === false && f.r.code === "erreur" && f.r.paiement_id && nr === 0 && (await nTk()) === t0 && pay && pay.statut === "doublon" && /panne simulée/.test(pay.detail) && e1 === e0 + 1, { f, nr, pay, e0, e1 });
+  const st = (await db.query(`select status from rdv_demandes where id=$1`, [id])).rows[0].status;
+  ok("échec après paiement : la proposition reste ouverte (le client peut repayer ou choisir)", st === "proposed", st);
+  const f2 = await rpc(db, "lx_demande_paiement_finaliser", [p.token, "cs_PANNE", p.options[0].id, "pi_PANNE", "acct_TESTA", 1000]);
+  ok("échec après paiement : rejeu (webhook) reconnu, remboursement redemandé tant qu'il n'est pas fait", f2.r && f2.r.deja && f2.r.code === "doublon", f2);
+  await db.exec(`drop trigger _test_panne on public.rdv_online; drop function public._test_panne();`);
+});
+await garde(async () => {
+  // BLOQUANT 1 : ticket ni créé ni mis en file (déclencheur de recettes neutralisé pour l'essai) -> refusé + remboursé
+  const def = (await db.query(`select pg_get_functiondef('lx_prive.zz_rdv_online_recettes()'::regprocedure) d`)).rows[0].d;
+  await db.exec(`create or replace function lx_prive.zz_rdv_online_recettes() returns trigger language plpgsql as $$ begin return NEW; end $$;`);
+  const { p } = await prop([optAc(92)]);
+  const f = await rpc(db, "lx_demande_paiement_finaliser", [p.token, "cs_SANSTK", p.options[0].id, "pi_SANSTK", "acct_TESTA", 1000]);
+  const nr = (await db.query(`select count(*)::int n from rdv_online where payment_intent_id='pi_SANSTK'`)).rows[0].n;
+  ok("ticket non créé (ni file de rattrapage) : aucun RDV payé gardé, code « erreur » (remboursement)", f.r && f.r.code === "erreur" && nr === 0, { f, nr });
+  await db.exec(def);
+  const { p: p2 } = await prop([optAc(93)]);
+  const f2 = await rpc(db, "lx_demande_paiement_finaliser", [p2.token, "cs_AVECTK", p2.options[0].id, "pi_AVECTK", "acct_TESTA", 1000]);
+  ok("déclencheur rétabli : paiement -> RDV + ticket", f2.r && f2.r.ok, f2);
+});
+await garde(async () => {
+  // C2 : écritures légitimes hors serveur ; colonnes de la proposition toujours protégées
+  await db.query(`insert into services(id, salon_id, nom, prix, phases, actif, prix_sur_devis, book_online, show_site, categorie) values (9302,$1,'TEMP C2',40,'[{"t":"w","d":30}]',true,false,true,true,'X')`, [S]);
+  const id = (await srv(db, () => db.query(`insert into rdv_demandes(salon_id, client_nom, client_prenom, client_tel, client_email, demande_text, status, service_id) values ($1,'M.','J','06','j@x.test','x','pending',9302) returning id`, [S]))).rows[0].id;
+  const { p, id: id2 } = await prop([optAc(94)]);
+  const del = await commeRole(db, "authenticated", U, async () => { try { const r = await db.query(`delete from services where id=9302 and salon_id=$1 returning id`, [S]); return r.rows.length; } catch (e) { return e.message; } });
+  ok("C2 : le propriétaire supprime une prestation citée par une demande (mise à vide automatique)", del === 1, del);
+  const an = await commeRole(db, "authenticated", U, async () => { await db.exec("reset role"); try { const r = await db.query(`update rdv_demandes set client_nom='Anonyme', client_prenom='', client_tel='', client_email='', client_luxyra_id=null where id in ($1,$2)`, [id, id2]); return r.affectedRows; } catch (e) { return e.message; } });
+  ok("C2 : anonymisation RGPD (fermeture d'établissement), y compris d'une proposition envoyée", an === 2, an);
+  for (const [nom, set] of [["proposal_expires_at", "proposal_expires_at = now() + interval '30 days'"], ["envoi", "envoi = 9"], ["checkout_session_id", "checkout_session_id='cs_forge'"], ["service_id -> autre valeur", "service_id = 9001"], ["client_luxyra_id -> autre compte", `client_luxyra_id = '${CL}'`]]) {
+    const r = await commeRole(db, "authenticated", U, async () => { try { await db.query(`update rdv_demandes set ${set} where id=$1`, [id2]); return "modifié"; } catch (e) { return e.hint || e.message; } });
+    ok("C2 : propriétaire modifie « " + nom + " » : refusé", r === "LX_DEMANDE_PROTEGEE", r);
+  }
+});
+await garde(async () => {
+  // C3 + k : expiration par N'IMPORTE QUEL chemin refusée pendant un paiement (et 60 min après la fin de la session)
+  const { id, p } = await prop([optAc(95)]);
+  await rpc(db, "lx_demande_paiement_enregistrer", [p.token, p.options[0].id, "cs_C3", new Date(Date.now() + 31 * 60e3).toISOString()]);
+  await db.query(`update rdv_demandes set proposal_expires_at = now() - interval '1 minute' where id=$1`, [id]);
+  await db.query(`select public.fn_auto_expire_all()`);
+  await srv(db, () => db.query(`update rdv_demandes set status='expired' where id=$1 and status='proposed'`, [id])); // edge v13
+  await db.query(`select lx_prive.demandes_sur_mesure_echeances()`); await rpc(db, "lx_demande_consulter", [p.token]);
+  let st = (await db.query(`select status from rdv_demandes where id=$1`, [id])).rows[0].status;
+  ok("C3 : fn_auto_expire_all, edge v13, tâche */15, consultation : pas d'expiration pendant le paiement", st === "proposed", st);
+  await db.query(`update rdv_demandes set checkout_expires_at = now() - interval '20 minutes' where id=$1`, [id]);
+  await db.query(`select public.fn_auto_expire_all()`); await db.query(`select lx_prive.demandes_sur_mesure_echeances()`);
+  st = (await db.query(`select status from rdv_demandes where id=$1`, [id])).rows[0].status;
+  ok("k : session finie depuis 20 min (webhook en retard possible) : toujours pas expirée", st === "proposed", st);
+  const f = await rpc(db, "lx_demande_paiement_finaliser", [p.token, "cs_C3", p.options[0].id, "pi_C3", "acct_TESTA", 1000]);
+  ok("k : webhook arrivé 20 min après la fin de la session : RDV + ticket (pas de remboursement)", f.r && f.r.ok, f);
+  const { id: idb, p: pb } = await prop([optAc(96)]);
+  await rpc(db, "lx_demande_paiement_enregistrer", [pb.token, pb.options[0].id, "cs_C3b", new Date(Date.now() + 31 * 60e3).toISOString()]);
+  await db.query(`update rdv_demandes set proposal_expires_at = now() - interval '1 minute', checkout_expires_at = now() - interval '61 minutes' where id=$1`, [idb]);
+  await db.query(`select public.fn_auto_expire_all()`);
+  st = (await db.query(`select status from rdv_demandes where id=$1`, [idb])).rows[0].status;
+  ok("k : 61 min après la fin de la session : expiration normale", st === "expired", st);
+  const f2 = await rpc(db, "lx_demande_paiement_finaliser", [pb.token, "cs_C3b", pb.options[0].id, "pi_C3b", "acct_TESTA", 1000]);
+  ok("k : paiement arrivé encore plus tard : inactive -> remboursement (aucun RDV)", f2.r && f2.r.code === "inactive", f2);
+});
+await garde(async () => {
+  // a : retour depuis Stripe puis autre choix / refus -> possibles tout de suite ; session signalée à expirer ; paiement tardif remboursé
+  const { id, p } = await prop([optAc(97, { acompte_mode: "aucun" }), optAc(97, { rang: 2, heure: "14:00" })]);
+  await rpc(db, "lx_demande_paiement_enregistrer", [p.token, p.options[1].id, "cs_A1", new Date(Date.now() + 31 * 60e3).toISOString()]);
+  const c = await rpc(db, "lx_demande_choisir", [p.token, p.options[0].id]);
+  ok("a : choix de A juste après l'abandon du paiement de B : confirmé, session B à expirer", c.r && c.r.ok && c.r.session_a_expirer === "cs_A1", c);
+  const d = (await db.query(`select checkout_session_id, checkout_expires_at from rdv_demandes where id=$1`, [id])).rows[0];
+  ok("a : paiement en cours effacé", d.checkout_session_id === null && d.checkout_expires_at === null, d);
+  const t0 = await nTk();
+  const f = await rpc(db, "lx_demande_paiement_finaliser", [p.token, "cs_A1", p.options[1].id, "pi_A1", "acct_TESTA", 1000]);
+  ok("a : B payée quand même (expiration Stripe ratée) : doublon -> remboursement, aucun ticket", f.r && f.r.code === "doublon" && (await nTk()) === t0, f);
+  const { id: id2, p: p2 } = await prop([optAc(98)]);
+  await rpc(db, "lx_demande_paiement_enregistrer", [p2.token, p2.options[0].id, "cs_A2", new Date(Date.now() + 31 * 60e3).toISOString()]);
+  const rf = await rpc(db, "lx_demande_refuser", [p2.token, "finalement non"]);
+  ok("a : refus juste après l'abandon du paiement : accepté, session à expirer", rf.r && rf.r.ok && rf.r.session_a_expirer === "cs_A2", rf);
+  const f2 = await rpc(db, "lx_demande_paiement_finaliser", [p2.token, "cs_A2", p2.options[0].id, "pi_A2", "acct_TESTA", 1000]);
+  ok("a : paiement tardif après refus : inactive -> remboursement", f2.r && f2.r.code === "inactive", f2);
+  const { id: id3, p: p3 } = await prop([optAc(99)]);
+  await rpc(db, "lx_demande_paiement_enregistrer", [p3.token, p3.options[0].id, "cs_A3", new Date(Date.now() + 31 * 60e3).toISOString()]);
+  const e1 = await rpc(db, "lx_demande_paiement_effacer", [p3.token, "cs_AUTRE"]);
+  const e2 = await rpc(db, "lx_demande_paiement_effacer", [p3.token, "cs_A3"]);
+  const d3 = (await db.query(`select checkout_session_id from rdv_demandes where id=$1`, [id3])).rows[0];
+  ok("a : effacement du paiement en cours seulement pour la session enregistrée", e1.r && e1.r.ok === false && e2.r && e2.r.ok && d3.checkout_session_id === null, { e1, e2, d3 });
+  const x = await commeRole(db, "authenticated", U, async () => { try { await db.query(`select public.lx_demande_paiement_effacer('x','y')`); return "ok"; } catch (e) { return e.message; } });
+  ok("a : effacement interdit hors serveur", /permission denied/.test(x), x);
+});
+await garde(async () => {
+  // b : proposition expirée -> préparer / enregistrer / choisir refusés même avec une session ouverte
+  const { id, p } = await prop([optAc(100), optAc(100, { rang: 2, heure: "15:00", acompte_mode: "aucun" })]);
+  await rpc(db, "lx_demande_paiement_enregistrer", [p.token, p.options[0].id, "cs_B_", new Date(Date.now() + 31 * 60e3).toISOString()]);
+  await db.query(`update rdv_demandes set proposal_expires_at = now() - interval '1 minute' where id=$1`, [id]);
+  const a = await rpc(db, "lx_demande_paiement_preparer", [p.token, p.options[0].id]);
+  const b = await rpc(db, "lx_demande_paiement_enregistrer", [p.token, p.options[0].id, "cs_B2", new Date(Date.now() + 31 * 60e3).toISOString()]);
+  const c = await rpc(db, "lx_demande_choisir", [p.token, p.options[1].id]);
+  ok("b : expirée : préparer, enregistrer et choisir refusés", a.code === "LX_SM_EXPIREE" && b.r && b.r.code === "expiree" && c.code === "LX_SM_EXPIREE", { a, b, c });
+  const f = await rpc(db, "lx_demande_paiement_finaliser", [p.token, "cs_B_", p.options[0].id, "pi_B_", "acct_TESTA", 1000]);
+  ok("b : la session ouverte AVANT l'échéance reste finalisée (RDV + ticket)", f.r && f.r.ok, f);
+});
+await garde(async () => {
+  // c : heures
+  for (const [h, att] of [["24:00", false], ["29:00", false], ["23:59", true], ["0:00", true], ["7:5", false], ["12h30", false]]) {
+    const id = await demande(db);
+    const x = await rpc(db, "lx_demande_proposer", [id, U, JSON.stringify([optAc(101, { heure: h, acompte_mode: "aucun", date: jour(101 + (h === "0:00" ? 1 : 0)) })]), 72, true]);
+    ok("c : heure « " + h + " » " + (att ? "acceptée" : "refusée avec LX_SM_HEURE"), att ? (x.r && x.r.ok) : (x.code === "LX_SM_HEURE" && /00:00 à 23:59/.test(x.err)), x);
+  }
+});
+await garde(async () => {
+  // e : arrondi (centime inférieur) — mêmes valeurs que la fonction _lxSmCalc de app.html (banc arrondi_test.mjs)
+  const cas = [["montant", "22.505", 22.5], ["pct", "33.333", 7.49], ["pct", "30", 6.75], ["pct", "33.335", 7.49], ["pct", "33.34", 7.5], ["montant", "1", 1], ["pct", "100", 22.5], ["montant", "7,499", null]];
+  for (const [m, v, att] of cas) {
+    const id = await demande(db);
+    const x = await rpc(db, "lx_demande_proposer", [id, U, JSON.stringify([optAc(103, { items: [{ type: "service", id: 9006 }], acompte_mode: m, acompte_valeur: v })]), 72, true]);
+    const ac = x.r && x.r.options ? Number(x.r.options[0].acompte_montant) : null;
+    ok("e : acompte " + m + " " + v + " sur 22,50 € = " + att, att === null ? x.code === "LX_SM_ACOMPTE" : ac === att, x.r ? ac : x);
+  }
+});
+await garde(async () => {
+  // f : nouvelle proposition après refus / expiration (nouveau lien ; ancien lien mort ; paiement sur l'ancien lien -> introuvable = remboursé)
+  const { id, p } = await prop([optAc(104)]);
+  await rpc(db, "lx_demande_refuser", [p.token, "pas ce jour-là"]);
+  const n = await rpc(db, "lx_demande_proposer", [id, U, JSON.stringify([optAc(105)]), 72, true]);
+  const d = (await db.query(`select status, envoi, refuse_reason, refused_at from rdv_demandes where id=$1`, [id])).rows[0];
+  ok("f : nouvelle proposition après refus : envoi 2, nouveau lien, motif effacé", n.r && n.r.ok && n.r.token !== p.token && d.status === "proposed" && d.envoi === 2 && d.refuse_reason === null && d.refused_at === null, { n: n.r && n.r.ok, d });
+  const old = await rpc(db, "lx_demande_consulter", [p.token]);
+  const f = await rpc(db, "lx_demande_paiement_finaliser", [p.token, "cs_OLD", p.options[0].id, "pi_OLD", "acct_TESTA", 1000]);
+  ok("f : ancien lien introuvable ; paiement sur l'ancien lien : code introuvable (remboursé par le worker)", old.r && old.r.code === "introuvable" && f.r && f.r.code === "introuvable", { old: old.r, f: f.r });
+  await db.query(`update rdv_demandes set proposal_expires_at = now() - interval '1 minute' where id=$1`, [id]);
+  await db.query(`select lx_prive.demandes_sur_mesure_echeances()`);
+  const n3 = await rpc(db, "lx_demande_proposer", [id, U, JSON.stringify([optAc(106)]), 72, true]);
+  ok("f : nouvelle proposition après expiration", n3.r && n3.r.ok && n3.r.envoi === 3, n3.r ? n3.r.envoi : n3);
+  await db.query(`update rdv_demandes set status='refused' where id=$1`, [id]);
+  await rpc(db, "lx_demande_proposer", [id, U, JSON.stringify([optAc(107)]), 72, true]); await db.query(`update rdv_demandes set status='refused' where id=$1`, [id]);
+  await rpc(db, "lx_demande_proposer", [id, U, JSON.stringify([optAc(108)]), 72, true]); await db.query(`update rdv_demandes set status='refused' where id=$1`, [id]);
+  const n6 = await rpc(db, "lx_demande_proposer", [id, U, JSON.stringify([optAc(109)]), 72, true]);
+  ok("f : 5 envois au maximum (anti-harcèlement)", n6.code === "LX_SM_LIMITE", n6);
+  const { id: ic, p: pc } = await prop([optAc(110, { acompte_mode: "aucun" })]);
+  await rpc(db, "lx_demande_choisir", [pc.token, pc.options[0].id]);
+  const nc = await rpc(db, "lx_demande_proposer", [ic, U, JSON.stringify([optAc(111)]), 72, true]);
+  ok("f : demande confirmée : pas de nouvelle proposition", nc.code === "LX_SM_STATUT", nc);
+});
+await garde(async () => {
+  // j : établissement Essentiel -> message « offre Pro »
+  const id = await demande(db); // demande reçue quand l'établissement était Pro, puis passage à l'offre Essentiel
+  await db.query(`update salons set plan='essential', trial_end = now() - interval '1 day' where id=$1`, [S]);
+  const x = await rpc(db, "lx_demande_proposer", [id, U, JSON.stringify([optAc(112)]), 72, true]);
+  await db.query(`update salons set plan='pro', trial_end = now() + interval '300 days' where id=$1`, [S]);
+  ok("j : offre Essentiel -> LX_SM_PRO « nécessite l'offre Pro »", x.code === "LX_SM_PRO" && /offre Pro/.test(x.err), x);
+});
+await garde(async () => {
+  // compatibilité de déploiement : 1 option -> proposed_data au format d'origine (ancienne app) ; 2 options -> null
+  const { id } = await prop([optAc(113)]);
+  const { id: id2 } = await prop([optAc(114), optAc(114, { rang: 2, heure: "15:00" })]);
+  const a = (await db.query(`select proposed_data from rdv_demandes where id=$1`, [id])).rows[0].proposed_data;
+  const b = (await db.query(`select proposed_data from rdv_demandes where id=$1`, [id2])).rows[0].proposed_data;
+  ok("compat : 1 option -> proposed_data lisible par l'ancienne app (date, heure, items, prix)", a && a.date && a.heure === "10:00" && Array.isArray(a.items) && a.items.length === 1 && +a.prix_total === 30 && +a.acompte_montant === 10, a);
+  ok("compat : 2 options -> proposed_data vide (options dans rdv_demande_options)", b === null, b);
 });
 
 console.log(`SQL sur mesure v2 : ${nOk}/${nOk + nKo} OK (${((Date.now() - T0) / 1000).toFixed(1)} s)`);

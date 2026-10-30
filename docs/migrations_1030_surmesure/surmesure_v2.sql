@@ -27,8 +27,9 @@
 -- Compatibilité : demandes / propositions existantes (proposal_version 1) inchangées et traitées à l'ancienne
 -- (edge confirm, worker connect-pay / finalize sans option_id). En base au 30/10/2026 : 1 demande « pending », 0 proposition.
 --
--- ORDRE DE DÉPLOIEMENT : ce SQL d'abord (compatible avec l'app, l'edge et le worker actuels), puis les edge functions
--- (docs/edge_1030_surmesure), puis le worker, puis les pages (app.html, proposal.html, luxyra-supabase.js).
+-- ORDRE DE DÉPLOIEMENT (révisé après contre-audit, détail : registre NF525, intervention 2026-10-30 (-2)) : ce SQL d'abord
+-- (compatible avec l'app, l'edge et le worker actuels) ; puis push n° 1 = worker + proposal.html SEULS (ils lisent l'ancien
+-- ET le nouveau format) ; puis les edge functions (verify_jwt inchangés) ; puis push n° 2 = app.html, luxyra-supabase.js, pages.
 -- RETOUR ARRIÈRE : docs/migrations_1030_surmesure/surmesure_v2_retour_arriere.sql (définitions de production à l'octet).
 -- ============================================================================================================
 
@@ -51,7 +52,13 @@ declare
     'lx_prive.appel_serveur()', jsonb_build_array('40b6d090d00ed5e25dad8e12f138382c'),
     'public.lx_notifier_client(p_client uuid, p_type text, p_titre text, p_texte text, p_url text)', jsonb_build_array('fbae58176cf4e1e6153226edf9fd0f1d'),
     'public.trg_notif_rdv_demande()', jsonb_build_array('ee99c79d15062783227109b4d6d503b0'),
-    'lx_prive.trg_notif_demande_creneau_pris()', jsonb_build_array('f1d52538695b46f27a74bc72a6627a3d'));
+    'lx_prive.trg_notif_demande_creneau_pris()', jsonb_build_array('f1d52538695b46f27a74bc72a6627a3d'),
+    -- contre-audit 30/10 : lues par les correctifs (offre Pro, ticket créé ou en file, expiration de 02:30) — relues en prod le 30/10
+    'public.lx_salon_pro_actif(p_plan text, p_status text, p_trial_end timestamp with time zone)', jsonb_build_array('e16b1e2ad3c9d6929b8b1bffc2c2de5e'),
+    'lx_prive.recettes_serveur_actif()', jsonb_build_array('0adc705963335a2484c8eb21add101b9'),
+    'lx_prive.zz_rdv_online_recettes()', jsonb_build_array('206b1503002854acf77172f8dbf20bc2'),
+    'lx_prive.recette_enfiler(p_salon uuid, p_source text, p_objet uuid, p_cle text, p_montant numeric, p_paye_at timestamp with time zone, p_pi text, p_refund text, p_details jsonb)', jsonb_build_array('729ecfc306f80b8647b90330301e85ad'),
+    'public.fn_auto_expire_all()', jsonb_build_array('3209710ba6a0ba5ce24863997671a4e7'));
   k text; v_md5 text;
 begin
   for k in select jsonb_object_keys(v_attendu) loop
@@ -204,6 +211,21 @@ $f$;
 create or replace function lx_prive.sm_lettre(p_rang int)
  returns text language sql immutable as $f$ select chr(64 + greatest(1, least(coalesce(p_rang, 1), 26))) $f$;
 
+-- Contre-audit 30/10 (C3 + k) : paiement Stripe en cours sur la demande = session ouverte, ou fermée depuis moins de 60 min
+-- (marge pour un webhook « checkout.session.completed » en retard), ou confirmation v1 en cours (verrou de 3 min).
+-- Tant que c'est vrai, AUCUN chemin ne peut passer la proposition « expirée » (tâche */15, fn_auto_expire_all de 02:30,
+-- edge v13, lecture paresseuse) : un paiement reçu dans ce délai donne toujours un RDV + ticket.
+create or replace function lx_prive.sm_paiement_en_cours(d public.rdv_demandes)
+ returns boolean language sql stable set search_path to 'public', 'pg_temp' as $f$
+  select coalesce(d.checkout_expires_at, '-infinity'::timestamptz) + interval '60 minutes' > now()
+      or coalesce(d.confirm_claim_at, '-infinity'::timestamptz) > now() - interval '3 minutes'
+$f$;
+
+-- Contre-audit 30/10 (e) : règle d'arrondi UNIQUE (identique dans app.html, _lxSmCentimes) : valeur saisie tronquée au centime,
+-- acompte en % = prix × % tronqué au centime INFÉRIEUR. Le client ne paie jamais plus que le montant affiché.
+create or replace function lx_prive.sm_centimes_inf(p numeric)
+ returns numeric language sql immutable as $f$ select trunc(p, 2) $f$;
+
 -- ------------------------------------------------------------------------------------------------------------
 -- 5. CONTRÔLE DE CRÉNEAU (aligné sur le planning de l'app : seules les phases de travail occupent le collaborateur)
 --    Résultat : {libre, raison, collab (collaborateur libre trouvé), avertissement (horaires, non bloquant)}
@@ -322,7 +344,8 @@ begin
   if v_rang not between 1 and 3 then perform lx_prive.sm_erreur('LX_SM_OPTION', 'Trois options au maximum'); end if;
   begin v_date := (p_opt->>'date')::date; exception when others then v_date := null; end;
   if v_date is null then perform lx_prive.sm_erreur('LX_SM_DATE', v_l || 'date manquante ou invalide'); end if;
-  if coalesce(p_opt->>'heure', '') !~ '^[0-2]?[0-9]:[0-5][0-9]$' then perform lx_prive.sm_erreur('LX_SM_HEURE', v_l || 'heure manquante ou invalide'); end if;
+  -- contre-audit 30/10 (c) : 00:00 à 23:59 seulement (24:00, 29:00… -> message clair, jamais d'erreur 500)
+  if coalesce(p_opt->>'heure', '') !~ '^([01]?[0-9]|2[0-3]):[0-5][0-9]$' then perform lx_prive.sm_erreur('LX_SM_HEURE', v_l || 'heure manquante ou invalide (de 00:00 à 23:59)'); end if;
   v_heure := (p_opt->>'heure')::time;
   if (v_date + v_heure) < v_now + interval '30 minutes' then perform lx_prive.sm_erreur('LX_SM_PASSE', v_l || 'le rendez-vous doit commencer au moins 30 minutes après maintenant'); end if;
   if v_date > v_now::date + 365 then perform lx_prive.sm_erreur('LX_SM_LOIN', v_l || 'date à plus d''un an'); end if;
@@ -374,14 +397,14 @@ begin
   v_prix := round(v_prix, 2);
   if v_duree > 1440 then perform lx_prive.sm_erreur('LX_SM_DUREE', v_l || 'durée supérieure à 24 h'); end if;
 
-  -- acompte calculé ici (arrondi au centime, ≥ 1 €, ≤ total)
+  -- acompte calculé ici (tronqué au centime inférieur — même règle que l'app —, ≥ 1 €, ≤ total)
   if v_mode not in ('aucun', 'pct', 'montant') then perform lx_prive.sm_erreur('LX_SM_ACOMPTE', v_l || 'type d''acompte inconnu'); end if;
   if v_mode <> 'aucun' then
-    begin v_val := round((p_opt->>'acompte_valeur')::numeric, 2); exception when others then v_val := null; end;
-    if v_val is null or v_val <= 0 then perform lx_prive.sm_erreur('LX_SM_ACOMPTE', v_l || 'indiquez la valeur de l''acompte'); end if;
+    begin v_val := lx_prive.sm_centimes_inf((p_opt->>'acompte_valeur')::numeric); exception when others then v_val := null; end;
+    if v_val is null or v_val <= 0 or v_val = 'NaN'::numeric or v_val > 100000 then perform lx_prive.sm_erreur('LX_SM_ACOMPTE', v_l || 'indiquez une valeur d''acompte valide'); end if;
     if v_mode = 'pct' then
       if v_val > 100 then perform lx_prive.sm_erreur('LX_SM_ACOMPTE', v_l || 'l''acompte ne peut pas dépasser 100 %'); end if;
-      v_ac := round(v_prix * v_val / 100, 2);
+      v_ac := lx_prive.sm_centimes_inf(v_prix * v_val / 100);
     else
       v_ac := v_val;
       if v_ac > v_prix then perform lx_prive.sm_erreur('LX_SM_ACOMPTE', v_l || 'l''acompte (' || to_char(v_ac, 'FM999990.00') || ' €) dépasse le prix total (' || to_char(v_prix, 'FM999990.00') || ' €)'); end if;
@@ -417,9 +440,18 @@ begin
   if v_d.id is null then perform lx_prive.sm_erreur('LX_SM_INTROUVABLE', 'Demande introuvable'); end if;
   select * into v_salon from public.salons where id = v_d.salon_id;
   if v_salon.user_id is null or v_salon.user_id is distinct from p_user then perform lx_prive.sm_erreur('LX_SM_INTERDIT', 'Vous n''êtes pas autorisé à traiter cette demande'); end if;
-  if v_d.status <> 'pending' then
+  -- contre-audit 30/10 (f) : nouvelle proposition possible aussi après un refus du client ou une expiration (nouveau lien,
+  -- l'ancien ne vaut plus rien ; un paiement tardif sur l'ancien lien est remboursé automatiquement). 5 envois au maximum.
+  if v_d.status not in ('pending', 'refused', 'expired') then
     perform lx_prive.sm_erreur('LX_SM_STATUT', case v_d.status when 'proposed' then 'Une proposition est déjà envoyée pour cette demande'
       when 'confirmed' then 'Cette demande est déjà confirmée' else 'Cette demande n''est plus active' end);
+  end if;
+  if coalesce(v_d.envoi, 0) >= 5 then
+    perform lx_prive.sm_erreur('LX_SM_LIMITE', 'Cinq propositions ont déjà été envoyées pour cette demande : appelez le client et créez le rendez-vous dans le planning.');
+  end if;
+  -- contre-audit 30/10 (j) : établissement à l'offre Essentiel (ou essai Pro terminé) -> message explicite
+  if not coalesce(public.lx_salon_pro_actif(v_salon.plan, v_salon.status, v_salon.trial_end), false) then
+    perform lx_prive.sm_erreur('LX_SM_PRO', 'Répondre à une demande sur mesure nécessite l''offre Pro (réservation en ligne). Vous pouvez appeler le client et créer le rendez-vous dans le planning.');
   end if;
   v_refus := lx_prive.salon_resa_en_ligne_refus(v_d.salon_id);
   if v_refus is not null then perform lx_prive.sm_erreur('LX_SM_RESA', v_refus || ' : le client ne pourrait pas confirmer. Activez la réservation en ligne (Paramètres › Site en ligne).'); end if;
@@ -465,9 +497,13 @@ begin
 
   v_token := encode(extensions.gen_random_bytes(16), 'hex');
   v_exp := now() + make_interval(hours => v_h);
+  -- proposed_data : copie de l'option au format d'origine quand il n'y a qu'UNE option (une application pas encore mise à jour
+  -- l'affiche alors normalement pendant le déploiement) ; plusieurs options : null (lues dans rdv_demande_options).
   update public.rdv_demandes set status = 'proposed', proposal_version = 2, envoi = v_envoi, expire_heures = v_h,
-      proposal_token = v_token, proposal_expires_at = v_exp, proposed_at = now(), proposed_data = null,
-      refuse_reason = null, option_choisie_id = null, checkout_option_id = null, checkout_session_id = null, checkout_expires_at = null,
+      proposal_token = v_token, proposal_expires_at = v_exp, proposed_at = now(),
+      proposed_data = case when jsonb_array_length(v_out) = 1
+                           then (select lx_prive.sm_proposed_data(x) from public.rdv_demande_options x where x.id = (v_out->0->>'id')::uuid) end,
+      refuse_reason = null, refused_at = null, option_choisie_id = null, checkout_option_id = null, checkout_session_id = null, checkout_expires_at = null,
       confirm_claim_at = null, stripe_session_id = null, vue_at = null, relance_at = null
    where id = v_d.id;
 
@@ -502,8 +538,7 @@ begin
   if coalesce(length(p_token), 0) < 16 then return jsonb_build_object('ok', false, 'code', 'introuvable'); end if;
   select * into v_d from public.rdv_demandes where proposal_token = p_token for update;
   if v_d.id is null then return jsonb_build_object('ok', false, 'code', 'introuvable'); end if;
-  if v_d.status = 'proposed' and v_d.proposal_expires_at < now()
-     and coalesce(v_d.checkout_expires_at, '-infinity') < now() and coalesce(v_d.confirm_claim_at, '-infinity') < now() - interval '3 minutes' then
+  if v_d.status = 'proposed' and v_d.proposal_expires_at < now() and not lx_prive.sm_paiement_en_cours(v_d) then
     update public.rdv_demandes set status = 'expired' where id = v_d.id returning * into v_d;
   end if;
   if v_d.status = 'proposed' and v_d.vue_at is null then
@@ -535,7 +570,9 @@ begin
   if d.status = 'confirmed' then perform lx_prive.sm_erreur('LX_SM_DEJA', 'Ce rendez-vous est déjà confirmé.'); end if;
   if d.status = 'pending' then perform lx_prive.sm_erreur('LX_SM_REFAIRE', 'L''établissement prépare une nouvelle proposition : vous allez la recevoir. Aucun paiement n''a été effectué.'); end if;
   if d.status <> 'proposed' then perform lx_prive.sm_erreur('LX_SM_INACTIVE', 'Cette proposition n''est plus active.'); end if;
-  if d.proposal_expires_at < now() and coalesce(d.checkout_expires_at, '-infinity') < now() then
+  -- contre-audit 30/10 (b) : échéance passée = plus de choix ni de NOUVEAU paiement, même si une session est encore ouverte
+  -- (sinon prolongation sans fin par sessions successives). Le paiement d'une session déjà ouverte reste finalisé normalement.
+  if d.proposal_expires_at < now() then
     perform lx_prive.sm_erreur('LX_SM_EXPIREE', 'Cette proposition a expiré. Contactez l''établissement pour en recevoir une nouvelle.');
   end if;
   if coalesce(d.proposal_version, 1) <> 2 then perform lx_prive.sm_erreur('LX_SM_FORMAT', 'Ancien format de proposition'); end if;
@@ -580,7 +617,11 @@ create or replace function lx_prive.sm_creer_rdv(d public.rdv_demandes, o public
 declare v_id uuid; v_pd jsonb := lx_prive.sm_proposed_data(o); v_items jsonb; v_se_items jsonb; v_premier int; v_noms text;
 begin
   v_items := v_pd->'items';
-  select (i->>'service_id')::int into v_premier from jsonb_array_elements(v_items) i where i->>'service_id' is not null order by (i->>'ordre')::int limit 1;
+  -- contre-audit 30/10 (C1) : prestation / collaborateur supprimés depuis l'envoi -> le RDV est créé SANS ces clés étrangères
+  -- (le nom et le contenu restent dans service_nom, items et salon_edit) au lieu d'échouer (rdv_online_service_id_fkey).
+  select (i->>'service_id')::int into v_premier from jsonb_array_elements(v_items) i
+   where i->>'service_id' is not null and exists (select 1 from public.services s where s.id = (i->>'service_id')::int and s.salon_id = d.salon_id)
+   order by (i->>'ordre')::int limit 1;
   select string_agg(i->>'nom', ' + ' order by (i->>'ordre')::int) into v_noms from jsonb_array_elements(v_items) i;
   -- contenu tel que l'app l'affiche au planning (rdv_online.salon_edit : phases réelles avec temps de pose + lignes de caisse)
   select coalesce(jsonb_agg(jsonb_build_object('sId', case when i->>'type' = 'service' then (i->>'id')::int end, 'name', i->>'nom', 'price', (i->>'prix')::numeric,
@@ -589,8 +630,10 @@ begin
   insert into public.rdv_online (salon_id, client_nom, client_prenom, client_tel, client_email, client_luxyra_id, service_id, service_nom, service_prix,
       items, collaborateur_id, collaborateur_nom, date_rdv, heure_rdv, duree_minutes, acompte_montant, acompte_paye, status, message, lieu,
       payment_intent_id, stripe_account, salon_edit)
-    values (d.salon_id, coalesce(d.client_nom, ''), coalesce(d.client_prenom, ''), coalesce(d.client_tel, ''), coalesce(d.client_email, ''), d.client_luxyra_id,
-      v_premier, left(coalesce(v_noms, o.libelle), 300), o.prix_total, v_items, o.collaborateur_id, o.collaborateur_nom, o.date_rdv, o.heure_rdv,
+    values (d.salon_id, coalesce(d.client_nom, ''), coalesce(d.client_prenom, ''), coalesce(d.client_tel, ''), coalesce(d.client_email, ''),
+      (select cl.id from public.clients_luxyra cl where cl.id = d.client_luxyra_id),
+      v_premier, left(coalesce(v_noms, o.libelle), 300), o.prix_total, v_items,
+      (select c.id from public.collaborateurs c where c.id = o.collaborateur_id and c.salon_id = d.salon_id), o.collaborateur_nom, o.date_rdv, o.heure_rdv,
       o.duree_minutes, o.acompte_montant, false, p_statut,
       'RDV sur mesure (proposition #' || left(d.id::text, 8) || ', option ' || lx_prive.sm_lettre(o.rang) || ')'
         || case when p_acompte_salon and o.acompte_montant > 0 then ' — acompte de ' || to_char(o.acompte_montant, 'FM999990.00') || ' € à régler au salon' else '' end
@@ -617,7 +660,7 @@ end $f$;
 -- ------------------------------------------------------------------------------------------------------------
 create or replace function public.lx_demande_choisir(p_token text, p_option uuid)
  returns jsonb language plpgsql security definer set search_path to 'public', 'pg_temp' as $f$
-declare r record; v_d public.rdv_demandes; v_o public.rdv_demande_options; v_rdv uuid; v_salon_acompte boolean := false;
+declare r record; v_d public.rdv_demandes; v_o public.rdv_demande_options; v_rdv uuid; v_salon_acompte boolean := false; v_session text;
 begin
   if not lx_prive.appel_serveur() then perform lx_prive.sm_erreur('LX_SM_INTERDIT', 'Accès refusé'); end if;
   select * into r from lx_prive.sm_demande_active(p_token, p_option);
@@ -628,16 +671,17 @@ begin
     end if;
     v_salon_acompte := true;  -- paiements en ligne désactivés depuis l'envoi : acompte à régler au salon (comme l'ancien format)
   end if;
-  if (v_d.checkout_expires_at is not null and v_d.checkout_expires_at > now()) then
-    return jsonb_build_object('ok', false, 'code', 'paiement_en_cours', 'error', 'Un paiement est en cours pour une autre option. Terminez-le ou attendez quelques minutes.');
-  end if;
+  -- contre-audit 30/10 (a) : un paiement abandonné (retour depuis Stripe) ne bloque plus le choix d'une autre option. L'edge a
+  -- d'abord fait expirer la session chez Stripe (worker /api/rdv-demande/liberer-paiement) ; si elle a quand même été payée,
+  -- la finalisation la trouve « confirmed » et la REMBOURSE automatiquement (jamais d'argent gardé sans RDV ni ticket).
+  v_session := case when v_d.checkout_expires_at > now() then v_d.checkout_session_id end;
   if not lx_prive.sm_creneau_ou_pris(v_o) then
     return jsonb_build_object('ok', false, 'code', 'creneau_pris', 'creneau_pris', true,
       'error', 'Ce créneau vient d''être pris. L''établissement est prévenu ; vous pouvez choisir une autre option.');
   end if;
   v_rdv := lx_prive.sm_creer_rdv(v_d, v_o, 'confirmed', null, null, v_salon_acompte);
   perform lx_prive.sm_confirmer(v_d, v_o, v_rdv, null);
-  return jsonb_build_object('ok', true, 'rdv_online_id', v_rdv, 'option_id', v_o.id, 'acompte_au_salon', v_salon_acompte);
+  return jsonb_build_object('ok', true, 'rdv_online_id', v_rdv, 'option_id', v_o.id, 'acompte_au_salon', v_salon_acompte, 'session_a_expirer', v_session);
 end $f$;
 
 -- ------------------------------------------------------------------------------------------------------------
@@ -672,6 +716,8 @@ begin
   if not lx_prive.appel_serveur() then perform lx_prive.sm_erreur('LX_SM_INTERDIT', 'Accès refusé'); end if;
   select * into v_d from public.rdv_demandes where proposal_token = p_token for update;
   if v_d.id is null or v_d.status <> 'proposed' then return jsonb_build_object('ok', false, 'code', 'inactive'); end if;
+  -- contre-audit 30/10 (b) : échéance passée entre la préparation et l'enregistrement -> le worker expire la session créée
+  if v_d.proposal_expires_at < now() then return jsonb_build_object('ok', false, 'code', 'expiree'); end if;
   if not exists (select 1 from public.rdv_demande_options where id = p_option and demande_id = v_d.id and envoi = v_d.envoi) then
     return jsonb_build_object('ok', false, 'code', 'option');
   end if;
@@ -682,11 +728,27 @@ begin
   return jsonb_build_object('ok', true, 'session_precedente', v_prec);
 end $f$;
 
+-- contre-audit 30/10 (a) : session EXPIRÉE chez Stripe par le worker (retour depuis Stripe, autre choix, refus) -> le paiement
+-- en cours est effacé tout de suite (pas d'attente de 31 min + marge). Seulement si c'est bien la session enregistrée.
+create or replace function public.lx_demande_paiement_effacer(p_token text, p_session text)
+ returns jsonb language plpgsql security definer set search_path to 'public', 'pg_temp' as $f$
+declare v_d public.rdv_demandes;
+begin
+  if not lx_prive.appel_serveur() then perform lx_prive.sm_erreur('LX_SM_INTERDIT', 'Accès refusé'); end if;
+  select * into v_d from public.rdv_demandes where proposal_token = p_token for update;
+  if v_d.id is null or coalesce(p_session, '') = '' or v_d.checkout_session_id is distinct from p_session then
+    return jsonb_build_object('ok', false, 'code', 'autre_session');
+  end if;
+  update public.rdv_demandes set checkout_option_id = null, checkout_session_id = null, checkout_expires_at = null where id = v_d.id;
+  return jsonb_build_object('ok', true);
+end $f$;
+
 -- Après paiement confirmé par Stripe (relu chez Stripe par le worker). Idempotent par session.
--- Résultat : {ok, rdv_online_id} | {ok, deja} | {ok:false, code:'doublon'|'inactive'|'montant'|'option'} (le worker rembourse / alerte)
+-- Résultat : {ok, rdv_online_id} | {ok, deja} | {ok:false, code:'doublon'|'inactive'|'montant'|'erreur'} (le worker rembourse / alerte)
+-- | {ok:false, code:'introuvable'|'parametres'} (lien inconnu : le worker rembourse aussi, sans ligne de paiement possible)
 create or replace function public.lx_demande_paiement_finaliser(p_token text, p_session text, p_option uuid, p_pi text, p_compte text, p_cents bigint)
  returns jsonb language plpgsql security definer set search_path to 'public', 'pg_temp' as $f$
-declare v_d public.rdv_demandes; v_o public.rdv_demande_options; v_p public.rdv_demande_paiements; v_rdv uuid; v_libre boolean; v_cr jsonb;
+declare v_d public.rdv_demandes; v_o public.rdv_demande_options; v_p public.rdv_demande_paiements; v_rdv uuid; v_libre boolean; v_cr jsonb; v_err text;
   v_montant numeric := round(coalesce(p_cents, 0)::numeric / 100, 2);
 begin
   if not lx_prive.appel_serveur() then perform lx_prive.sm_erreur('LX_SM_INTERDIT', 'Accès refusé'); end if;
@@ -716,25 +778,46 @@ begin
     return jsonb_build_object('ok', false, 'code', 'montant', 'paiement_id', v_p.id, 'demande_id', v_d.id, 'salon_id', v_d.salon_id);
   end if;
 
-  -- créneau : la règle de l'ancien format est conservée (le paiement est reçu : le RDV est créé quand même), salon prévenu
-  perform pg_advisory_xact_lock(hashtext('lx_rdv:' || v_o.salon_id::text || ':' || v_o.date_rdv::text));
-  v_cr := lx_prive.demande_creneau(v_o.salon_id, v_o.collaborateur_id, v_o.date_rdv, v_o.heure_rdv, v_o.phases);
-  v_libre := coalesce((v_cr->>'libre')::boolean, true);
-
-  -- CHEMIN EXISTANT : INSERT « pending_payment » (acompte non payé) puis UPDATE « confirmed » + acompte_paye -> ticket scellé (déclencheurs)
-  select id into v_rdv from public.rdv_online where payment_intent_id = p_pi and salon_id = v_d.salon_id limit 1;
-  if v_rdv is null then v_rdv := lx_prive.sm_creer_rdv(v_d, v_o, 'pending_payment', p_pi, p_compte, false); end if;
-  update public.rdv_online set status = 'confirmed', acompte_paye = true where id = v_rdv and not coalesce(acompte_paye, false);
-  insert into public.rdv_demande_paiements (demande_id, salon_id, option_id, session_id, payment_intent, compte, montant, statut, rdv_online_id)
-    values (v_d.id, v_d.salon_id, v_o.id, p_session, p_pi, p_compte, v_montant, 'confirme', v_rdv);
-  perform lx_prive.sm_confirmer(v_d, v_o, v_rdv, p_session);
+  -- contre-audit 30/10 (BLOQUANT 1) : RDV + ticket scellé, OU RIEN. Tout échec (prestation / collaborateur supprimé, contrainte,
+  -- déclencheur, ticket non créé ni mis en file de rattrapage) annule ce bloc (point de sauvegarde) : le paiement est enregistré
+  -- « à rembourser » (code 'erreur') et le worker le REMBOURSE automatiquement + alerte critique. Jamais d'argent gardé sans ticket.
+  begin
+    -- créneau : la règle de l'ancien format est conservée (le paiement est reçu : le RDV est créé quand même), salon prévenu
+    perform pg_advisory_xact_lock(hashtext('lx_rdv:' || v_o.salon_id::text || ':' || v_o.date_rdv::text));
+    v_cr := lx_prive.demande_creneau(v_o.salon_id, v_o.collaborateur_id, v_o.date_rdv, v_o.heure_rdv, v_o.phases);
+    v_libre := coalesce((v_cr->>'libre')::boolean, true);
+    -- CHEMIN EXISTANT : INSERT « pending_payment » (acompte non payé) puis UPDATE « confirmed » + acompte_paye -> ticket scellé (déclencheurs)
+    select id into v_rdv from public.rdv_online where payment_intent_id = p_pi and salon_id = v_d.salon_id limit 1;
+    if v_rdv is null then v_rdv := lx_prive.sm_creer_rdv(v_d, v_o, 'pending_payment', p_pi, p_compte, false); end if;
+    update public.rdv_online set status = 'confirmed', acompte_paye = true where id = v_rdv and not coalesce(acompte_paye, false);
+    -- ticket « Acompte en ligne » : créé (acompte_tk_num) ou au moins en file de rattrapage serveur (recettes_en_ligne)
+    if lx_prive.recettes_serveur_actif() and not exists (
+         select 1 from public.rdv_online r where r.id = v_rdv and coalesce(r.acompte_paye, false)
+            and (r.acompte_tk_num is not null or exists (select 1 from public.recettes_en_ligne q where q.salon_id = r.salon_id and q.cle = 'acompte:' || r.id))) then
+      perform lx_prive.sm_erreur('LX_SM_TICKET', 'Ticket d''acompte non créé');
+    end if;
+    insert into public.rdv_demande_paiements (demande_id, salon_id, option_id, session_id, payment_intent, compte, montant, statut, rdv_online_id)
+      values (v_d.id, v_d.salon_id, v_o.id, p_session, p_pi, p_compte, v_montant, 'confirme', v_rdv);
+    perform lx_prive.sm_confirmer(v_d, v_o, v_rdv, p_session);
+  exception when others then
+    v_err := left(sqlstate || ' ' || sqlerrm, 400);
+    insert into public.rdv_demande_paiements (demande_id, salon_id, option_id, session_id, payment_intent, compte, montant, statut, detail)
+      values (v_d.id, v_d.salon_id, v_o.id, p_session, p_pi, p_compte, v_montant, 'doublon', 'Rendez-vous non enregistrable : ' || v_err)
+      returning * into v_p;
+    begin perform public.report_server_error(p_source := 'sql:rdv_sur_mesure', p_message := left('Acompte payé mais rendez-vous non enregistrable (remboursement automatique) : ' || v_err, 800),
+      p_severity := 'critical', p_context := jsonb_build_object('demande_id', v_d.id, 'option_id', v_o.id, 'session', p_session)); exception when others then null; end;
+    return jsonb_build_object('ok', false, 'code', 'erreur', 'paiement_id', v_p.id, 'demande_id', v_d.id, 'salon_id', v_d.salon_id);
+  end;
   if not v_libre then
-    insert into public.notifications (salon_id, type, title, detail, data, source_table, source_id)
-    values (v_d.salon_id, 'rdv_demande_double_reservation', '⚠️ Double réservation possible',
-      trim(coalesce(v_d.client_prenom, '') || ' ' || coalesce(v_d.client_nom, '')) || ' a payé l''acompte de l''option ' || lx_prive.sm_lettre(v_o.rang)
-        || ' (' || to_char(v_o.date_rdv, 'DD/MM') || ' ' || to_char(v_o.heure_rdv, 'HH24:MI') || ') alors que ce créneau venait d''être pris. Vérifiez votre planning.',
-      jsonb_build_object('demande_id', v_d.id, 'rdv_id', v_rdv), 'rdv_demandes_double_resa', v_d.id)
-    on conflict (source_table, source_id) do nothing;
+    begin
+      insert into public.notifications (salon_id, type, title, detail, data, source_table, source_id)
+      values (v_d.salon_id, 'rdv_demande_double_reservation', '⚠️ Double réservation possible',
+        trim(coalesce(v_d.client_prenom, '') || ' ' || coalesce(v_d.client_nom, '')) || ' a payé l''acompte de l''option ' || lx_prive.sm_lettre(v_o.rang)
+          || ' (' || to_char(v_o.date_rdv, 'DD/MM') || ' ' || to_char(v_o.heure_rdv, 'HH24:MI') || ') alors que ce créneau venait d''être pris. Vérifiez votre planning.',
+        jsonb_build_object('demande_id', v_d.id, 'rdv_id', v_rdv), 'rdv_demandes_double_resa', v_d.id)
+      on conflict (source_table, source_id) do nothing;
+    exception when others then null;
+    end;
   end if;
   return jsonb_build_object('ok', true, 'rdv_online_id', v_rdv, 'option_id', v_o.id, 'creneau_libre', v_libre);
 end $f$;
@@ -752,17 +835,21 @@ end $f$;
 -- refus par le client (v2) : avec message
 create or replace function public.lx_demande_refuser(p_token text, p_raison text)
  returns jsonb language plpgsql security definer set search_path to 'public', 'pg_temp' as $f$
-declare v_d public.rdv_demandes;
+declare v_d public.rdv_demandes; v_session text;
 begin
   if not lx_prive.appel_serveur() then perform lx_prive.sm_erreur('LX_SM_INTERDIT', 'Accès refusé'); end if;
   select * into v_d from public.rdv_demandes where proposal_token = p_token for update;
   if v_d.id is null then return jsonb_build_object('ok', false, 'code', 'introuvable', 'error', 'Proposition introuvable'); end if;
   if v_d.status <> 'proposed' then return jsonb_build_object('ok', false, 'code', 'inactive', 'error', 'Cette proposition n''est plus active'); end if;
-  if v_d.checkout_expires_at > now() or v_d.confirm_claim_at > now() - interval '3 minutes' then
-    return jsonb_build_object('ok', false, 'code', 'paiement_en_cours', 'error', 'Un paiement est en cours sur cette proposition : réessayez dans quelques minutes.');
+  -- contre-audit 30/10 (a) : un paiement abandonné ne bloque plus le refus (session expirée d'abord par l'edge ; payée quand même
+  -- -> remboursée automatiquement par la finalisation). Seule une confirmation de l'ancien format en cours (3 min) bloque.
+  if v_d.confirm_claim_at > now() - interval '3 minutes' then
+    return jsonb_build_object('ok', false, 'code', 'paiement_en_cours', 'error', 'Une confirmation est en cours sur cette proposition : réessayez dans quelques minutes.');
   end if;
-  update public.rdv_demandes set status = 'refused', refused_at = now(), refuse_reason = nullif(btrim(left(coalesce(p_raison, ''), 500)), '') where id = v_d.id;
-  return jsonb_build_object('ok', true);
+  v_session := case when v_d.checkout_expires_at > now() then v_d.checkout_session_id end;
+  update public.rdv_demandes set status = 'refused', refused_at = now(), refuse_reason = nullif(btrim(left(coalesce(p_raison, ''), 500)), ''),
+      checkout_option_id = null, checkout_session_id = null, checkout_expires_at = null where id = v_d.id;
+  return jsonb_build_object('ok', true, 'session_a_expirer', v_session);
 end $f$;
 
 -- ------------------------------------------------------------------------------------------------------------
@@ -770,15 +857,27 @@ end $f$;
 -- ------------------------------------------------------------------------------------------------------------
 create or replace function lx_prive.rdv_demandes_garde()
  returns trigger language plpgsql security definer set search_path to 'public', 'pg_temp' as $f$
+-- contre-audit 30/10 (C2) : seules les colonnes de la PROPOSITION sont protégées. Restent possibles hors serveur, comme avant :
+-- le statut (transitions de l'établissement ci-dessous), l'effacement du motif, les données du client (anonymisation RGPD :
+-- admin_fermer_salon, suppression d'un compte client) et les mises à vide automatiques des clés étrangères (prestation,
+-- RDV ou compte client supprimés : ON DELETE SET NULL). Mettre une AUTRE valeur dans ces clés reste refusé.
+-- (C3) : une expiration posée par n'importe quel chemin (tâche */15, fn_auto_expire_all de 02:30, edge de l'ancien format,
+-- lecture paresseuse) est IGNORÉE pendant un paiement en cours (lx_prive.sm_paiement_en_cours : session + 60 min de marge).
+declare v_libres text[] := array['status', 'refuse_reason', 'client_nom', 'client_prenom', 'client_tel', 'client_email', 'client_luxyra_id', 'service_id', 'rdv_online_id'];
 begin
+  if TG_OP = 'UPDATE' and OLD.status = 'proposed' and NEW.status = 'expired' and lx_prive.sm_paiement_en_cours(OLD) then
+    NEW.status := OLD.status;
+  end if;
   if lx_prive.appel_serveur() then return NEW; end if;
   if TG_OP = 'INSERT' then
     NEW.proposal_version := 1; NEW.envoi := 0; NEW.expire_heures := null; NEW.option_choisie_id := null; NEW.checkout_option_id := null;
     NEW.checkout_session_id := null; NEW.checkout_expires_at := null; NEW.vue_at := null; NEW.relance_at := null; NEW.rappel_salon_at := null;
     return NEW;
   end if;
-  -- l'établissement ne peut changer que le statut (et effacer le motif) : tout le reste est figé
-  if (to_jsonb(NEW) - 'status' - 'refuse_reason') is distinct from (to_jsonb(OLD) - 'status' - 'refuse_reason') then
+  if (to_jsonb(NEW) - v_libres) is distinct from (to_jsonb(OLD) - v_libres)
+     or (NEW.client_luxyra_id is distinct from OLD.client_luxyra_id and NEW.client_luxyra_id is not null)
+     or (NEW.service_id is distinct from OLD.service_id and NEW.service_id is not null)
+     or (NEW.rdv_online_id is distinct from OLD.rdv_online_id and NEW.rdv_online_id is not null) then
     raise exception 'Une proposition envoyée ne peut plus être modifiée : annulez-la ou proposez un autre horaire.' using errcode = 'P0001', hint = 'LX_DEMANDE_PROTEGEE';
   end if;
   if NEW.refuse_reason is distinct from OLD.refuse_reason and NEW.refuse_reason is not null then
@@ -868,10 +967,11 @@ create or replace function lx_prive.demandes_sur_mesure_echeances()
  returns jsonb language plpgsql security definer set search_path to 'public', 'pg_temp' as $f$
 declare r record; n_exp int := 0; n_rel int := 0; n_rap int := 0;
 begin
-  -- 1) propositions expirées (jamais pendant un paiement Stripe ou une confirmation en cours)
+  -- 1) propositions expirées (jamais pendant un paiement Stripe ou une confirmation en cours ; 60 min de marge après la fin de
+  --    la session pour un webhook en retard : même règle que lx_prive.sm_paiement_en_cours)
   for r in select id, proposal_version from public.rdv_demandes
             where status = 'proposed' and proposal_expires_at < now()
-              and coalesce(checkout_expires_at, '-infinity') < now() and coalesce(confirm_claim_at, '-infinity') < now() - interval '3 minutes'
+              and coalesce(checkout_expires_at, '-infinity') + interval '60 minutes' < now() and coalesce(confirm_claim_at, '-infinity') < now() - interval '3 minutes'
             order by proposal_expires_at limit 200 for update skip locked loop
     update public.rdv_demandes set status = 'expired' where id = r.id and status = 'proposed';
     n_exp := n_exp + 1;
@@ -912,7 +1012,7 @@ begin
     'public.lx_demande_proposer(uuid, uuid, jsonb, integer, boolean)', 'public.lx_demande_consulter(text)', 'public.lx_demande_choisir(text, uuid)',
     'public.lx_demande_paiement_preparer(text, uuid)', 'public.lx_demande_paiement_enregistrer(text, uuid, text, timestamptz)',
     'public.lx_demande_paiement_finaliser(text, text, uuid, text, text, bigint)', 'public.lx_demande_paiement_rembourse(uuid, text, boolean, text)',
-    'public.lx_demande_refuser(text, text)'] loop
+    'public.lx_demande_refuser(text, text)', 'public.lx_demande_paiement_effacer(text, text)'] loop
     execute 'revoke all on function ' || f || ' from public, anon, authenticated';
     execute 'grant execute on function ' || f || ' to service_role';
   end loop;
@@ -923,7 +1023,7 @@ begin
     'lx_prive.sm_proposed_data(public.rdv_demande_options)', 'lx_prive.sm_creer_rdv(public.rdv_demandes, public.rdv_demande_options, text, text, text, boolean)',
     'lx_prive.sm_confirmer(public.rdv_demandes, public.rdv_demande_options, uuid, text)', 'lx_prive.rdv_demandes_garde()',
     'lx_prive.trg_rdv_demandes_options_suivi()', 'lx_prive.trg_rdv_demande_option_notif()', 'lx_prive.sm_notifier_worker(uuid, text)',
-    'lx_prive.demandes_sur_mesure_echeances()'] loop
+    'lx_prive.demandes_sur_mesure_echeances()', 'lx_prive.sm_paiement_en_cours(public.rdv_demandes)', 'lx_prive.sm_centimes_inf(numeric)'] loop
     execute 'revoke all on function ' || f || ' from public, anon, authenticated';
   end loop;
 end $g$;
