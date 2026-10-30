@@ -225,7 +225,7 @@
   }
   // 2026-10-30 : fautes de frappe courantes dans le domaine (« gmial.com », « hotmail.fe », « laposte.fr »…).
   // Renvoie l'adresse corrigée proposée, ou "" s'il n'y a rien à proposer. Jamais bloquant.
-  var LX_DOMAINES = ["gmail.com","hotmail.fr","hotmail.com","outlook.fr","outlook.com","live.fr","live.com","msn.com","yahoo.fr","yahoo.com","icloud.com","me.com","laposte.net","orange.fr","wanadoo.fr","free.fr","sfr.fr","neuf.fr","bbox.fr","aliceadsl.fr","numericable.fr","gmx.fr","gmx.de","gmx.net","web.de","t-online.de","aol.com","protonmail.com","proton.me"];
+  var LX_DOMAINES = ["gmail.com","hotmail.fr","hotmail.com","outlook.fr","outlook.com","live.fr","live.com","msn.com","yahoo.fr","yahoo.com","icloud.com","me.com","laposte.net","orange.fr","wanadoo.fr","free.fr","sfr.fr","neuf.fr","bbox.fr","aliceadsl.fr","numericable.fr","gmx.fr","gmx.de","gmx.net","web.de","t-online.de","aol.com","protonmail.com","proton.me","mail.com","mail.de","posteo.de","freenet.de","arcor.de","online.de","bluewin.ch","skynet.be","telenet.be","pt.lu","tutanota.com"];
   var LX_FAUTES = { "laposte.fr": "laposte.net", "lapost.net": "laposte.net", "gmail.fr": "gmail.com", "gmal.com": "gmail.com", "gmial.com": "gmail.com", "gamil.com": "gmail.com", "gmai.com": "gmail.com", "gnail.com": "gmail.com", "hotmial.fr": "hotmail.fr", "hotmal.fr": "hotmail.fr", "hotmail.fe": "hotmail.fr", "hotmial.com": "hotmail.com", "outlok.fr": "outlook.fr", "outlok.com": "outlook.com", "yahooo.fr": "yahoo.fr", "yaho.fr": "yahoo.fr", "orange.fe": "orange.fr", "free.fe": "free.fr", "sfr.fe": "sfr.fr", "icloud.co": "icloud.com", "icloud.fr": "icloud.com", "wanado.fr": "wanadoo.fr", "wanadoo.com": "wanadoo.fr" };
   function lxDistance(a, b){
     if (Math.abs(a.length - b.length) > 2) return 9;
@@ -244,6 +244,11 @@
     if (LX_FAUTES[dom]) return loc + "@" + LX_FAUTES[dom];
     var dom2 = dom.replace(/\.(con|cmo|ocm|vom|comm|co)$/, ".com").replace(/\.(fe|frr|ft|rf|fr\.)$/, ".fr");
     if (dom2 !== dom && LX_DOMAINES.indexOf(dom2) >= 0) return loc + "@" + dom2;
+    // même fournisseur, autre pays (hotmail.be, yahoo.de, outlook.lu…) : domaine réel, on ne propose rien
+    var base = dom2.replace(/\.[a-z]{2}$/, "");
+    if (base !== dom2) for (var q = 0; q < LX_DOMAINES.length; q++){ if (LX_DOMAINES[q].replace(/\.[a-z]+$/, "") === base) return ""; }
+    // faute dans le nom du fournisseur, pays conservé (hotmal.be -> hotmail.be)
+    if (base !== dom2 && base.length >= 4) for (var w = 0; w < LX_DOMAINES.length; w++){ var kb = LX_DOMAINES[w].replace(/\.[a-z]+$/, ""); if (kb.length >= 4 && lxDistance(base, kb) === 1) return loc + "@" + kb + dom2.slice(base.length); }
     var mieux = "", best = 9;
     for (var k = 0; k < LX_DOMAINES.length; k++){ var dd = lxDistance(dom2, LX_DOMAINES[k]); if (dd < best){ best = dd; mieux = LX_DOMAINES[k]; } }
     // 1 faute (ou 2 sur un nom long) sur un domaine connu ; jamais sur un domaine d'entreprise très différent
