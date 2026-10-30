@@ -6910,10 +6910,16 @@ async function handleClientInviteVerify(request, env) {
       return jsonResponse({ error: (sd && sd.error) || "Création du compte impossible" }, su.status >= 400 && su.status < 500 ? su.status : 500);
     }
     // L'invitation reçue par e-mail vaut vérification de l'adresse (comme le lien « mot de passe oublié »)
+    // 30/10/2026 (contre-audit 2) : écriture conditionnelle — seulement si le compte porte TOUJOURS l'adresse invitée et
+    // n'est pas encore confirmé ; sinon (adresse changée entre-temps) ni confirmation ni rattachement de la fiche.
+    let confirme = false;
     try {
-      await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/clients_luxyra?id=eq.${encodeURIComponent(sd.user.id)}`, { method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify({ email_verified: true }) });
-      sd.user.email_verified = true;
+      const pr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/clients_luxyra?id=eq.${encodeURIComponent(sd.user.id)}&email=eq.${encodeURIComponent(email)}&email_verified=eq.false`, { method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=representation" }), body: JSON.stringify({ email_verified: true, verification_code: null, verification_email: null, verification_expires_at: null }) });
+      const pj = pr.ok ? await pr.json().catch(() => []) : [];
+      confirme = Array.isArray(pj) && pj.length === 1;
     } catch (_) {}
+    if (!confirme) return jsonResponse({ error: "Votre compte a été créé, mais l'adresse n'a pas pu être confirmée. Connectez-vous puis confirmez votre adresse depuis votre compte.", compte_cree: true, email }, 409);
+    sd.user.email_verified = true;
     await lier(sd.user.id);
     return jsonResponse({ ok: true, email, user: sd.user, session_token: sd.session_token });
   } catch (e) {
