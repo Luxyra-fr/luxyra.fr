@@ -172,6 +172,9 @@ async function __wrappedApiHandler(request, url, env) {
       // FIX 2026-05-12 : Path A pour RDV sur mesure (acompte direct au salon)
       if (url.pathname === "/api/rdv-demande/connect-pay" && request.method === "POST") return await handleRdvDemandeConnectPay(request, env);
       if (url.pathname === "/api/rdv-demande/finalize" && request.method === "POST") return await handleRdvDemandeFinalize(request, env);
+      // 2026-10-30 : RDV sur mesure v2 (plusieurs options) — e-mails du serveur (appel interne) et actions de l'établissement
+      if (url.pathname === "/api/rdv-demande/notifier" && request.method === "POST") return await handleRdvDemandeNotifier(request, env);
+      if (url.pathname === "/api/rdv-demande/salon-action" && request.method === "POST") return await handleRdvDemandeSalonAction(request, env);
       if (url.pathname === "/api/email/ticket" && request.method === "POST") return await handleEmailTicket(request, env);
       if (url.pathname === "/api/email/welcome" && request.method === "POST") return await handleEmailWelcome(request, env);
       if (url.pathname === "/api/email/custom" && request.method === "POST") return await handleEmailCustom(request, env);
@@ -2957,8 +2960,10 @@ async function handleEmpreinteFinalize(request, env) {
 
 async function handleRdvDemandeConnectPay(request, env) {
   try {
-    const { token } = await readJsonBody(request);
+    const { token, option_id } = await readJsonBody(request);
     if (!token) return jsonResponse({ error: "token requis" }, 400);
+    // 2026-10-30 : proposition à plusieurs options -> acompte de l'OPTION choisie (montant relu en base)
+    if (option_id) return await lxSmConnectPay(env, String(token), String(option_id));
 
     // Récupère la demande via service_role
     const sbUrl = CONFIG.SUPABASE_URL;
@@ -2969,6 +2974,7 @@ async function handleRdvDemandeConnectPay(request, env) {
     if (!Array.isArray(dRows) || !dRows[0]) return jsonResponse({ error: "Proposition introuvable" }, 404);
     const demande = dRows[0];
 
+    if (Number(demande.proposal_version) === 2) return jsonResponse({ error: "Cette proposition comporte plusieurs options : rechargez la page pour choisir. Aucun paiement n'a été effectué." }, 409); // 2026-10-30
     if (demande.status === "confirmed") return jsonResponse({ error: "Cette proposition est déjà confirmée." }, 409);
     if (demande.status === "pending") return jsonResponse({ error: "L'établissement prépare une nouvelle proposition : vous allez la recevoir. Aucun paiement n'a été effectué." }, 409); // 2026-10-14
     if (["refused", "cancelled_by_salon", "expired"].includes(demande.status)) {
@@ -3065,6 +3071,8 @@ async function handleRdvDemandeFinalize(request, env) {
     if (session.payment_status !== "paid") return jsonResponse({ error: "Paiement non confirmé: " + session.payment_status }, 402);
     // Anti-tampering : le token doit matcher la metadata Stripe
     if (session.metadata?.proposal_token !== token) return jsonResponse({ error: "Token mismatch (anti-tampering)" }, 403);
+    // 2026-10-30 : paiement de l'acompte d'une OPTION (proposition à plusieurs options) -> finalisation transactionnelle en base
+    if (session.metadata?.option_id) return await lxSmFinaliser(env, String(token), session, _compteD);
 
     const sbUrl = CONFIG.SUPABASE_URL;
 
@@ -3230,6 +3238,308 @@ async function handleRdvDemandeFinalize(request, env) {
     console.error("finalize error:", e);
     return jsonResponse({ error: "Finalize error: " + e.message }, 500);
   }
+}
+
+// ============================================================
+// RDV SUR MESURE v2 — 2026-10-30 (plan validé : 1 à 3 options par proposition)
+// - connect-pay { token, option_id } : acompte de L'OPTION choisie, montant relu en base (lx_demande_paiement_preparer),
+//   session Stripe Checkout sur le compte du salon, valable 31 min ; changer d'option EXPIRE la session précédente.
+// - finalize / webhook « comptes connectés » (metadata.option_id) : lx_demande_paiement_finaliser (transaction : RDV
+//   « pending_payment » puis « confirmed » + acompte_paye -> ticket scellé par les déclencheurs EXISTANTS ; idempotent par
+//   session). Paiement en trop (autre option déjà payée / confirmée, proposition annulée ou expirée, montant insuffisant) :
+//   REMBOURSÉ automatiquement (clé d'idempotence Stripe) + alerte critique.
+// - /api/rdv-demande/notifier (appel interne x-lx-internal) : e-mails au client (nouvelle proposition, confirmation,
+//   relance 24 h avant l'échéance, expiration), SMS court si pas d'e-mail, notification de l'espace client.
+// - /api/rdv-demande/salon-action (propriétaire) : annuler / proposer un autre horaire, session de paiement en cours expirée.
+// ============================================================
+async function lxSmRpc(env, nom, args) {
+  const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/${nom}`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify(args) });
+  const t = await r.text();
+  let j = null; try { j = JSON.parse(t); } catch (_) { j = null; }
+  if (!r.ok) return { erreur: (j && j.message) || t || ("HTTP " + r.status), code: (j && (j.hint || j.code)) || "", http: r.status };
+  return { data: j };
+}
+async function lxSmExpirerSession(env, sessionId, compte) {
+  if (!sessionId) return null;
+  try { return await stripeAPI(env, `checkout/sessions/${encodeURIComponent(sessionId)}/expire`, {}, "POST", compte || null); }
+  catch (e) { return { error: { message: String((e && e.message) || e) } }; }
+}
+function lxSmRefusMetier(r) {
+  const code = String((r && r.code) || "");
+  if (/^LX_SM_/.test(code)) return jsonResponse({ error: r.erreur, code }, code === "LX_SM_INTROUVABLE" ? 404 : 409);
+  return null;
+}
+
+async function lxSmConnectPay(env, token, optionId) {
+  try {
+    if (!/^[0-9a-f-]{36}$/i.test(optionId)) return jsonResponse({ error: "Choisissez une option" }, 400);
+    const p = await lxSmRpc(env, "lx_demande_paiement_preparer", { p_token: token, p_option: optionId });
+    if (p.erreur !== undefined) {
+      const m = lxSmRefusMetier(p); if (m) return m;
+      await reportWorkerError(env, "worker:rdv-demande-connect-pay", new Error(String(p.erreur).slice(0, 300)), { code: p.code }, "error");
+      return jsonResponse({ error: "Paiement momentanément indisponible, merci de réessayer." }, 503);
+    }
+    const d = p.data || {};
+    if (d.ok !== true) return jsonResponse({ error: d.error || "Paiement impossible", code: d.code || "", creneau_pris: !!d.creneau_pris }, 409);
+    const salon = await supabaseGet(env, d.salon_id);
+    if (!salon?.stripe_connect_id) return jsonResponse({ error: "L'établissement n'a pas configuré ses paiements en ligne" }, 400);
+    const direct = await lxChargesDirectes(env);
+    const compte = direct ? salon.stripe_connect_id : null;
+    const account = await stripeAPI(env, `accounts/${salon.stripe_connect_id}`, null, "GET");
+    if (account?.error?.type === "upstream_non_json") return jsonResponse({ error: "Service de paiement momentanément indisponible, merci de réessayer." }, 502);
+    if (!account?.charges_enabled) return jsonResponse({ error: "Le compte de paiement de l'établissement n'est pas encore actif" }, 400);
+    // changement d'option (ou nouvel essai) : la session encore ouverte est expirée chez Stripe -> un seul paiement possible
+    if (d.session_precedente) await lxSmExpirerSession(env, d.session_precedente, compte);
+    const expiresAt = Math.floor(Date.now() / 1000) + 31 * 60; // Stripe : 30 min minimum
+    const params = {
+      mode: "payment",
+      "line_items[0][price_data][currency]": "eur",
+      "line_items[0][price_data][product_data][name]": String(d.description || "Acompte").slice(0, 80),
+      "line_items[0][price_data][unit_amount]": String(Number(d.montant_cents)),
+      "line_items[0][quantity]": "1",
+      success_url: `https://luxyra.fr/proposal.html?t=${encodeURIComponent(token)}&paid=success&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `https://luxyra.fr/proposal.html?t=${encodeURIComponent(token)}&paid=cancel`,
+      expires_at: String(expiresAt),
+      "metadata[type]": "rdv_demande_acompte",
+      "metadata[salon_id]": d.salon_id,
+      "metadata[proposal_token]": token,
+      "metadata[demande_id]": d.demande_id,
+      "metadata[option_id]": optionId,
+      "metadata[option]": String(d.lettre || ""),
+      "metadata[customer_name]": String(d.nom || "").slice(0, 120),
+      "payment_intent_data[description]": String(d.description || "Acompte").slice(0, 200),
+      "payment_intent_data[metadata][demande_id]": d.demande_id,
+      "payment_intent_data[metadata][option_id]": optionId,
+    };
+    if (d.email) params.customer_email = String(d.email);
+    if (!direct) params["payment_intent_data[transfer_data][destination]"] = salon.stripe_connect_id;
+    const minute = Math.floor(Date.now() / 60000);
+    const session = await stripeAPI(env, "checkout/sessions", lxBrandingSalon(params, salon), "POST", compte, `lx_sm_cs_${optionId}_${d.session_precedente || "0"}_${minute}`);
+    if (!session?.url || !session?.id) return jsonResponse({ error: "Erreur du service de paiement : " + String(session?.error?.message || "session non créée").slice(0, 200) }, 502);
+    const e = await lxSmRpc(env, "lx_demande_paiement_enregistrer", { p_token: token, p_option: optionId, p_session: session.id, p_expires_at: new Date(expiresAt * 1000).toISOString() });
+    if (e.erreur !== undefined || (e.data && e.data.ok === false)) {
+      await lxSmExpirerSession(env, session.id, compte);
+      return jsonResponse({ error: "Cette proposition n'est plus active. Aucun paiement n'a été effectué." }, 409);
+    }
+    // course entre deux onglets : la session enregistrée juste avant la nôtre est expirée aussi
+    if (e.data && e.data.session_precedente && e.data.session_precedente !== session.id) await lxSmExpirerSession(env, e.data.session_precedente, compte);
+    return jsonResponse({ url: session.url, session_id: session.id, expires_at: new Date(expiresAt * 1000).toISOString() });
+  } catch (err) {
+    await reportWorkerError(env, "worker:rdv-demande-connect-pay", err, { option_id: optionId }, "error");
+    return jsonResponse({ error: "Paiement momentanément indisponible, merci de réessayer." }, 500);
+  }
+}
+
+async function lxSmFinaliser(env, token, session, compte) {
+  const md = session.metadata || {};
+  const pi = session.payment_intent ? String(session.payment_intent) : null;
+  const f = await lxSmRpc(env, "lx_demande_paiement_finaliser", { p_token: token, p_session: session.id, p_option: md.option_id, p_pi: pi, p_compte: compte || null, p_cents: Number(session.amount_total) || 0 });
+  if (f.erreur !== undefined) {
+    await reportWorkerError(env, "worker:rdv-demande-finalize", new Error("Finalisation sur mesure impossible : " + String(f.erreur).slice(0, 300)), { session: session.id, demande_id: md.demande_id, code: f.code }, "critical");
+    return jsonResponse({ error: "Paiement reçu, confirmation en cours de finalisation.", paiement_recu: true, en_cours: true }, 503); // Stripe rejouera
+  }
+  const d = f.data || {};
+  if (d.ok === true) {
+    if (!d.deja) { try { await lxSmNotifier(env, md.demande_id, "confirmation"); } catch (_) {} }
+    return jsonResponse({ ok: true, rdv_online_id: d.rdv_online_id, already_confirmed: !!d.deja });
+  }
+  if (["doublon", "inactive", "montant"].includes(String(d.code)) && d.paiement_id) {
+    const msgOk = "Ce paiement n'a pas pu être utilisé (une autre option a déjà été retenue, ou la proposition n'est plus active) : il vous est remboursé automatiquement sous quelques jours.";
+    if (d.deja && d.statut === "rembourse") return jsonResponse({ ok: false, rembourse: true, deja: true, code: d.code, error: msgOk });
+    let rf = null;
+    if (pi) rf = await stripeAPI(env, "refunds", { payment_intent: pi, "metadata[motif]": "lx_sur_mesure_paiement_en_trop", "metadata[demande_id]": String(md.demande_id || ""), "metadata[option_id]": String(md.option_id || "") }, "POST", compte || null, "lx_sm_remb_" + session.id);
+    const okR = !!(rf && rf.id && !rf.error && ["succeeded", "pending"].includes(String(rf.status)));
+    await lxSmRpc(env, "lx_demande_paiement_rembourse", { p_paiement: d.paiement_id, p_refund_id: okR ? rf.id : null, p_ok: okR,
+      p_detail: okR ? "Remboursé automatiquement (" + d.code + ")" : "Remboursement automatique impossible : " + JSON.stringify((rf && rf.error) || rf || "sans payment_intent").slice(0, 300) });
+    await reportWorkerError(env, "worker:rdv-demande-finalize",
+      new Error(okR ? "Paiement en trop d'une proposition sur mesure : remboursé automatiquement" : "Paiement en trop d'une proposition sur mesure : REMBOURSEMENT IMPOSSIBLE, à faire dans Stripe"),
+      { demande_id: md.demande_id, option_id: md.option_id, session: session.id, payment_intent: pi, motif: d.code, refund: okR ? rf.id : null }, "critical");
+    return jsonResponse({ ok: false, rembourse: okR, code: d.code, error: okR ? msgOk : "Ce paiement n'a pas pu être utilisé. L'établissement a été prévenu et va vous rembourser." });
+  }
+  if (d.code === "introuvable") return jsonResponse({ error: "Proposition introuvable" }, 404);
+  return jsonResponse({ error: "Confirmation impossible", code: d.code || "" }, 409);
+}
+
+// ---------- e-mails / SMS / notification du client ----------
+const LX_SM_JOURS = ["dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"];
+const LX_SM_MOIS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
+function lxSmDateFr(iso, majuscule) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || "")); if (!m) return "";
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  const t = LX_SM_JOURS[d.getUTCDay()] + " " + (+m[3]) + " " + LX_SM_MOIS[+m[2] - 1];
+  return majuscule ? t.charAt(0).toUpperCase() + t.slice(1) : t;
+}
+function lxSmEcheanceFr(ts) {
+  const d = new Date(ts); if (isNaN(d)) return "";
+  const p = new Intl.DateTimeFormat("fr-FR", { timeZone: "Europe/Paris", weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" }).formatToParts(d);
+  const g = (t) => (p.find((x) => x.type === t) || {}).value || "";
+  return `${g("weekday")} ${g("day")} ${g("month")} à ${g("hour")}:${g("minute")}`;
+}
+function lxSmDuree(min) { min = Number(min) || 0; const h = Math.floor(min / 60), m = min % 60; return h ? (h + " h" + (m ? " " + String(m).padStart(2, "0") : "")) : (m + " min"); }
+function lxSmLettre(r) { return String.fromCharCode(64 + (Number(r) || 1)); }
+function lxSmCarteOption(o) {
+  const acompte = Number(o.acompte_montant) || 0;
+  const ligneAc = acompte > 0
+    ? `<div style="color:#1d5fa8;font-weight:700;font-size:14px;margin-top:6px">Acompte de ${ccEur(acompte)} à régler en ligne</div>`
+    : `<div style="color:#1e7d43;font-weight:700;font-size:14px;margin-top:6px">Sans acompte : confirmé tout de suite</div>`;
+  return `<div style="border:1px solid #e6dcc3;border-radius:12px;padding:16px 18px;margin:0 0 12px;background:#fbf9f4">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+    <td style="vertical-align:top"><div style="font-size:11px;letter-spacing:1px;color:#b8922e;font-weight:700">OPTION ${lxSmLettre(o.rang)}</div>
+      <div style="font-family:Georgia,'Times New Roman',serif;font-size:19px;color:#1a1a1a;margin:2px 0 4px">${ccEsc(o.libelle)}</div>
+      <div style="font-size:14px;color:#444">${ccEsc(lxSmDateFr(o.date_rdv, true))} à ${ccEsc(String(o.heure_rdv || "").slice(0, 5))} · ${lxSmDuree(o.duree_minutes)}${o.collaborateur_nom ? " avec " + ccEsc(o.collaborateur_nom) : ""}</div>${ligneAc}</td>
+    <td style="vertical-align:top;text-align:right;white-space:nowrap;font-size:19px;font-weight:700;color:#b8922e">${ccEur(o.prix_total)}</td>
+  </tr></table></div>`;
+}
+function lxSmNotes(opts) {
+  const n = (opts || []).filter((o) => o.note && String(o.note).trim());
+  if (!n.length) return "";
+  const txt = n.length === 1 ? `« ${ccEsc(n[0].note)} »` : n.map((o) => `<b>Option ${lxSmLettre(o.rang)}</b> : « ${ccEsc(o.note)} »`).join("<br>");
+  return `<div style="border-left:3px solid #c8a84e;padding:6px 14px;margin:6px 0 4px;color:#444;font-style:italic">${txt}</div>`;
+}
+function lxSmPiedSalon(salon) {
+  const adr = [salon.adresse, [salon.cp, salon.ville].filter(Boolean).join(" ")].filter(Boolean).join(", ");
+  const liens = [];
+  if (salon.slug) liens.push(`<a href="https://luxyra.fr/${encodeURIComponent(salon.slug)}" style="color:#b8922e;font-weight:700;text-decoration:none">Réserver en ligne</a>`);
+  liens.push(`<a href="https://luxyra.fr/compte" style="color:#b8922e;font-weight:700;text-decoration:none">Mon espace Luxyra</a>`);
+  return `<div style="border-top:1px solid #eee;margin-top:18px;padding-top:14px;text-align:center;font-size:14px;color:#444">${adr ? `<div style="font-weight:600">${ccEsc(adr)}</div>` : ""}${salon.tel ? `<div>${ccEsc(salon.tel)}</div>` : ""}<div style="margin-top:6px">${liens.join(" · ")}</div></div>`;
+}
+// construit { sujet, html, texte, sms, notif } pour un type d'envoi
+function lxSmMessage(type, d, opts, salon, rdv) {
+  const prenom = String(d.client_prenom || "").trim();
+  const nomSalon = String(salon.nom || "L'établissement");
+  const url = `https://luxyra.fr/proposal.html?t=${encodeURIComponent(d.proposal_token || "")}`;
+  const n = opts.length;
+  const bonjour = `<p style="font-weight:700;margin:0 0 10px">Bonjour${prenom ? " " + ccEsc(prenom) : ""},</p>`;
+  const demande = d.demande_text ? `« ${ccEsc(String(d.demande_text).slice(0, 140))}${String(d.demande_text).length > 140 ? "…" : ""} »` : "";
+  const echeance = lxSmEcheanceFr(d.proposal_expires_at);
+  const titreBadge = (t) => `<div style="text-align:center;margin:-6px 0 18px"><span style="display:inline-block;border:1px solid #c8a84e;background:#fbf6e8;color:#8a6a1a;border-radius:20px;padding:6px 16px;font-size:13px;font-weight:700">${t}</span></div>`;
+  if (type === "proposition" || type === "relance") {
+    const intro = type === "proposition"
+      ? `<p style="margin:0 0 14px">Suite à votre demande ${demande}, nous vous proposons ${n > 1 ? n + " rendez-vous. Choisissez celui qui vous convient" : "un rendez-vous"} :</p>`
+      : `<p style="margin:0 0 14px">Petit rappel : ${ccEsc(nomSalon)} vous a proposé ${n > 1 ? n + " rendez-vous" : "un rendez-vous"} suite à votre demande ${demande}. <b>Cette proposition expire le ${ccEsc(echeance)}.</b></p>`;
+    const corps = titreBadge(type === "proposition" ? "Nouvelle proposition de rendez-vous" : "Votre proposition expire bientôt") + bonjour + intro + opts.map(lxSmCarteOption).join("") + lxSmNotes(opts)
+      + lxMailBouton(n > 1 ? "Voir et choisir ma proposition" : "Voir et confirmer ma proposition", url)
+      + `<p style="font-size:13px;color:#777;margin:0">Valable jusqu'au ${ccEsc(echeance)}. Le créneau n'est réservé qu'une fois votre choix validé (et l'acompte payé s'il y en a un). Vous pouvez aussi refuser depuis la page.</p>`
+      + lxSmPiedSalon(salon);
+    const lignes = opts.map((o) => `Option ${lxSmLettre(o.rang)} : ${o.libelle} — ${lxSmDateFr(o.date_rdv, true)} à ${String(o.heure_rdv).slice(0, 5)} (${lxSmDuree(o.duree_minutes)}) — ${ccEur(o.prix_total)}${Number(o.acompte_montant) > 0 ? " — acompte " + ccEur(o.acompte_montant) + " en ligne" : " — sans acompte"}`).join("\n");
+    return {
+      sujet: type === "proposition" ? `Votre proposition de rendez-vous — ${nomSalon}` : `Rappel : votre proposition expire bientôt — ${nomSalon}`,
+      html: lxMailLayout(corps, { salon: nomSalon }),
+      texte: `Bonjour${prenom ? " " + prenom : ""},\n\n${type === "proposition" ? "Suite à votre demande, voici notre proposition" : "Votre proposition expire le " + echeance} :\n${lignes}\n\nVoir et choisir : ${url}\nValable jusqu'au ${echeance}.\n\n${nomSalon}`,
+      sms: `${nomSalon.slice(0, 30)} : ${type === "proposition" ? (n > 1 ? n + " propositions de RDV" : "proposition de RDV") + " pour vous" : "votre proposition de RDV expire bientot"}. Choisir : ${url}`,
+      notif: { titre: type === "proposition" ? "Nouvelle proposition de rendez-vous" : "Votre proposition expire bientôt", texte: `${nomSalon} : ${n > 1 ? n + " rendez-vous proposés" : "un rendez-vous proposé"}`, url },
+    };
+  }
+  if (type === "expiree") {
+    const corps = titreBadge("Proposition expirée") + bonjour
+      + `<p>La proposition de rendez-vous de <b>${ccEsc(nomSalon)}</b> suite à votre demande ${demande} a expiré sans choix de votre part. Aucun créneau n'est réservé et rien ne vous a été débité.</p>`
+      + `<p>Vous souhaitez toujours un rendez-vous ? Contactez l'établissement ou réservez en ligne.</p>` + lxSmPiedSalon(salon);
+    return { sujet: `Proposition expirée — ${nomSalon}`, html: lxMailLayout(corps, { salon: nomSalon }),
+      texte: `Bonjour${prenom ? " " + prenom : ""},\n\nLa proposition de rendez-vous de ${nomSalon} a expiré sans choix de votre part. Aucun créneau n'est réservé.\n\n${nomSalon}`,
+      sms: null, notif: { titre: "Proposition expirée", texte: `La proposition de ${nomSalon} a expiré`, url: "https://luxyra.fr/compte" } };
+  }
+  // confirmation
+  const o = opts.find((x) => x.id === d.option_choisie_id) || opts[0] || {};
+  const acompte = Number(o.acompte_montant) || 0;
+  const paye = !!(rdv && rdv.acompte_paye);
+  const ligne = (k, v) => `<tr><td style="padding:6px 0;color:#777">${k}</td><td style="padding:6px 0;text-align:right;font-weight:600">${v}</td></tr>`;
+  const recap = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:14px;border:1px solid #e6dcc3;border-radius:12px;padding:8px 16px;background:#fbf9f4">`
+    + ligne("Quand", `${ccEsc(lxSmDateFr(o.date_rdv, true))} à ${ccEsc(String(o.heure_rdv || "").slice(0, 5))}`) + ligne("Durée", lxSmDuree(o.duree_minutes))
+    + (o.collaborateur_nom ? ligne("Avec", ccEsc(o.collaborateur_nom)) : "") + ligne("Prestation", ccEsc(o.libelle || "")) + ligne("Total", ccEur(o.prix_total))
+    + (acompte > 0 ? ligne(paye ? "Acompte payé" : "Acompte (à régler au salon)", ccEur(acompte)) + ligne("Reste au salon", ccEur((Number(o.prix_total) || 0) - (paye ? acompte : 0))) : "") + `</table>`;
+  const maps = [salon.adresse, salon.cp, salon.ville].filter(Boolean).join(" ");
+  const corps = titreBadge("Rendez-vous confirmé") + bonjour + `<p>Votre rendez-vous chez <b>${ccEsc(nomSalon)}</b> est confirmé.</p>` + recap
+    + (maps ? lxMailBouton("Itinéraire", "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(maps)) : "")
+    + `<p style="font-size:13px;color:#777">Un empêchement ? Prévenez l'établissement au plus tôt. Vous retrouvez ce rendez-vous dans votre espace Luxyra.</p>` + lxSmPiedSalon(salon);
+  return { sujet: `Rendez-vous confirmé — ${nomSalon}`, html: lxMailLayout(corps, { salon: nomSalon }),
+    texte: `Bonjour${prenom ? " " + prenom : ""},\n\nVotre rendez-vous chez ${nomSalon} est confirmé : ${lxSmDateFr(o.date_rdv, true)} à ${String(o.heure_rdv || "").slice(0, 5)} (${lxSmDuree(o.duree_minutes)})${o.collaborateur_nom ? " avec " + o.collaborateur_nom : ""}.\nTotal ${ccEur(o.prix_total)}${acompte > 0 ? (paye ? " — acompte payé " : " — acompte à régler au salon ") + ccEur(acompte) : ""}.\n\n${nomSalon}`,
+    sms: null, notif: { titre: "Rendez-vous confirmé", texte: `${nomSalon} : ${lxSmDateFr(o.date_rdv, true)} à ${String(o.heure_rdv || "").slice(0, 5)}`, url: "https://luxyra.fr/compte" } };
+}
+
+async function lxSmNotifier(env, demandeId, type) {
+  const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_demandes?id=eq.${encodeURIComponent(demandeId)}&select=*&limit=1`, { headers: _sbHeaders(env) });
+  const a = r.ok ? await r.json() : [];
+  const d = Array.isArray(a) ? a[0] : null;
+  if (!d) return { ok: false, erreur: "demande introuvable" };
+  const attendu = { proposition: "proposed", relance: "proposed", expiree: "expired", confirmation: "confirmed" }[type];
+  if (d.status !== attendu) return { ok: true, ignore: "statut " + d.status };
+  const ro = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_demande_options?demande_id=eq.${encodeURIComponent(d.id)}&envoi=eq.${Number(d.envoi) || 1}&select=*&order=rang.asc`, { headers: _sbHeaders(env) });
+  const opts = ro.ok ? await ro.json() : [];
+  const salon = (await supabaseGet(env, d.salon_id)) || {};
+  let rdv = null;
+  if (type === "confirmation" && d.rdv_online_id) {
+    const rr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?id=eq.${d.rdv_online_id}&select=acompte_paye&limit=1`, { headers: _sbHeaders(env) });
+    const ra = rr.ok ? await rr.json() : []; rdv = ra[0] || null;
+  }
+  const m = lxSmMessage(type, d, Array.isArray(opts) ? opts : [], salon, rdv);
+  const res = { ok: true, type, email: "absent", sms: "non", notif: false };
+  const email = String(d.client_email || "").trim();
+  if (email && /@/.test(email)) {
+    const cle = `${d.salon_id}|sur_mesure_${type}|${d.id}|${Number(d.envoi) || 1}`;
+    const resa = await lxEmailReserver(env, { salonId: d.salon_id, to: email, toName: [d.client_prenom, d.client_nom].filter(Boolean).join(" "), subject: m.sujet, html: m.html, dedupKey: cle });
+    if (resa.doublon) res.email = "deja";
+    else {
+      let envoi = null;
+      try { envoi = await brevoSendEmail(env, { to: email, toName: [d.client_prenom, d.client_nom].filter(Boolean).join(" "), senderName: String(salon.nom || "Luxyra").slice(0, 70), replyTo: salon.email || undefined, subject: m.sujet, htmlContent: m.html, textContent: m.texte }); }
+      catch (e) { envoi = { code: "exception", message: String((e && e.message) || e) }; }
+      if (envoi && envoi.messageId) res.email = "envoye";
+      else {
+        res.email = "echec";
+        if (resa.cle) { try { await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/messaging_log?dedup_key=eq.${encodeURIComponent(resa.cle)}`, { method: "DELETE", headers: _sbHeaders(env) }); } catch (_) {} }
+        await reportWorkerError(env, "worker:rdv-demande-notifier", new Error("E-mail « " + type + " » refusé par Brevo"), { demande_id: d.id, reponse: JSON.stringify(envoi || {}).slice(0, 200) }, "warning");
+      }
+    }
+  }
+  // pas d'e-mail utilisable : SMS court (proposition / relance), mêmes règles et crédits que les SMS de l'établissement
+  if (res.email !== "envoye" && res.email !== "deja" && m.sms && d.client_tel) {
+    try {
+      const rq = new Request("https://luxyra.fr/interne", { method: "POST", headers: { "Content-Type": "application/json", "x-lx-internal": env.SUPABASE_SERVICE_KEY },
+        body: JSON.stringify({ telephone: d.client_tel, message: m.sms, salonName: salon.nom || "", salon_id: d.salon_id }) });
+      const rs = await handleSmsCustom(rq, env);
+      res.sms = rs.status < 300 ? "envoye" : "echec_" + rs.status;
+    } catch (e) { res.sms = "echec"; }
+  }
+  if (d.client_luxyra_id && m.notif) {
+    const n = await lxSmRpc(env, "lx_notifier_client", { p_client: d.client_luxyra_id, p_type: "sur_mesure_" + type, p_titre: m.notif.titre, p_texte: m.notif.texte, p_url: m.notif.url });
+    res.notif = n.erreur === undefined;
+  }
+  return res;
+}
+
+async function handleRdvDemandeNotifier(request, env) {
+  if (!(await lxIsInternal(request, env))) return jsonResponse({ error: "Accès refusé" }, 403);
+  const { demande_id, type } = await readJsonBody(request);
+  if (!/^[0-9a-f-]{36}$/i.test(String(demande_id || "")) || !["proposition", "confirmation", "relance", "expiree"].includes(String(type))) return jsonResponse({ error: "Paramètres invalides" }, 400);
+  try { return jsonResponse(await lxSmNotifier(env, String(demande_id), String(type))); }
+  catch (e) { await reportWorkerError(env, "worker:rdv-demande-notifier", e, { demande_id, type }, "error"); return jsonResponse({ ok: false, error: "Envoi impossible" }, 500); }
+}
+
+// Annuler la proposition / proposer un autre horaire (propriétaire de l'établissement). Un paiement en cours est d'abord expiré
+// chez Stripe ; s'il vient d'être PAYÉ, rien n'est annulé (le rendez-vous va apparaître).
+async function handleRdvDemandeSalonAction(request, env) {
+  const { demande_id, op } = await readJsonBody(request);
+  if (!/^[0-9a-f-]{36}$/i.test(String(demande_id || "")) || !["annuler", "reproposer"].includes(String(op))) return jsonResponse({ error: "Paramètres invalides" }, 400);
+  const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_demandes?id=eq.${encodeURIComponent(demande_id)}&select=id,salon_id,status,checkout_session_id,checkout_expires_at,confirm_claim_at&limit=1`, { headers: _sbHeaders(env) });
+  const a = r.ok ? await r.json() : [];
+  const d = Array.isArray(a) ? a[0] : null;
+  if (!d) return jsonResponse({ error: "Demande introuvable" }, 404);
+  const refus = await lxGuardSalon(request, env, d.salon_id); if (refus) return refus;
+  if (d.status !== "proposed") return jsonResponse({ error: "Cette proposition n'est plus en attente : le client l'a peut-être déjà acceptée, refusée, ou elle a expiré.", status: d.status }, 409);
+  if (d.confirm_claim_at && new Date(d.confirm_claim_at) > new Date(Date.now() - 3 * 60000)) return jsonResponse({ error: "Le client est en train de confirmer : réessayez dans quelques minutes." }, 409);
+  if (d.checkout_session_id && d.checkout_expires_at && new Date(d.checkout_expires_at) > new Date()) {
+    const salon = await supabaseGet(env, d.salon_id);
+    const compte = (await lxChargesDirectes(env)) ? (salon && salon.stripe_connect_id) : null;
+    const ex = await lxSmExpirerSession(env, d.checkout_session_id, compte);
+    if (!ex || ex.error || ex.status !== "expired") {
+      const s = await stripeAPI(env, `checkout/sessions/${encodeURIComponent(d.checkout_session_id)}`, null, "GET", compte);
+      if (s && (s.payment_status === "paid" || s.status === "complete")) return jsonResponse({ error: "Le client vient de payer l'acompte : le rendez-vous va apparaître dans votre planning.", paye: true }, 409);
+    }
+  }
+  const patch = op === "annuler" ? { status: "cancelled_by_salon" } : { status: "pending", refuse_reason: null };
+  const u = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_demandes?id=eq.${encodeURIComponent(d.id)}&status=eq.proposed`, { method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=representation" }), body: JSON.stringify(patch) });
+  const ua = u.ok ? await u.json().catch(() => []) : [];
+  if (!Array.isArray(ua) || !ua.length) return jsonResponse({ error: "Cette proposition a changé entre-temps. La liste est actualisée." }, 409);
+  return jsonResponse({ ok: true, status: ua[0].status });
 }
 
 // ============================================================
