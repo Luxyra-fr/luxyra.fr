@@ -77,8 +77,8 @@ async function page(user, url, appels){
 }
 // 5. fonction de suggestion : cas
 { const pg=await page(null);
-  const cas=await pg.evaluate(()=>{ const t={'a@gmail.com':'','a@gmial.com':'a@gmail.com','a@gmai.com':'a@gmail.com','a@gamil.com':'a@gmail.com','a@hotmial.fr':'a@hotmail.fr','a@hotmail.fe':'a@hotmail.fr','a@outlok.fr':'a@outlook.fr','a@yahooo.fr':'a@yahoo.fr','a@laposte.fr':'a@laposte.net','a@laposte.net':'','a@orange.fe':'a@orange.fr','a@free.fe':'a@free.fr','a@sfr.fe':'a@sfr.fr','a@icloud.co':'a@icloud.com','a@gmail.con':'a@gmail.com','a@gmail.cmo':'a@gmail.com','a@wanadoo.fr':'','a@salon-amandine.fr':'','a@luxyra.fr':'','a@exemple.test':'','a@hotmail.co':'a@hotmail.com','pas-une-adresse':'','a@orange.fr':'','a@sfr.fr':'','a@free.fr':''}; const out=[]; for(const k in t){ const v=LX.suggererEmail(k); if(v!==t[k]) out.push(k+' -> '+v+' (attendu '+t[k]+')'); } return out; });
-  ok('suggestions : 25 cas (vrais domaines jamais corrigés)', cas.length===0, cas);
+  const cas=await pg.evaluate(()=>{ const t={'a@gmail.com':'','a@gmial.com':'a@gmail.com','a@gmai.com':'a@gmail.com','a@gamil.com':'a@gmail.com','a@hotmial.fr':'a@hotmail.fr','a@hotmail.fe':'a@hotmail.fr','a@outlok.fr':'a@outlook.fr','a@yahooo.fr':'a@yahoo.fr','a@laposte.fr':'a@laposte.net','a@laposte.net':'','a@orange.fe':'a@orange.fr','a@free.fe':'a@free.fr','a@sfr.fe':'a@sfr.fr','a@icloud.co':'a@icloud.com','a@gmail.con':'a@gmail.com','a@gmail.cmo':'a@gmail.com','a@wanadoo.fr':'','a@salon-amandine.fr':'','a@luxyra.fr':'','a@exemple.test':'','a@hotmail.co':'a@hotmail.com','pas-une-adresse':'','a@orange.fr':'','a@sfr.fr':'','a@free.fr':'','a@hotmail.be':'','a@yahoo.de':'','a@outlook.lu':'','a@live.be':'','a@gmx.ch':'','a@hotmal.be':'a@hotmail.be','a@skynet.be':'','a@pt.lu':'','a@mail.de':'','a@mail.com':'','a@orang.fr':'a@orange.fr','a@posteo.de':''}; const out=[]; for(const k in t){ const v=LX.suggererEmail(k); if(v!==t[k]) out.push(k+' -> '+v+' (attendu '+t[k]+')'); } return out; });
+  ok('suggestions : 37 cas (vrais domaines jamais corrigés)', cas.length===0, cas);
 }
 // 6. site.html : champ e-mail de réservation
 { const src=fs.readFileSync(ROOT+'/site.html','utf8');
