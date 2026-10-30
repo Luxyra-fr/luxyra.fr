@@ -98,7 +98,8 @@ const DEM = { id: 'd0000000-0000-4000-8000-000000000001', status: 'pending', cli
   });
   ok('jusqu\'à 3 options (onglets), pas de 4e, suppression', opts.n3 === 3 && !opts.add && opts.n3b === 3 && opts.n2 === 2 && opts.tabs === 2, opts);
   ok('bouton « Envoyer les 2 options au client »', /Envoyer les 2 options au client/.test(opts.btn), opts.btn);
-  await pg.evaluate(() => lxSmTab(0));
+  await pg.evaluate(() => { lxSmTab(0); document.querySelectorAll('[id*=toast],[class*=toast]').forEach(e => e.remove()); });
+  await new Promise(r => setTimeout(r, 300));
   await pg.screenshot({ path: OUT + '/1-pro-ordinateur.png', fullPage: false });
   // envoi : seuls des identifiants partent ; 409 conflit -> « envoyer quand même »
   const env = await pg.evaluate(async () => {
