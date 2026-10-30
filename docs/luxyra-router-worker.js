@@ -175,6 +175,8 @@ async function __wrappedApiHandler(request, url, env) {
       // 2026-10-30 : RDV sur mesure v2 (plusieurs options) — e-mails du serveur (appel interne) et actions de l'établissement
       if (url.pathname === "/api/rdv-demande/notifier" && request.method === "POST") return await handleRdvDemandeNotifier(request, env);
       if (url.pathname === "/api/rdv-demande/salon-action" && request.method === "POST") return await handleRdvDemandeSalonAction(request, env);
+      // 2026-10-30 (contre-audit, a) : retour depuis Stripe / autre choix / refus -> session de paiement ouverte expirée tout de suite
+      if (url.pathname === "/api/rdv-demande/liberer-paiement" && request.method === "POST") return await handleRdvDemandeLibererPaiement(request, env);
       if (url.pathname === "/api/email/ticket" && request.method === "POST") return await handleEmailTicket(request, env);
       if (url.pathname === "/api/email/welcome" && request.method === "POST") return await handleEmailWelcome(request, env);
       if (url.pathname === "/api/email/custom" && request.method === "POST") return await handleEmailCustom(request, env);
@@ -1897,7 +1899,7 @@ async function handleWebhookConnect(request, env) {
         let rep = null;
         if (md.subtype === "empreinte" && md.rdv_id) rep = await handleEmpreinteFinalize(appel({ session_id: data.id, rdv_id: md.rdv_id }), env);
         else if ((!t || t === "acompte") && md.rdv_id) rep = await handleAcompteFinalize(appel({ session_id: data.id, rdv_id: md.rdv_id }), env, { payeSec: event.created });
-        else if (t === "rdv_demande_acompte" && md.proposal_token) rep = await handleRdvDemandeFinalize(appel({ token: md.proposal_token, session_id: data.id }), env);
+        else if (t === "rdv_demande_acompte" && md.proposal_token) rep = await handleRdvDemandeFinalize(appel({ token: md.proposal_token, session_id: data.id }), env, { compte }); // 2026-10-30 : compte connu même si le lien n'existe plus
         else if (t === "carte_abo" && (md.carte_abo_id || md.rdv_id)) {
           rep = await fetch(`${CONFIG.SUPABASE_URL}/functions/v1/carte-abo-confirm-payment`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ carte_id: md.carte_abo_id || md.rdv_id, stripe_session_id: data.id }) });
         }
@@ -3054,7 +3056,7 @@ async function handleRdvDemandeConnectPay(request, env) {
   }
 }
 
-async function handleRdvDemandeFinalize(request, env) {
+async function handleRdvDemandeFinalize(request, env, opts) {
   try {
     const { token, session_id } = await readJsonBody(request);
     if (!token || !session_id) return jsonResponse({ error: "token et session_id requis" }, 400);
@@ -3066,6 +3068,7 @@ async function handleRdvDemandeFinalize(request, env) {
       const _qa = _q.ok ? await _q.json() : [];
       if (_qa && _qa[0]) { const _sl = await supabaseGet(env, _qa[0].salon_id); if (_sl) _comptesD.push(_sl.stripe_connect_id); }
     } catch (_) {}
+    if (opts && opts.compte) _comptesD.unshift(opts.compte); // 2026-10-30 : webhook « comptes connectés » (lien remplacé par une nouvelle proposition)
     const { session, compte: _compteD } = await lxSessionOu(env, session_id, _comptesD);
     if (!session || session.error) return jsonResponse({ error: "Session Stripe introuvable" }, 404);
     if (session.payment_status !== "paid") return jsonResponse({ error: "Paiement non confirmé: " + session.payment_status }, 402);
@@ -3319,7 +3322,7 @@ async function lxSmConnectPay(env, token, optionId) {
     const e = await lxSmRpc(env, "lx_demande_paiement_enregistrer", { p_token: token, p_option: optionId, p_session: session.id, p_expires_at: new Date(expiresAt * 1000).toISOString() });
     if (e.erreur !== undefined || (e.data && e.data.ok === false)) {
       await lxSmExpirerSession(env, session.id, compte);
-      return jsonResponse({ error: "Cette proposition n'est plus active. Aucun paiement n'a été effectué." }, 409);
+      return jsonResponse({ error: e.data && e.data.code === "expiree" ? "Cette proposition a expiré. Aucun paiement n'a été effectué : contactez l'établissement pour en recevoir une nouvelle." : "Cette proposition n'est plus active. Aucun paiement n'a été effectué." }, 409);
     }
     // course entre deux onglets : la session enregistrée juste avant la nôtre est expirée aussi
     if (e.data && e.data.session_precedente && e.data.session_precedente !== session.id) await lxSmExpirerSession(env, e.data.session_precedente, compte);
@@ -3330,11 +3333,34 @@ async function lxSmConnectPay(env, token, optionId) {
   }
 }
 
+// Remboursement automatique d'un acompte payé qui ne peut pas donner un RDV + ticket (idempotent : clé Stripe par session)
+async function lxSmRembourser(env, session, compte, motif, paiementId) {
+  const md = session.metadata || {};
+  const pi = session.payment_intent ? String(session.payment_intent) : null;
+  let rf = null;
+  if (pi) rf = await stripeAPI(env, "refunds", { payment_intent: pi, "metadata[motif]": "lx_sur_mesure_paiement_en_trop", "metadata[demande_id]": String(md.demande_id || ""), "metadata[option_id]": String(md.option_id || "") }, "POST", compte || null, "lx_sm_remb_" + session.id);
+  const okR = !!(rf && rf.id && !rf.error && ["succeeded", "pending"].includes(String(rf.status)));
+  if (paiementId) await lxSmRpc(env, "lx_demande_paiement_rembourse", { p_paiement: paiementId, p_refund_id: okR ? rf.id : null, p_ok: okR,
+    p_detail: okR ? "Remboursé automatiquement (" + motif + ")" : "Remboursement automatique impossible : " + JSON.stringify((rf && rf.error) || rf || "sans payment_intent").slice(0, 300) });
+  await reportWorkerError(env, "worker:rdv-demande-finalize",
+    new Error(okR ? "Acompte sur mesure non utilisable (" + motif + ") : remboursé automatiquement" : "Acompte sur mesure non utilisable (" + motif + ") : REMBOURSEMENT IMPOSSIBLE, à faire dans Stripe"),
+    { demande_id: md.demande_id, option_id: md.option_id, session: session.id, payment_intent: pi, motif, refund: okR ? rf.id : null, compte }, "critical");
+  return okR;
+}
+
 async function lxSmFinaliser(env, token, session, compte) {
   const md = session.metadata || {};
   const pi = session.payment_intent ? String(session.payment_intent) : null;
   const f = await lxSmRpc(env, "lx_demande_paiement_finaliser", { p_token: token, p_session: session.id, p_option: md.option_id, p_pi: pi, p_compte: compte || null, p_cents: Number(session.amount_total) || 0 });
+  const msgOk = "Ce paiement n'a pas pu être utilisé (une autre option a déjà été retenue, ou la proposition n'est plus active) : il vous est remboursé automatiquement sous quelques jours.";
+  const msgErr = "Votre rendez-vous n'a pas pu être enregistré : votre paiement vous est remboursé automatiquement sous quelques jours et l'établissement est prévenu.";
   if (f.erreur !== undefined) {
+    // 2026-10-30 (contre-audit, BLOQUANT 1) : erreur DÉFINITIVE (fonction absente après un retour arrière, refus de la base) ->
+    // remboursement automatique + alerte ; erreur passagère (5xx, réseau) -> 503, Stripe rejouera le webhook.
+    if (f.http === 400 || f.http === 404) {
+      const okR = await lxSmRembourser(env, session, compte, "erreur_base_" + f.http, null);
+      return jsonResponse({ ok: false, rembourse: okR, code: "erreur", error: okR ? msgErr : "Votre rendez-vous n'a pas pu être enregistré. L'établissement a été prévenu et va vous rembourser." });
+    }
     await reportWorkerError(env, "worker:rdv-demande-finalize", new Error("Finalisation sur mesure impossible : " + String(f.erreur).slice(0, 300)), { session: session.id, demande_id: md.demande_id, code: f.code }, "critical");
     return jsonResponse({ error: "Paiement reçu, confirmation en cours de finalisation.", paiement_recu: true, en_cours: true }, 503); // Stripe rejouera
   }
@@ -3343,21 +3369,57 @@ async function lxSmFinaliser(env, token, session, compte) {
     if (!d.deja) { try { await lxSmNotifier(env, md.demande_id, "confirmation"); } catch (_) {} }
     return jsonResponse({ ok: true, rdv_online_id: d.rdv_online_id, already_confirmed: !!d.deja });
   }
-  if (["doublon", "inactive", "montant"].includes(String(d.code)) && d.paiement_id) {
-    const msgOk = "Ce paiement n'a pas pu être utilisé (une autre option a déjà été retenue, ou la proposition n'est plus active) : il vous est remboursé automatiquement sous quelques jours.";
-    if (d.deja && d.statut === "rembourse") return jsonResponse({ ok: false, rembourse: true, deja: true, code: d.code, error: msgOk });
-    let rf = null;
-    if (pi) rf = await stripeAPI(env, "refunds", { payment_intent: pi, "metadata[motif]": "lx_sur_mesure_paiement_en_trop", "metadata[demande_id]": String(md.demande_id || ""), "metadata[option_id]": String(md.option_id || "") }, "POST", compte || null, "lx_sm_remb_" + session.id);
-    const okR = !!(rf && rf.id && !rf.error && ["succeeded", "pending"].includes(String(rf.status)));
-    await lxSmRpc(env, "lx_demande_paiement_rembourse", { p_paiement: d.paiement_id, p_refund_id: okR ? rf.id : null, p_ok: okR,
-      p_detail: okR ? "Remboursé automatiquement (" + d.code + ")" : "Remboursement automatique impossible : " + JSON.stringify((rf && rf.error) || rf || "sans payment_intent").slice(0, 300) });
-    await reportWorkerError(env, "worker:rdv-demande-finalize",
-      new Error(okR ? "Paiement en trop d'une proposition sur mesure : remboursé automatiquement" : "Paiement en trop d'une proposition sur mesure : REMBOURSEMENT IMPOSSIBLE, à faire dans Stripe"),
-      { demande_id: md.demande_id, option_id: md.option_id, session: session.id, payment_intent: pi, motif: d.code, refund: okR ? rf.id : null }, "critical");
+  if (["doublon", "inactive", "montant", "erreur"].includes(String(d.code)) && d.paiement_id) {
+    const msg = d.code === "erreur" ? msgErr : msgOk;
+    if (d.deja && d.statut === "rembourse") return jsonResponse({ ok: false, rembourse: true, deja: true, code: d.code, error: msg });
+    const okR = await lxSmRembourser(env, session, compte, d.code, d.paiement_id);
+    return jsonResponse({ ok: false, rembourse: okR, code: d.code, error: okR ? msg : "Ce paiement n'a pas pu être utilisé. L'établissement a été prévenu et va vous rembourser." });
+  }
+  // lien inconnu (remplacé par une nouvelle proposition, demande supprimée) : aucune ligne de paiement possible -> remboursé
+  if (d.code === "introuvable" || d.code === "parametres") {
+    const okR = await lxSmRembourser(env, session, compte, d.code, null);
     return jsonResponse({ ok: false, rembourse: okR, code: d.code, error: okR ? msgOk : "Ce paiement n'a pas pu être utilisé. L'établissement a été prévenu et va vous rembourser." });
   }
-  if (d.code === "introuvable") return jsonResponse({ error: "Proposition introuvable" }, 404);
   return jsonResponse({ error: "Confirmation impossible", code: d.code || "" }, 409);
+}
+
+// 2026-10-30 (contre-audit, a) : POST { token, session_id? } — public (le lien de la proposition fait foi). Expire chez Stripe la
+// session de paiement ouverte de cette proposition (ou celle indiquée, si sa métadonnée porte bien ce lien), puis efface le
+// « paiement en cours ». Si la session a en fait été PAYÉE, elle est finalisée tout de suite (RDV + ticket) : { paye: true }.
+async function handleRdvDemandeLibererPaiement(request, env) {
+  try {
+    const { token, session_id } = await readJsonBody(request);
+    if (!token || String(token).length < 16) return jsonResponse({ error: "Lien invalide" }, 400);
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_demandes?proposal_token=eq.${encodeURIComponent(token)}&select=id,salon_id,status,checkout_session_id,checkout_expires_at&limit=1`, { headers: _sbHeaders(env) });
+    const a = r.ok ? await r.json() : [];
+    const d = Array.isArray(a) ? a[0] : null;
+    if (!d) return jsonResponse({ ok: true, rien: true });
+    const sid = session_id ? String(session_id) : (d.checkout_session_id || null);
+    if (!sid || !/^cs_[A-Za-z0-9_]+$/.test(sid)) return jsonResponse({ ok: true, rien: true });
+    const salon = await supabaseGet(env, d.salon_id);
+    const compte = (await lxChargesDirectes(env)) ? (salon && salon.stripe_connect_id) : null;
+    let s = await stripeAPI(env, `checkout/sessions/${encodeURIComponent(sid)}`, null, "GET", compte);
+    if (!s || s.error || !s.id) return jsonResponse({ ok: false, error: "Service de paiement momentanément indisponible." }, 503);
+    if ((s.metadata || {}).proposal_token !== String(token)) return jsonResponse({ error: "Session d'une autre proposition" }, 403);
+    if (s.status === "open") {
+      const ex = await lxSmExpirerSession(env, sid, compte);
+      if (ex && ex.status === "expired") s = ex;
+      else s = (await stripeAPI(env, `checkout/sessions/${encodeURIComponent(sid)}`, null, "GET", compte)) || s;
+    }
+    if (s.payment_status === "paid") {
+      const fin = await lxSmFinaliser(env, String(token), s, compte);
+      const fj = await fin.json().catch(() => ({}));
+      return jsonResponse({ ok: true, paye: true, confirme: fj.ok === true, rembourse: !!fj.rembourse, error: fj.error || null });
+    }
+    if (s.status === "expired" || s.status === "complete") {
+      if (d.checkout_session_id === sid) await lxSmRpc(env, "lx_demande_paiement_effacer", { p_token: String(token), p_session: sid });
+      return jsonResponse({ ok: true, expiree: true });
+    }
+    return jsonResponse({ ok: false, error: "La session de paiement n'a pas pu être fermée, réessayez dans un instant." }, 503);
+  } catch (e) {
+    await reportWorkerError(env, "worker:rdv-demande-liberer-paiement", e, {}, "error");
+    return jsonResponse({ ok: false, error: "Erreur momentanée" }, 500);
+  }
 }
 
 // ---------- e-mails / SMS / notification du client ----------
@@ -3382,19 +3444,15 @@ function lxSmCarteOption(o) {
   const ligneAc = acompte > 0
     ? `<div style="color:#1d5fa8;font-weight:700;font-size:14px;margin-top:6px">Acompte de ${ccEur(acompte)} à régler en ligne</div>`
     : `<div style="color:#1e7d43;font-weight:700;font-size:14px;margin-top:6px">Sans acompte : confirmé tout de suite</div>`;
+  // 2026-10-30 (contre-audit, g) : la note de l'établissement est affichée DANS la carte de son option (plus d'ambiguïté)
+  const note = o.note && String(o.note).trim() ? `<div style="border-left:3px solid #c8a84e;padding:4px 12px;margin-top:8px;color:#444;font-style:italic;font-size:14px"><span style="font-style:normal;font-weight:700;color:#8a6a1a">Note pour l'option ${lxSmLettre(o.rang)} :</span> « ${ccEsc(o.note)} »</div>` : "";
   return `<div style="border:1px solid #e6dcc3;border-radius:12px;padding:16px 18px;margin:0 0 12px;background:#fbf9f4">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
     <td style="vertical-align:top"><div style="font-size:11px;letter-spacing:1px;color:#b8922e;font-weight:700">OPTION ${lxSmLettre(o.rang)}</div>
       <div style="font-family:Georgia,'Times New Roman',serif;font-size:19px;color:#1a1a1a;margin:2px 0 4px">${ccEsc(o.libelle)}</div>
-      <div style="font-size:14px;color:#444">${ccEsc(lxSmDateFr(o.date_rdv, true))} à ${ccEsc(String(o.heure_rdv || "").slice(0, 5))} · ${lxSmDuree(o.duree_minutes)}${o.collaborateur_nom ? " avec " + ccEsc(o.collaborateur_nom) : ""}</div>${ligneAc}</td>
+      <div style="font-size:14px;color:#444">${ccEsc(lxSmDateFr(o.date_rdv, true))} à ${ccEsc(String(o.heure_rdv || "").slice(0, 5))} · ${lxSmDuree(o.duree_minutes)}${o.collaborateur_nom ? " avec " + ccEsc(o.collaborateur_nom) : ""}</div>${ligneAc}${note}</td>
     <td style="vertical-align:top;text-align:right;white-space:nowrap;font-size:19px;font-weight:700;color:#b8922e">${ccEur(o.prix_total)}</td>
   </tr></table></div>`;
-}
-function lxSmNotes(opts) {
-  const n = (opts || []).filter((o) => o.note && String(o.note).trim());
-  if (!n.length) return "";
-  const txt = n.length === 1 ? `« ${ccEsc(n[0].note)} »` : n.map((o) => `<b>Option ${lxSmLettre(o.rang)}</b> : « ${ccEsc(o.note)} »`).join("<br>");
-  return `<div style="border-left:3px solid #c8a84e;padding:6px 14px;margin:6px 0 4px;color:#444;font-style:italic">${txt}</div>`;
 }
 function lxSmPiedSalon(salon) {
   const adr = [salon.adresse, [salon.cp, salon.ville].filter(Boolean).join(" ")].filter(Boolean).join(", ");
@@ -3417,11 +3475,11 @@ function lxSmMessage(type, d, opts, salon, rdv) {
     const intro = type === "proposition"
       ? `<p style="margin:0 0 14px">Suite à votre demande ${demande}, nous vous proposons ${n > 1 ? n + " rendez-vous. Choisissez celui qui vous convient" : "un rendez-vous"} :</p>`
       : `<p style="margin:0 0 14px">Petit rappel : ${ccEsc(nomSalon)} vous a proposé ${n > 1 ? n + " rendez-vous" : "un rendez-vous"} suite à votre demande ${demande}. <b>Cette proposition expire le ${ccEsc(echeance)}.</b></p>`;
-    const corps = titreBadge(type === "proposition" ? "Nouvelle proposition de rendez-vous" : "Votre proposition expire bientôt") + bonjour + intro + opts.map(lxSmCarteOption).join("") + lxSmNotes(opts)
+    const corps = titreBadge(type === "proposition" ? "Nouvelle proposition de rendez-vous" : "Votre proposition expire bientôt") + bonjour + intro + opts.map(lxSmCarteOption).join("")
       + lxMailBouton(n > 1 ? "Voir et choisir ma proposition" : "Voir et confirmer ma proposition", url)
       + `<p style="font-size:13px;color:#777;margin:0">Valable jusqu'au ${ccEsc(echeance)}. Le créneau n'est réservé qu'une fois votre choix validé (et l'acompte payé s'il y en a un). Vous pouvez aussi refuser depuis la page.</p>`
       + lxSmPiedSalon(salon);
-    const lignes = opts.map((o) => `Option ${lxSmLettre(o.rang)} : ${o.libelle} — ${lxSmDateFr(o.date_rdv, true)} à ${String(o.heure_rdv).slice(0, 5)} (${lxSmDuree(o.duree_minutes)}) — ${ccEur(o.prix_total)}${Number(o.acompte_montant) > 0 ? " — acompte " + ccEur(o.acompte_montant) + " en ligne" : " — sans acompte"}`).join("\n");
+    const lignes = opts.map((o) => `Option ${lxSmLettre(o.rang)} : ${o.libelle} — ${lxSmDateFr(o.date_rdv, true)} à ${String(o.heure_rdv).slice(0, 5)} (${lxSmDuree(o.duree_minutes)}) — ${ccEur(o.prix_total)}${Number(o.acompte_montant) > 0 ? " — acompte " + ccEur(o.acompte_montant) + " en ligne" : " — sans acompte"}${o.note && String(o.note).trim() ? "\n  Note pour l'option " + lxSmLettre(o.rang) + " : « " + String(o.note).trim() + " »" : ""}`).join("\n");
     return {
       sujet: type === "proposition" ? `Votre proposition de rendez-vous — ${nomSalon}` : `Rappel : votre proposition expire bientôt — ${nomSalon}`,
       html: lxMailLayout(corps, { salon: nomSalon }),

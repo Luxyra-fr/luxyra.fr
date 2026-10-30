@@ -106,6 +106,9 @@ async function fetchProposal(){
     STATE.demande=data.demande;
     STATE.salon=data.salon||{};
     if(data.version===2){ STATE.v2=data; renderV2(); return; } // 2026-10-30 : proposition à plusieurs options
+    // 2026-10-30 (contre-audit) : proposition au nouveau format lue par une ancienne fonction serveur (pendant un déploiement ou un
+    // retour arrière) : aucune donnée affichable -> message clair, aucun bouton (rien ne peut être payé ni confirmé par erreur)
+    if(data.demande.status==="proposed" && !(data.demande.proposed_data && data.demande.proposed_data.date)){ renderError("Proposition momentanément indisponible", "Votre proposition est en cours de mise à jour. Réessayez dans quelques minutes ou contactez l\u0027établissement. Rien ne vous a été débité."); return; }
     if(data.demande.status==="confirmed"){ renderConfirmed(); return; }
     if(data.demande.status==="refused"){ renderRefused(); return; }
     if(data.demande.status==="expired"||data.demande.status==="cancelled_by_salon"){ renderError("Proposition cloturee", "Cette proposition n\u0027est plus active."); return; }
@@ -559,17 +562,18 @@ function renderV2(){
   var n=opts.length;
   var h=v2Entete(s,n>1?'vous propose '+n+' rendez-vous : choisissez celui qui vous convient':'vous propose un rendez-vous');
   if(d.demande_text) h+='<div class="v2dem">Votre demande : « '+escapeHtml(String(d.demande_text).slice(0,120))+(String(d.demande_text).length>120?'…':'')+' »</div>';
-  h+='<div class="v2grid">';
+  h+='<div class="v2grid" role="radiogroup" aria-label="Options proposées">';
   opts.forEach(function(o){ h+=v2Carte(o); });
   h+='</div>';
   h+='<div id="errBox" class="err"></div>';
   h+=v2Barre();
-  h+='<div class="v2foot">'+(opts.some(function(o){return Number(o.acompte_montant)>0;})?'Paiement sécurisé par Stripe, encaissé directement par l\'établissement<br>':'')+'<a onclick="openRefuseModal()">Aucune option ne vous convient ? Refuser et écrire au salon</a><br>Proposition valable jusqu\'au '+escapeHtml(v2Echeance(d.expires_at))+'</div>';
+  h+='<div class="v2foot">'+(opts.some(function(o){return Number(o.acompte_montant)>0;})?'Paiement sécurisé par Stripe, encaissé directement par l\'établissement<br>':'')+'<a href="#refuser" role="button" onclick="openRefuseModal();return false;">Aucune option ne vous convient ? Refuser et écrire au salon</a><br>Proposition valable jusqu\'au '+escapeHtml(v2Echeance(d.expires_at))+'</div>';
   root.innerHTML=h;
 }
 function v2Carte(o){
   var on=V2.sel===o.id, dispo=o.statut==="proposee"&&!o.passee, ac=Number(o.acompte_montant)||0;
-  var h='<div class="v2opt'+(on?' on':'')+(dispo?'':' off')+'" onclick="'+(dispo?'v2Choisir(\''+o.id+'\')':'')+'">';
+  // contre-audit 30/10 (i) : carte = bouton radio accessible au clavier (Tab, Entrée, Espace) et aux lecteurs d'écran
+  var h='<div class="v2opt'+(on?' on':'')+(dispo?'':' off')+'" role="radio" aria-checked="'+(on?'true':'false')+'"'+(dispo?' tabindex="0"':' aria-disabled="true" tabindex="-1"')+' aria-label="Option '+v2Lettre(o.rang)+' : '+escapeHtml(o.libelle)+', '+escapeHtml(v2Jour(o.date))+' à '+escapeHtml(o.heure)+', '+v2Eur(o.prix_total)+'" data-id="'+escapeHtml(o.id)+'" onkeydown="v2Clavier(event,this)" onclick="'+(dispo?'v2Choisir(\''+o.id+'\')':'')+'">';
   // ordinateur (maquette 3)
   h+='<div class="v2d"><div style="display:flex;gap:12px;align-items:flex-start"><span class="v2radio"></span><div style="flex:1;min-width:0"><div class="v2ol">Option '+v2Lettre(o.rang)+'</div><div class="v2ot">'+escapeHtml(o.libelle)+'</div></div></div>';
   h+='<div class="v2r"><span>Date</span><b>'+escapeHtml(v2Jour(o.date))+'</b></div><div class="v2r"><span>Heure</span><b>'+escapeHtml(o.heure)+' – '+escapeHtml(o.heure_fin)+'</b></div>';
@@ -582,7 +586,7 @@ function v2Carte(o){
   // téléphone (maquette 4)
   h+='<div class="v2m"><div style="display:flex;gap:10px;align-items:center"><span class="v2radio"></span><b style="font-size:16px">Option '+v2Lettre(o.rang)+' · '+escapeHtml(o.libelle)+'</b></div>';
   h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px"><div><b>'+escapeHtml(v2Jour(o.date,true))+' · '+escapeHtml(o.heure)+' · '+v2Duree(o.duree_minutes)+'</b>'+(o.collaborateur_nom?'<div style="color:var(--text3)">avec '+escapeHtml(o.collaborateur_nom)+'</div>':'')+'</div><b style="color:var(--gold);font-size:20px">'+v2Eur(o.prix_total)+'</b></div>';
-  h+='<div style="display:flex;justify-content:space-between;align-items:center"><span class="v2tag" style="'+(ac>0?'background:rgba(96,165,250,.12);color:#93c5fd':'background:rgba(74,222,128,.1);color:#4ade80')+'">'+(ac>0?'Acompte '+v2Eur(ac):'Sans acompte')+'</span><a style="color:var(--gold);font-weight:800" onclick="event.stopPropagation();v2Detail(\''+o.id+'\')">Détails</a></div>';
+  h+='<div style="display:flex;justify-content:space-between;align-items:center"><span class="v2tag" style="'+(ac>0?'background:rgba(96,165,250,.12);color:#93c5fd':'background:rgba(74,222,128,.1);color:#4ade80')+'">'+(ac>0?'Acompte '+v2Eur(ac):'Sans acompte')+'</span><a href="#details" role="button" aria-expanded="'+(V2.detail[o.id]?'true':'false')+'" style="color:var(--gold);font-weight:800" onclick="event.stopPropagation();v2Detail(\''+o.id+'\');return false;">Détails</a></div>';
   if(V2.detail[o.id]){ (o.items||[]).forEach(function(it){ h+='<div class="v2it"><div>'+escapeHtml(v2Joli(it.nom))+'<small>'+v2Duree(it.duree)+'</small></div><span>'+v2Eur(it.prix)+'</span></div>'; }); if(ac>0) h+='<div style="font-size:13px;color:var(--text3);margin-top:6px">Reste à payer au salon : '+v2Eur(o.reste)+'</div>'; if(o.note) h+='<div class="v2note">« '+escapeHtml(o.note)+' »</div>'; }
   h+='</div>';
   if(o.statut==="creneau_pris") h+='<span class="v2tag ko">Créneau pris entre-temps</span>';
@@ -602,10 +606,12 @@ function v2Barre(){
   if(o){ var ac2=Number(o.acompte_montant)||0, paye2=ac2>0&&STATE.salon&&STATE.salon.stripe_actif;
     h+='<button class="btn btn-gold" id="v2go" onclick="v2Valider()">'+(paye2?'Payer '+v2Eur(ac2)+' et confirmer':'Confirmer ce rendez-vous')+'</button>'; }
   else h+='<button class="btn btn-gold" disabled>Choisissez une option</button>';
-  h+='<div class="v2m" style="width:100%;text-align:center"><a style="color:#f8a3a3;font-weight:800" onclick="openRefuseModal()">Refuser les propositions</a><div style="font-size:12px;color:var(--text3)">Valable jusqu\'au '+escapeHtml(v2Echeance(d.expires_at))+'</div></div>';
+  h+='<div class="v2m" style="width:100%;text-align:center"><a href="#refuser" role="button" style="color:#f8a3a3;font-weight:800" onclick="openRefuseModal();return false;">Refuser les propositions</a><div style="font-size:12px;color:var(--text3)">Valable jusqu\'au '+escapeHtml(v2Echeance(d.expires_at))+'</div></div>';
   return h+'</div>';
 }
-function v2Choisir(id){ V2.sel=id; try{ sessionStorage.setItem("lxv2sel_"+STATE.token,id); }catch(_){} renderV2(); }
+function v2Choisir(id){ V2.sel=id; try{ sessionStorage.setItem("lxv2sel_"+STATE.token,id); }catch(_){} renderV2(); try{ var c=document.querySelector('.v2opt[data-id="'+id+'"]'); if(c) c.focus(); }catch(_){} }
+function v2Clavier(ev,el){ var k=ev.key; if(k==="Enter"||k===" "){ ev.preventDefault(); if(el.getAttribute("aria-disabled")!=="true") v2Choisir(el.getAttribute("data-id")); return; }
+  if(k==="ArrowRight"||k==="ArrowDown"||k==="ArrowLeft"||k==="ArrowUp"){ ev.preventDefault(); var l=[].slice.call(document.querySelectorAll('.v2opt[tabindex="0"]')), i=l.indexOf(el); var n=l[(i+(k==="ArrowRight"||k==="ArrowDown"?1:l.length-1))%l.length]; if(n) n.focus(); } }
 function v2Detail(id){ V2.detail[id]=!V2.detail[id]; renderV2(); }
 function v2Erreur(msg){ var e=document.getElementById("errBox"); if(e){ e.style.display="block"; e.textContent=msg; e.scrollIntoView({block:"center"}); } }
 async function v2Valider(){
@@ -678,6 +684,11 @@ function renderV2Rembourse(msg){
   if(paid==="cancel" && token){
     // Annulation : nettoie l'URL et affiche la proposition normalement
     window.history.replaceState({},"","/proposal.html?t="+encodeURIComponent(token));
+    // 2026-10-30 (contre-audit, a) : la session Stripe abandonnée est expirée tout de suite -> autre choix ou refus possibles
+    // sans attendre ; si elle a en fait été payée, elle est finalisée et la page affiche le rendez-vous confirmé.
+    fetch("/api/rdv-demande/liberer-paiement",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({token:token})})
+      .catch(function(){}).then(function(){ fetchProposal(); });
+    return;
   }
   fetchProposal();
 })();
