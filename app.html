@@ -413,12 +413,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261030-1"></script>
+<script src="luxyra-supabase.js?v=20261030-3"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261030-1";
+  var attendu="20261030-3";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -6132,6 +6132,10 @@ function notifTypeMeta(type){
     "demande_creneau_pris": {icon:"⚠️", color:"#fb923c", bg:"rgba(251,146,60,.12)", label:"Créneau pris : proposition à refaire"},
     "rdv_demande_new":  {icon:"✨", color:"#c8a84e", bg:"rgba(200,168,78,.12)", label:"Demande sur mesure"},
     "rdv_demande_refused":{icon:"❌", color:"#f87171", bg:"rgba(248,113,113,.12)", label:"Proposition refusée"},
+    "rdv_demande_vue":{icon:"👀", color:"#60a5fa", bg:"rgba(96,165,250,.12)", label:"Proposition consultée"}, // 2026-10-30 (sur mesure v2)
+    "rdv_demande_expiree":{icon:"⌛", color:"#9ca3af", bg:"rgba(156,163,175,.12)", label:"Proposition expirée"},
+    "rdv_demande_rappel":{icon:"⏰", color:"#fbbf24", bg:"rgba(251,191,36,.12)", label:"Demande sans réponse"},
+    "rdv_demande_double_reservation":{icon:"⚠️", color:"#fb923c", bg:"rgba(251,146,60,.12)", label:"Double réservation possible"},
     "produit_online":   {icon:"🛍️", color:"#c084fc", bg:"rgba(192,132,252,.12)", label:"Commande"},
     "google_reserve":   {icon:"🔗", color:"#60a5fa", bg:"rgba(96,165,250,.12)", label:"RDV Google"},
     "acompte_paye":     {icon:"💰", color:"#fbbf24", bg:"rgba(251,191,36,.12)", label:"Acompte reçu"},
@@ -6254,7 +6258,7 @@ async function showNotifs(filter){
           // 2026-10-14 : regarder le planning du jour demande SANS perdre la demande (elle reste en attente de reponse)
           var _mdD=(n.modifData&&n.modifData.date)||"";
           if(/^\d{4}-\d{2}-\d{2}$/.test(_mdD)) actions.push('<button class="btn bs" style="font-size:12px;padding:7px 12px" onclick="lxVoirJourModif(\''+_mdD+'\')">📅 Voir ce jour</button>');
-        } else if(n.type === "rdv_demande_new" || n.type === "rdv_demande_refused" || n.type === "demande_creneau_pris"){
+        } else if(n.type === "rdv_demande_new" || n.type === "rdv_demande_refused" || n.type === "demande_creneau_pris" || /^rdv_demande_(vue|expiree|rappel|double_reservation)$/.test(n.type||"")){
           var demId = (n.data && n.data.demande_id) || null;
           if(demId) actions.push('<button class="btn bg bs" style="font-size:12px;padding:7px 12px;font-weight:700" onclick="cM();setTimeout(function(){openDemande(\''+demId+'\')},150)">Voir la demande →</button>');
         } else if(rdvId){
@@ -11079,12 +11083,24 @@ window.RDV_DEMANDES = window.RDV_DEMANDES || [];
 async function loadRdvDemandes(){
   if(typeof _sb==="undefined" || !_sb || typeof _salonId==="undefined" || !_salonId) return;
   try{
-    var r = await _sb.from("rdv_demandes")
-      .select("id,client_nom,client_prenom,client_tel,client_email,client_luxyra_id,demande_text,dispo_text,photo_url,status,proposed_data,proposal_token,proposal_expires_at,refuse_reason,rdv_online_id,created_at,proposed_at,confirmed_at,refused_at")
-      .eq("salon_id", _salonId)
-      .order("created_at", {ascending: false})
-      .limit(100);
+    var _cols="id,client_nom,client_prenom,client_tel,client_email,client_luxyra_id,demande_text,dispo_text,photo_url,status,proposed_data,proposal_token,proposal_expires_at,refuse_reason,rdv_online_id,created_at,proposed_at,confirmed_at,refused_at";
+    // 2026-10-30 (RDV sur mesure v2) : colonnes des options ; base pas encore à jour -> lecture d'origine
+    var r = await _sb.from("rdv_demandes").select(_cols+",proposal_version,envoi,option_choisie_id,checkout_option_id,checkout_expires_at,vue_at,expire_heures")
+      .eq("salon_id", _salonId).order("created_at", {ascending: false}).limit(100);
+    if(r.error) r = await _sb.from("rdv_demandes").select(_cols).eq("salon_id", _salonId).order("created_at", {ascending: false}).limit(100);
     if(r.data) window.RDV_DEMANDES = r.data;
+    try{
+      var _v2=(r.data||[]).filter(function(x){ return Number(x.proposal_version)===2; }).map(function(x){ return x.id; });
+      if(_v2.length){
+        var ro=await _sb.from("rdv_demande_options").select("*").in("demande_id",_v2).order("rang");
+        var rp=await _sb.from("rdv_demande_paiements").select("id,demande_id,option_id,montant,statut,created_at").in("demande_id",_v2);
+        var mo={}, mp={};
+        (ro.data||[]).forEach(function(o){ (mo[o.demande_id]=mo[o.demande_id]||[]).push(o); });
+        (rp.data||[]).forEach(function(p){ (mp[p.demande_id]=mp[p.demande_id]||[]).push(p); });
+        if(!ro.error) window.RDV_DEMANDE_OPTIONS=mo;
+        if(!rp.error) window.RDV_DEMANDE_PAIEMENTS=mp;
+      }
+    }catch(_eV2){ console.warn("options sur mesure", _eV2); }
   } catch(e){ console.warn("loadRdvDemandes failed", e); }
 }
 
@@ -11138,6 +11154,10 @@ async function openDemande(id){
   var d = getDemande(id);
   if(!d){ await loadRdvDemandes(); d = getDemande(id); }
   if(!d){ if(typeof toast==="function") toast("Demande introuvable","error"); return; }
+  // 2026-10-30 (RDV sur mesure v2) : demande à traiter -> fenêtre « Répondre à la demande » (1 à 3 options) ;
+  // proposition au nouveau format -> suivi (options, choix, paiement). Ancien format : vues d'origine ci-dessous.
+  if(d.status==="pending" && typeof lxSmOuvrir==="function"){ lxSmOuvrir(d); return; }
+  if(Number(d.proposal_version)===2 && typeof lxSmSuivi==="function"){ lxSmSuivi(d); return; }
 
   // Si déjà confirmée/refusée → vue lecture seule
   var isHistorique = (d.status==="confirmed" || d.status==="refused" || d.status==="cancelled_by_salon" || d.status==="expired");
@@ -11443,6 +11463,559 @@ function buildDemandeProposalEmailHtml(data, url, client, salonNom){
 }
 
 
+// ============================================================================
+// RDV SUR MESURE v2 — 2026-10-30 (plan et maquettes validés) : fenêtre « Répondre à la demande » (1 à 3 options :
+// prestations ET forfaits avec recherche et familles, durée / temps de pose, prix, acompte % ou €, note, mini-planning
+// du jour par collaborateur avec les RDV existants, créneau proposé surligné, conflit signalé, créneaux libres suggérés),
+// version ordinateur et téléphone ; suivi des propositions (statuts, option choisie, payé ou non).
+// Le navigateur n'envoie que des IDENTIFIANTS : durée, prix et acompte sont recalculés par le serveur (lx_demande_proposer).
+// ============================================================================
+var LX_SM_CSS=''
++'.lxsm-bg{position:fixed;inset:0;background:rgba(0,0,0,.78);backdrop-filter:blur(4px);z-index:200;display:flex;align-items:flex-start;justify-content:center;padding:18px 12px;overflow:auto}'
++'.lxsm{position:relative;width:100%;max-width:1220px;background:#0d0c10;color:#f4f1ea;border-radius:16px;border:1px solid rgba(200,168,78,.28);border-top:3px solid #c8a84e;box-shadow:0 10px 50px rgba(0,0,0,.6);font-size:14px}'
++'.lxsm *{box-sizing:border-box}.lxsm-in{padding:22px 26px}'
++'.lxsm h2{font-family:"Playfair Display",Georgia,serif;font-size:28px;font-weight:700;margin:0;color:#fff}'
++'.lxsm-badge{display:inline-block;border:1px solid rgba(200,168,78,.6);background:rgba(200,168,78,.12);color:#e6c066;border-radius:20px;padding:4px 12px;font-size:12px;font-weight:700;margin-left:10px;vertical-align:middle}'
++'.lxsm-sub{color:rgba(255,255,255,.55);font-size:13px;margin-top:4px}'
++'.lxsm-x{position:absolute;top:16px;right:16px;width:40px;height:40px;border-radius:10px;border:1px solid rgba(255,255,255,.15);background:#16151b;color:#fff;font-size:18px;cursor:pointer}'
++'.lxsm-card{background:#141318;border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:16px 18px}'
++'.lxsm-client{display:flex;gap:14px;align-items:flex-start;margin:16px 0}'
++'.lxsm-av{width:46px;height:46px;border-radius:50%;background:rgba(200,168,78,.18);color:#e6c066;display:flex;align-items:center;justify-content:center;font-weight:800;flex:none}'
++'.lxsm-lbl{font-size:11px;letter-spacing:1px;color:rgba(255,255,255,.45);font-weight:800;text-transform:uppercase;margin-bottom:4px}'
++'.lxsm-grid{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(0,1fr);gap:20px;align-items:start}'
++'.lxsm-tabs{display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap}'
++'.lxsm-tab{flex:1;min-width:150px;max-width:300px;text-align:left;background:#141318;border:1.5px solid rgba(255,255,255,.1);border-radius:12px;padding:10px 12px;color:#fff;cursor:pointer;display:flex;gap:10px;align-items:center}'
++'.lxsm-tab.on{border-color:#c8a84e;background:#1c1912}'
++'.lxsm-tab .l{width:28px;height:28px;border-radius:50%;background:#2a2830;display:flex;align-items:center;justify-content:center;font-weight:800;flex:none}.lxsm-tab.on .l{background:#c8a84e;color:#111}'
++'.lxsm-tab .t{font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.lxsm-tab .s{font-size:12px;color:rgba(255,255,255,.55)}'
++'.lxsm-add{flex:1;min-width:150px;max-width:260px;background:transparent;border:1.5px dashed rgba(200,168,78,.5);border-radius:12px;color:#e6c066;font-weight:800;cursor:pointer;padding:10px}'
++'.lxsm-chip{display:inline-block;border-radius:10px;padding:1px 8px;font-size:11px;font-weight:800}'
++'.lxsm-ok{background:rgba(76,175,80,.15);color:#6fd28a}.lxsm-ko{background:rgba(244,67,54,.15);color:#ff7d70}.lxsm-wa{background:rgba(255,152,0,.15);color:#ffb74d}.lxsm-gr{background:rgba(255,255,255,.08);color:rgba(255,255,255,.6)}'
++'.lxsm-row{display:grid;grid-template-columns:1.2fr .8fr 1.2fr;gap:12px;margin:12px 0}'
++'.lxsm input[type=text],.lxsm input[type=date],.lxsm input[type=number],.lxsm select,.lxsm textarea{width:100%;background:#0f0e13;border:1px solid rgba(255,255,255,.14);border-radius:10px;color:#fff;padding:11px 12px;font-size:15px;font-family:inherit}'
++'.lxsm .bad{border-color:#ff6b5f!important}'
++'.lxsm-conf{border:1px solid rgba(255,107,95,.55);background:rgba(255,107,95,.07);border-radius:12px;padding:12px 14px;margin:8px 0}'
++'.lxsm-libre{border:1px solid rgba(111,210,138,.45);background:rgba(111,210,138,.06);border-radius:12px;padding:10px 14px;margin:8px 0;color:#9fe2b0}'
++'.lxsm-pill{display:inline-block;border:1px solid rgba(200,168,78,.55);color:#e6c066;border-radius:20px;padding:5px 12px;margin:4px 6px 0 0;font-weight:700;cursor:pointer;background:transparent;font-size:13px}'
++'.lxsm-fam{display:inline-block;border:1px solid rgba(255,255,255,.15);border-radius:20px;padding:6px 13px;margin:0 6px 6px 0;font-weight:700;cursor:pointer;background:#141318;color:#fff;font-size:13px}.lxsm-fam.on{background:#c8a84e;color:#111;border-color:#c8a84e}'
++'.lxsm-list{background:#111015;border:1px solid rgba(255,255,255,.08);border-radius:12px;max-height:330px;overflow:auto}'
++'.lxsm-it{display:flex;gap:12px;align-items:center;padding:11px 14px;border-bottom:1px solid rgba(255,255,255,.05);cursor:pointer}.lxsm-it:last-child{border-bottom:none}'
++'.lxsm-it.on{background:#1c1a14}.lxsm-it.dis{opacity:.45;cursor:not-allowed}'
++'.lxsm-it .n{font-weight:800;text-transform:uppercase;font-size:14px}.lxsm-it .d{font-size:12px;color:rgba(255,255,255,.5)}.lxsm-it .p{margin-left:auto;font-weight:800;white-space:nowrap}.lxsm-it.on .p{color:#e6c066}'
++'.lxsm-cb{width:20px;height:20px;border-radius:5px;border:2px solid rgba(255,255,255,.35);flex:none;display:flex;align-items:center;justify-content:center;font-size:13px;color:#111}.lxsm-it.on .lxsm-cb{background:#c8a84e;border-color:#c8a84e}'
++'.lxsm-tot{display:flex;justify-content:space-between;align-items:center;background:#1a1812;border:1px solid rgba(200,168,78,.3);border-radius:12px;padding:12px 16px;margin:12px 0}'
++'.lxsm-tot .m{font-size:26px;font-weight:800;color:#e6c066;white-space:nowrap}'
++'.lxsm-ac{display:flex;flex-wrap:wrap;gap:12px;align-items:center}'
++'.lxsm-sw{width:50px;height:28px;border-radius:14px;background:#2a2830;position:relative;cursor:pointer;flex:none;border:none}.lxsm-sw.on{background:#c8a84e}.lxsm-sw:after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;transition:left .15s}.lxsm-sw.on:after{left:25px}.lxsm-sw:disabled{opacity:.4;cursor:not-allowed}'
++'.lxsm-seg{display:inline-flex;border:1px solid rgba(255,255,255,.15);border-radius:10px;overflow:hidden}.lxsm-seg button{background:#141318;border:none;color:#fff;padding:9px 18px;font-weight:800;cursor:pointer}.lxsm-seg button.on{background:#c8a84e;color:#111}'
++'.lxsm-foot{display:flex;gap:14px;align-items:center;flex-wrap:wrap;border-top:1px solid rgba(255,255,255,.08);padding:16px 26px}'
++'.lxsm-btn{border-radius:12px;padding:14px 22px;font-weight:800;font-size:15px;cursor:pointer;border:1px solid rgba(255,255,255,.18);background:#16151b;color:#fff}.lxsm-btn.go{background:#c8a84e;color:#111;border-color:#c8a84e}.lxsm-btn:disabled{opacity:.5;cursor:wait}'
++'.lxsm-plan{position:relative;background:#111015;border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:12px}'
++'.lxsm-cols{display:flex;gap:6px;position:relative}.lxsm-col{flex:1;position:relative;background:rgba(255,255,255,.015);border-radius:6px;cursor:copy}'
++'.lxsm-hh{width:34px;position:relative;flex:none;font-size:11px;color:rgba(255,255,255,.45)}'
++'.lxsm-b{position:absolute;left:3px;right:3px;border-radius:6px;padding:3px 6px;font-size:11px;overflow:hidden;line-height:1.25}'
++'.lxsm-b.rdv{background:#2a2930;border:1px solid rgba(255,255,255,.18);color:#e8e6ee}.lxsm-b.pose{background:repeating-linear-gradient(135deg,rgba(255,255,255,.08) 0 4px,transparent 4px 9px);border:1px solid rgba(255,255,255,.12)}'
++'.lxsm-b.bloc{background:repeating-linear-gradient(135deg,rgba(150,150,150,.12) 0 4px,transparent 4px 9px);border:1px dashed rgba(255,255,255,.12);color:rgba(255,255,255,.4)}'
++'.lxsm-b.opt{background:rgba(200,168,78,.2);border:2px solid #c8a84e;color:#f0d78a;z-index:3}.lxsm-b.optp{background:repeating-linear-gradient(135deg,rgba(200,168,78,.25) 0 4px,transparent 4px 9px);border-left:2px solid #c8a84e;border-right:2px solid #c8a84e;z-index:3}'
++'.lxsm-b.autre{background:rgba(200,168,78,.07);border:1px dashed rgba(200,168,78,.5);color:rgba(240,215,138,.7);z-index:2}'
++'.lxsm-b.cf{border:2px solid #ff6b5f;background:rgba(255,107,95,.15);z-index:4}.lxsm-b.cf:after{content:"!";position:absolute;right:4px;top:2px;background:#ff6b5f;color:#fff;border-radius:50%;width:16px;height:16px;text-align:center;font-weight:800;line-height:16px}'
++'.lxsm-b.lib{background:rgba(76,175,80,.1);border:1px solid rgba(76,175,80,.45);color:#7fd99a;display:flex;align-items:center;justify-content:center;font-weight:700}'
++'.lxsm-leg{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:rgba(255,255,255,.6);margin-top:10px}.lxsm-leg i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:5px;vertical-align:-1px}'
++'.lxsm-band{position:relative;height:30px;background:rgba(255,255,255,.04);border-radius:6px;flex:1}.lxsm-band div{position:absolute;top:4px;bottom:4px;border-radius:4px}'
++'.lxsm-mob{display:none}.lxsm-addplus{display:none}'
++'@media (max-width:820px){.lxsm-av,.lxsm-badge,.lxsm-optw,.lxsm-addtxt,.lxsm-expd,.lxsm-sub{display:none!important}.lxsm-addplus{display:inline!important;font-size:22px}.lxsm-add{min-width:54px!important;max-width:54px!important;flex:none!important}.lxsm-client{padding:12px 14px!important;margin:10px 0!important}.lxsm-client .lxsm-cbtn{display:none!important}.lxsm-tab{padding:8px 10px}.lxsm-tab .l{display:none}.lxsm-bg{padding:0}.lxsm{border-radius:0;min-height:100vh;border-left:none;border-right:none}.lxsm-in{padding:16px 14px}.lxsm h2{font-size:23px}.lxsm-grid{grid-template-columns:1fr}.lxsm-desk{display:none}.lxsm-mob{display:block}.lxsm-row{grid-template-columns:1fr 1fr}.lxsm-row .full{grid-column:1/3}.lxsm-tab{min-width:0}.lxsm-foot{position:sticky;bottom:0;background:#0d0c10;padding:12px 14px}.lxsm-foot .go{width:100%}.lxsm-foot .lxsm-fx{display:none}.lxsm-client{flex-direction:column}.lxsm-tot .m{font-size:22px}}'
++'.lxsm-opt{border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:12px 14px;margin-bottom:10px;background:#141318}.lxsm-opt.ch{border-color:#6fd28a}';
+
+function _lxSmCssOk(){ if(document.getElementById("lxsmCss")) return; var s=document.createElement("style"); s.id="lxsmCss"; s.textContent=LX_SM_CSS; document.head.appendChild(s); }
+function _lxSmE(x){ return (typeof _lxEsc==="function")?_lxEsc(x):String(x==null?"":x).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];}); }
+function _lxSmLettre(r){ return String.fromCharCode(64+(Number(r)||1)); }
+function _lxSmPad(n){ return String(n).padStart(2,"0"); }
+function _lxSmYmd(d){ return d.getFullYear()+"-"+_lxSmPad(d.getMonth()+1)+"-"+_lxSmPad(d.getDate()); }
+function _lxSmMin(t){ var m=/^(\d{1,2}):(\d{2})/.exec(String(t||"")); return m?(+m[1])*60+(+m[2]):null; }
+function _lxSmHM(min){ min=((Number(min)||0)%1440+1440)%1440; return _lxSmPad(Math.floor(min/60))+":"+_lxSmPad(min%60); }
+function _lxSmDuree(min){ min=Number(min)||0; var h=Math.floor(min/60), m=min%60; return h?(h+" h"+(m?" "+_lxSmPad(m):"")):(m+" min"); }
+function _lxSmEur(n){ return (Number(n)||0).toFixed(2).replace(".",",")+" €"; }
+var _LX_SM_J=["dimanche","lundi","mardi","mercredi","jeudi","vendredi","samedi"], _LX_SM_M=["janvier","février","mars","avril","mai","juin","juillet","août","septembre","octobre","novembre","décembre"];
+function _lxSmJour(ymd, court){
+  var m=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(ymd||"")); if(!m) return "";
+  var d=new Date(+m[1],+m[2]-1,+m[3]);
+  if(court) return _LX_SM_J[d.getDay()].slice(0,3)+". "+(+m[3])+" "+["janv.","févr.","mars","avr.","mai","juin","juil.","août","sept.","oct.","nov.","déc."][+m[2]-1];
+  var t=_LX_SM_J[d.getDay()]+" "+(+m[3])+" "+_LX_SM_M[+m[2]-1]; return t.charAt(0).toUpperCase()+t.slice(1);
+}
+function _lxSmStripeOk(){ var c=(typeof SALON_CONFIG!=="undefined"&&SALON_CONFIG)||{}; return !!(c.stripeConnectId && ["active","enabled","payouts_pending"].indexOf(String(c.stripeConnectStatus||""))>=0); }
+
+// Catalogue : prestations (SVC) + forfaits (FORFAITS) — clé « service:<id> » / « forfait:<id> »
+function _lxSmPhasesDe(ph, nom){ var a=Array.isArray(ph)?ph.filter(function(p){return p&&Number(p.d)>0;}).map(function(p){return {t:p.t==="p"?"p":"w",d:Number(p.d),l:p.l||nom};}):[]; return a.length?a:[{t:"w",d:30,l:nom}]; }
+function _lxSmCatalogue(){
+  var out=[];
+  (typeof SVC!=="undefined"&&Array.isArray(SVC)?SVC:[]).forEach(function(s){ if(!s||s.actif===false) return;
+    var ph=_lxSmPhasesDe(s.phases,s.n), d=0, p=0; ph.forEach(function(x){ d+=x.d; if(x.t==="p") p+=x.d; });
+    out.push({k:"service:"+s.id,type:"service",id:s.id,nom:s.n||"",prix:Number(s.p)||0,apartir:!!s.apartir,devis:!!s.devis,cat:String(s.cat||"Autres"),phases:ph,duree:d,pose:p}); });
+  (typeof FORFAITS!=="undefined"&&Array.isArray(FORFAITS)?FORFAITS:[]).forEach(function(f){ if(!f||f.id==null) return;
+    var ph=_lxSmPhasesDe(f.phases,f.n); if(!(Array.isArray(f.phases)&&f.phases.length)&&Number(f.dur)>0) ph=[{t:"w",d:Number(f.dur),l:f.n}];
+    var d=0, p=0; ph.forEach(function(x){ d+=x.d; if(x.t==="p") p+=x.d; });
+    out.push({k:"forfait:"+f.id,type:"forfait",id:f.id,nom:f.n||"",prix:Number(f.p)||0,apartir:!!f.apartir,devis:!!f.devis,cat:"Forfaits",phases:ph,duree:d,pose:p}); });
+  return out;
+}
+function _lxSmItem(k){ var c=_lxSmCatalogue(); for(var i=0;i<c.length;i++) if(c[i].k===k) return c[i]; return null; }
+function _lxSmCalc(o){
+  var items=(o.items||[]).map(_lxSmItem).filter(Boolean), ph=[], d=0, p=0, prix=0;
+  items.forEach(function(it){ ph=ph.concat(it.phases); d+=it.duree; p+=it.pose; prix+=it.prix; });
+  prix=Math.round(prix*100)/100;
+  var ac=0;
+  if(o.acOn){ var vc=_lxSmCentimes(o.acVal); if(vc>0){ var pc=Math.round(prix*100); ac=(o.acMode==="pct"?Math.floor(pc*Math.min(vc,10000)/10000):vc)/100; } }
+  return {items:items,phases:ph,duree:d,pose:p,prix:prix,acompte:ac,reste:Math.round((prix-ac)*100)/100,fin:(_lxSmMin(o.heure)||0)+d};
+}
+// contre-audit 30/10 (e) : MÊME règle que le serveur (lx_prive.sm_centimes_inf) : valeur saisie tronquée au centime, acompte en %
+// = prix × % tronqué au centime inférieur ; calcul en centimes entiers (aucune erreur d'arrondi des nombres à virgule).
+function _lxSmCentimes(v){ var m=/^\s*(\d{1,9})(?:[.,](\d*))?\s*$/.exec(String(v==null?"":v)); if(!m) return 0; var dec=((m[2]||"")+"00").slice(0,2); return Number(m[1])*100+Number(dec); }
+function _lxSmCollabs(){ try{ return (typeof getActiveTeam==="function")?getActiveTeam():[]; }catch(_){ return []; } }
+function _lxSmNomCollab(id){ var t=(id!=null&&typeof gT==="function")?gT(Number(id)):null; return t?(t.n||""):""; }
+
+// Conflits d'une option avec le planning (même règle que la prise de RDV : phases de travail, pauses, absences)
+function _lxSmConflitsCollab(stId, o, ph){
+  if(typeof checkConflict!=="function") return [];
+  try{ return checkConflict(Number(stId), o.date, o.heure, null, "__lxsm__", ph)||[]; }catch(_){ return []; }
+}
+function _lxSmEtat(o){
+  var c=_lxSmCalc(o);
+  if(!c.items.length||!o.date||!o.heure) return {etat:"incomplet",texte:"À compléter",c:c};
+  var team=_lxSmCollabs(), essais=o.collab?[Number(o.collab)]:team.map(function(t){return t.id;});
+  if(!essais.length) return {etat:"libre",texte:"libre",c:c,cf:[]};
+  var premier=null;
+  for(var i=0;i<essais.length;i++){
+    var cf=_lxSmConflitsCollab(essais[i], o, c.phases);
+    var durs=cf.filter(function(x){ return x.appt || (x.blockedType && ["pause","absent_heures","apres_fermeture","hors_horaire"].indexOf(x.blockedType)<0); });
+    var mous=cf.filter(function(x){ return !x.appt && ["pause","absent_heures","apres_fermeture","hors_horaire"].indexOf(x.blockedType)>=0; });
+    if(!durs.length){ return {etat:mous.length?"hors":"libre",texte:mous.length?"hors horaires":"libre",c:c,stLibre:essais[i],cf:mous}; }
+    if(!premier) premier={stId:essais[i],cf:durs};
+  }
+  return {etat:"conflit",texte:"conflit",c:c,stConf:premier.stId,cf:premier.cf};
+}
+function _lxSmConflitTexte(e){
+  var cf=(e.cf||[])[0]; if(!cf) return "";
+  var nom=_lxSmNomCollab(e.stConf);
+  if(cf.appt){ var dd=0; try{ getWorkBlocks(cf.appt).forEach(function(b){ dd+=b.end-b.start; }); }catch(_){}
+    return "Conflit : "+_lxSmE(nom||"le collaborateur")+" a déjà un rendez-vous à "+_lxSmE(cf.time||"")+" ("+_lxSmE(cf.svcName||"prestation")+(dd?", "+_lxSmDuree(dd):"")+")."; }
+  return "Conflit : "+_lxSmE(nom||"le collaborateur")+" — "+_lxSmE(cf.svcName||"indisponible")+".";
+}
+// Créneaux libres du jour pour la durée de l'option (les plus proches de l'heure choisie)
+function _lxSmLibres(o, n){
+  var c=_lxSmCalc(o); if(!c.items.length||!o.date) return [];
+  var team=_lxSmCollabs(); if(o.collab) team=team.slice().sort(function(a,b){ return (a.id===Number(o.collab)?-1:0)-(b.id===Number(o.collab)?-1:0); });
+  var res=[], pas=(typeof SLOT!=="undefined"&&Number(SLOT)>0)?Number(SLOT):15, cible=_lxSmMin(o.heure)||600;
+  team.forEach(function(t){
+    var h=(typeof getEffectiveHrs==="function")?getEffectiveHrs(o.date,t.id):null; if(!h||!h.o||!h.c) return;
+    for(var m=_lxSmMin(h.o); m+c.duree<=_lxSmMin(h.c); m+=pas){
+      if(m===cible && Number(o.collab)===t.id) continue;
+      var cf=_lxSmConflitsCollab(t.id, {date:o.date,heure:_lxSmHM(m)}, c.phases);
+      if(!cf.length) res.push({m:m,st:t.id,n:t.n});
+    }
+  });
+  res.sort(function(a,b){ return Math.abs(a.m-cible)-Math.abs(b.m-cible) || a.m-b.m; });
+  var vus={}, out=[]; res.forEach(function(r){ var k=r.m+"|"+r.st; if(!vus[k]&&out.length<(n||3)){ vus[k]=1; out.push(r); } });
+  return out;
+}
+
+function _lxSmNouvelleOption(prec){
+  var dem=new Date(); dem.setDate(dem.getDate()+1);
+  var o={libelle:"",date:_lxSmYmd(dem),heure:"10:00",collab:"",items:[],acOn:false,acMode:"pct",acVal:"30",note:"",fam:"",q:""};
+  if(prec){ o.date=prec.date; o.collab=prec.collab; }
+  return o;
+}
+// Ouverture de la fenêtre pour une demande « pending » (pré-remplie si l'établissement « propose un autre horaire »)
+function lxSmOuvrir(d){
+  _lxSmCssOk();
+  // contre-audit 30/10 (j) : offre Essentiel (ou essai Pro terminé) -> message clair au lieu d'un refus incompréhensible à l'envoi
+  if(typeof isPro==="function" && !isPro()){
+    var _tel=d&&d.client_tel?" Vous pouvez appeler le client ("+d.client_tel+") et créer le rendez-vous dans le planning.":" Vous pouvez appeler le client et créer le rendez-vous dans le planning.";
+    showAlert("Offre Pro requise : répondre à une demande sur mesure nécessite l’offre Pro (réservation en ligne)."+_tel,"info");
+    return;
+  }
+  var pre=(window._lxSmPrefill&&window._lxSmPrefill[d.id])||null;
+  var opts=pre&&pre.length?pre.map(function(x){ return Object.assign(_lxSmNouvelleOption(),x); }):[_lxSmNouvelleOption()];
+  window._lxSm={d:d,opts:opts,i:0,exp:72,envoi:false,planJour:null,agrandir:false};
+  _lxSmRendre();
+}
+function lxSmFermer(){ window._lxSm=null; cM(); }
+function _lxSmO(){ var s=window._lxSm; return s?s.opts[s.i]:null; }
+
+function _lxSmRendre(){
+  var s=window._lxSm; if(!s) return;
+  var d=s.d, o=s.opts[s.i], e=_lxSmEtat(o), c=e.c;
+  var nom=((d.client_prenom||"")+" "+(d.client_nom||"")).trim()||"Client";
+  var ini=((d.client_prenom||"").charAt(0)+(d.client_nom||"").charAt(0)).toUpperCase()||"?";
+  var recu=new Date(d.created_at), recuTxt=_lxSmJour(_lxSmYmd(recu),true)+" à "+_lxSmPad(recu.getHours())+":"+_lxSmPad(recu.getMinutes());
+  var cli=null; try{ cli=_lxSmClient(d); }catch(_){}
+  var h='<div class="lxsm-bg" onclick="if(event.target===this)lxSmFermer()"><div class="lxsm" onclick="event.stopPropagation()" data-lxsm="1"><div class="lxsm-in">';
+  h+='<button class="lxsm-x" onclick="lxSmFermer()" title="Fermer">✕</button>';
+  h+='<h2>Répondre à la demande<span class="lxsm-badge">'+(d.status==="refused"?'Nouvelle proposition après refus':d.status==="expired"?'Nouvelle proposition après expiration':'En attente de votre proposition')+'</span></h2>';
+  h+='<div class="lxsm-sub">Demande sur mesure reçue le '+_lxSmE(recuTxt)+' · via votre site</div>';
+  // client + demande
+  h+='<div class="lxsm-card lxsm-client"><div class="lxsm-av">'+_lxSmE(ini)+'</div><div style="flex:1;min-width:0">';
+  h+='<div style="font-size:18px;font-weight:800">'+_lxSmE(nom)+' <span style="font-size:13px;font-weight:400;color:rgba(255,255,255,.5)">'+(d.client_luxyra_id?'compte Luxyra':'')+(cli&&cli.visites?' · '+cli.visites+' visite'+(cli.visites>1?'s':''):'')+'</span></div>';
+  h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-top:8px"><div><div class="lxsm-lbl">Sa demande</div><div style="font-weight:700;font-size:15px;white-space:pre-wrap">« '+_lxSmE(d.demande_text||"")+' »</div></div>';
+  if(d.dispo_text) h+='<div><div class="lxsm-lbl">Ses disponibilités</div><div style="font-size:15px;white-space:pre-wrap">'+_lxSmE(d.dispo_text)+'</div></div>';
+  if(d.status==="refused"&&d.refuse_reason) h+='<div><div class="lxsm-lbl">Son message (refus)</div><div style="font-size:15px;white-space:pre-wrap;color:#ffb3ab">'+_lxSmE(d.refuse_reason)+'</div></div>';
+  h+='</div></div><div class="lxsm-cbtn" style="display:flex;gap:8px;flex-wrap:wrap">';
+  if(d.client_tel) h+='<a class="lxsm-btn" style="text-decoration:none;padding:10px 16px" href="tel:'+_lxSmE(String(d.client_tel).replace(/\s/g,""))+'">Appeler</a>';
+  if(cli&&cli.id) h+='<button class="lxsm-btn" style="padding:10px 16px" onclick="lxSmFiche()">Fiche</button>';
+  h+='</div></div>';
+  // grille : options + planning
+  h+='<div class="lxsm-grid"><div>';
+  h+='<div class="lxsm-tabs">';
+  s.opts.forEach(function(x,i){ var ex=_lxSmEtat(x), cl=ex.etat==="libre"?"lxsm-ok":ex.etat==="conflit"?"lxsm-ko":ex.etat==="hors"?"lxsm-wa":"lxsm-gr";
+    var tit=x.libelle||(ex.c.items[0]?ex.c.items[0].nom.toLowerCase().replace(/^./,function(z){return z.toUpperCase();}):"Nouvelle option");
+    h+='<button class="lxsm-tab'+(i===s.i?' on':'')+'" onclick="lxSmTab('+i+')"><span class="l">'+_lxSmLettre(i+1)+'</span><span style="min-width:0"><div class="t"><span class="lxsm-optw">Option </span>'+_lxSmLettre(i+1)+' · '+_lxSmE(tit)+'</div><div class="s">'+_lxSmE(_lxSmJour(x.date,true))+' '+_lxSmE(x.heure||"")+' <span class="lxsm-chip '+cl+'">'+ex.texte+'</span></div></span></button>'; });
+  if(s.opts.length<3) h+='<button class="lxsm-add" onclick="lxSmAjouter()" title="Ajouter une option (3 maximum)"><span class="lxsm-addtxt">+ Ajouter une option<div style="font-weight:400;font-size:12px;color:rgba(255,255,255,.5)">3 maximum</div></span><span class="lxsm-addplus">+</span></button>';
+  h+='</div>';
+  h+='<div class="lxsm-card">'+_lxSmEditeur(o,e)+'</div>';
+  h+='</div><div class="lxsm-desk">'+_lxSmPlanning(o,e)+'</div></div>';
+  h+='</div>';
+  // pied
+  var exp=new Date(Date.now()+s.exp*3600e3), expTxt=_lxSmJour(_lxSmYmd(exp))+", "+_lxSmPad(exp.getHours())+":"+_lxSmPad(exp.getMinutes());
+  h+='<div class="lxsm-foot"><div class="lxsm-expd" style="min-width:250px"><div class="lxsm-lbl">Valable jusqu’au</div>'+_lxSmSelectExpire()+'</div><div class="lxsm-fx" style="flex:1;color:rgba(255,255,255,.55);font-size:13px">Le client choisit une seule option. Les autres sont libérées automatiquement.</div>';
+  var n=s.opts.length;
+  h+='<button class="lxsm-btn lxsm-fx" onclick="lxSmFermer()">Annuler</button><button class="lxsm-btn go" id="lxsmGo" onclick="lxSmEnvoyer(false)"'+(s.envoi?' disabled':'')+'>'+(s.envoi?'Envoi…':(n>1?'Envoyer les '+n+' options au client':'Envoyer la proposition au client'))+'</button>';
+  h+='<div class="lxsm-mob" style="width:100%;text-align:center;font-size:12px;color:rgba(255,255,255,.5)">'+n+' option'+(n>1?'s':'')+' · valable '+(s.exp===168?'7 jours':s.exp+' h')+'</div>';
+  h+='</div></div></div>';
+  var md=document.getElementById("modal"); var sc=md.querySelector(".lxsm-bg"); var top=sc?sc.scrollTop:0;
+  md.innerHTML=h;
+  var sc2=md.querySelector(".lxsm-bg"); if(sc2) sc2.scrollTop=top;
+}
+
+function _lxSmSelectExpire(){
+  var s=window._lxSm, h='<select onchange="lxSmExpire(this.value)">';
+  [[24,"24 h"],[48,"48 h"],[72,"72 h"],[168,"7 jours"]].forEach(function(p){ var x=new Date(Date.now()+p[0]*3600e3); h+='<option value="'+p[0]+'"'+(s.exp===p[0]?' selected':'')+'>'+_lxSmE(_lxSmJour(_lxSmYmd(x))+", "+_lxSmPad(x.getHours())+":"+_lxSmPad(x.getMinutes())+" ("+p[1]+")")+'</option>'; });
+  return h+'</select>';
+}
+function _lxSmEditeur(o,e){
+  var s=window._lxSm, c=e.c, h='';
+  h+='<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><div style="font-size:19px;font-weight:800">Option '+_lxSmLettre(s.i+1)+'</div><div style="color:rgba(255,255,255,.55);font-size:13px">intitulé vu par le client :</div>';
+  h+='<input type="text" style="flex:1;min-width:160px;max-width:300px" maxlength="60" placeholder="'+_lxAttr(c.items.length?c.items.map(function(x){return x.nom;}).join(" + ").slice(0,60):"Ex. Mèches + coupe")+'" value="'+_lxAttr(o.libelle)+'" oninput="lxSmChamp(\'libelle\',this.value,true)">';
+  h+='<div style="margin-left:auto;font-size:13px"><a href="javascript:void 0" onclick="lxSmDupliquer()" style="color:rgba(255,255,255,.65)">Dupliquer</a>'+(s.opts.length>1?' · <a href="javascript:void 0" onclick="lxSmSupprimer()" style="color:rgba(255,255,255,.65)">Supprimer</a>':'')+'</div></div>';
+  // date / heure / collaborateur
+  var auj=_lxSmYmd(new Date());
+  h+='<div class="lxsm-row"><div><div class="lxsm-lbl">Date</div><input type="date" min="'+auj+'" value="'+_lxAttr(o.date)+'" onchange="lxSmChamp(\'date\',this.value)"></div>';
+  h+='<div><div class="lxsm-lbl">Heure</div><select class="'+(e.etat==="conflit"?'bad':'')+'" onchange="lxSmChamp(\'heure\',this.value)">';
+  var pas=(typeof SLOT!=="undefined"&&Number(SLOT)>0)?Number(SLOT):15, trouve=false;
+  for(var m=6*60;m<=22*60;m+=pas){ var hm=_lxSmHM(m); if(hm===o.heure) trouve=true; h+='<option'+(hm===o.heure?' selected':'')+'>'+hm+'</option>'; }
+  if(!trouve&&o.heure) h+='<option selected>'+_lxSmE(o.heure)+'</option>';
+  h+='</select></div><div class="full"><div class="lxsm-lbl">Collaborateur</div><select onchange="lxSmChamp(\'collab\',this.value)"><option value="">Pas de préférence</option>';
+  (typeof lxEquipeSelection==="function"?lxEquipeSelection(o.collab?Number(o.collab):null):[]).forEach(function(t){ if(t) h+='<option value="'+t.id+'"'+(String(o.collab)===String(t.id)?' selected':'')+'>'+_lxSmE(t.n)+'</option>'; });
+  h+='</select></div></div>';
+  // téléphone : planning du jour en bande repliable
+  h+='<div class="lxsm-mob">'+_lxSmPlanningMobile(o,e)+'</div>';
+  // conflit / libre
+  if(e.etat==="conflit"||e.etat==="hors"){
+    var lib=_lxSmLibres(o,3);
+    h+='<div class="'+(e.etat==="conflit"?'lxsm-conf':'lxsm-libre')+'" style="'+(e.etat==="hors"?'border-color:rgba(255,183,77,.5);background:rgba(255,183,77,.06);color:#ffcf8a':'')+'">';
+    if(e.etat==="conflit") h+='<div style="color:#ff7d70;font-weight:800;margin-bottom:4px">'+_lxSmConflitTexte(e)+'</div>';
+    else h+='<div style="font-weight:800;margin-bottom:4px">Attention : '+_lxSmE((e.cf[0]&&e.cf[0].svcName)||"hors des horaires")+'. Vous pouvez quand même le proposer.</div>';
+    if(lib.length){ h+='<span>Créneaux libres ce jour pour '+_lxSmDuree(c.duree)+' :</span>'; lib.forEach(function(x){ h+='<button class="lxsm-pill" onclick="lxSmCreneau('+x.m+','+x.st+')">'+_lxSmHM(x.m)+' · '+_lxSmE(x.n)+'</button>'; }); h+='<div style="font-size:12px;color:rgba(255,255,255,.45);margin-top:6px">Un clic sur un créneau l’applique à l’option. Le créneau sera revérifié quand le client choisira.</div>'; }
+    else if(e.etat==="conflit") h+='<div style="font-size:13px">Aucun créneau libre ce jour pour cette durée : essayez un autre jour.</div>';
+    h+='</div>';
+  } else if(e.etat==="libre"){
+    h+='<div class="lxsm-libre">✓ Créneau libre'+(e.stLibre&&!o.collab?' (par exemple avec '+_lxSmE(_lxSmNomCollab(e.stLibre))+')':'')+'. Il sera revérifié quand le client choisira.</div>';
+  }
+  // prestations et forfaits
+  var cat=_lxSmCatalogue(), fams={}, nbF=0; cat.forEach(function(x){ if(x.type==="forfait") nbF++; else fams[x.cat]=1; });
+  h+='<div class="lxsm-lbl" style="margin-top:14px">Prestations et forfaits</div>';
+  h+='<input type="text" id="lxsmQ" placeholder="🔍 Rechercher une prestation ou un forfait…" value="'+_lxAttr(o.q)+'" oninput="lxSmRecherche(this.value)" style="margin-bottom:10px">';
+  h+='<div><button class="lxsm-fam'+(!o.fam?' on':'')+'" onclick="lxSmFamille(\'\')">Toutes</button>';
+  Object.keys(fams).sort(function(a,b){return a.localeCompare(b,"fr");}).forEach(function(f){ h+='<button class="lxsm-fam'+(o.fam===f?' on':'')+'" data-fam="'+_lxAttr(f)+'" onclick="lxSmFamille(this.getAttribute(\'data-fam\'))">'+_lxSmE(f.charAt(0).toUpperCase()+f.slice(1).toLowerCase())+'</button>'; });
+  if(nbF) h+='<button class="lxsm-fam'+(o.fam==="Forfaits"?' on':'')+'" onclick="lxSmFamille(\'Forfaits\')">Forfaits ('+nbF+')</button>';
+  h+='</div><div class="lxsm-list" id="lxsmList">'+_lxSmListeHtml(o)+'</div>';
+  // récapitulatif
+  var deb=_lxSmMin(o.heure);
+  h+='<div class="lxsm-tot"><div><div style="font-weight:800;font-size:15px">'+(c.items.length?c.items.length+' prestation'+(c.items.length>1?'s':''):'Aucune prestation')+(c.items.length&&deb!=null?' · '+_lxSmE(o.heure)+' – '+_lxSmHM(deb+c.duree):'')+'</div>';
+  if(c.items.length) h+='<div style="font-size:13px;color:rgba(255,255,255,.6)">Durée '+_lxSmDuree(c.duree)+(c.pose?', dont '+_lxSmDuree(c.pose)+' de temps de pose ('+_lxSmE(_lxSmNomCollab(o.collab||e.stLibre)||"le collaborateur")+' disponible pendant la pose)':'')+'</div>';
+  if(c.items.some(function(x){return x.apartir;})) h+='<div style="font-size:12px;color:#ffcf8a">Prix « à partir de » : le prix final sera fixé au salon.</div>';
+  h+='</div><div class="m">'+_lxSmEur(c.prix)+'</div></div>';
+  // acompte
+  var stripe=_lxSmStripeOk();
+  h+='<div class="lxsm-ac"><button class="lxsm-sw'+(o.acOn&&stripe?' on':'')+'" '+(stripe?'':'disabled ')+'onclick="lxSmChamp(\'acOn\','+(!o.acOn)+')" aria-label="Acompte"></button><div style="font-weight:800">Acompte à payer en ligne pour valider</div>';
+  if(stripe&&o.acOn){
+    h+='<span class="lxsm-seg"><button class="'+(o.acMode==="pct"?'on':'')+'" onclick="lxSmChamp(\'acMode\',\'pct\')">%</button><button class="'+(o.acMode==="montant"?'on':'')+'" onclick="lxSmChamp(\'acMode\',\'montant\')">€</button></span>';
+    h+='<input type="number" min="1" step="'+(o.acMode==="pct"?'1':'0.01')+'" style="width:100px" value="'+_lxAttr(o.acVal)+'" oninput="lxSmChamp(\'acVal\',this.value,true)" onchange="lxSmChamp(\'acVal\',this.value)"><span id="lxsmAc" style="font-size:20px;font-weight:800;color:#e6c066">= '+_lxSmEur(c.acompte)+'</span>';
+  }
+  h+='</div>';
+  if(!stripe) h+='<div style="font-size:12px;color:rgba(255,255,255,.5);margin:6px 0 0 62px">Paiements en ligne non activés : l’acompte en ligne est impossible (Paramètres › Paiements en ligne). Le client confirmera sans payer.</div>';
+  else if(o.acOn) h+='<div id="lxsmReste" style="font-size:12px;color:rgba(255,255,255,.5);margin:6px 0 0 62px">'+(c.acompte>c.prix?'<span style="color:#ff7d70">L’acompte dépasse le prix total.</span>':(c.acompte>0&&c.acompte<1?'<span style="color:#ff7d70">1 € minimum.</span>':'Reste à régler au salon : '+_lxSmEur(c.reste)+'. Montant recalculé et vérifié par le serveur.'))+'</div>';
+  // note
+  h+='<div class="lxsm-lbl" style="margin-top:14px">Note pour le client (visible sur la proposition)</div><textarea rows="2" maxlength="500" placeholder="Ex. Venez avec les cheveux secs et non attachés, merci !" oninput="lxSmChamp(\'note\',this.value,true)">'+_lxSmE(o.note)+'</textarea>';
+  h+='<div class="lxsm-mob" style="margin-top:12px"><div class="lxsm-lbl">Valable jusqu’au</div>'+_lxSmSelectExpire()+'</div>';
+  return h;
+}
+function _lxSmListeHtml(o){
+  var q=String(o.q||"").trim().toLowerCase(), h='', n=0;
+  var sel={}; (o.items||[]).forEach(function(k){ sel[k]=(sel[k]||0)+1; });
+  _lxSmCatalogue().forEach(function(x){
+    if(o.fam && x.cat!==o.fam) return;
+    if(q && x.nom.toLowerCase().indexOf(q)<0) return;
+    n++;
+    var on=!!sel[x.k];
+    h+='<div class="lxsm-it'+(on?' on':'')+(x.devis?' dis':'')+'" role="checkbox" aria-checked="'+(on?'true':'false')+'"'+(x.devis?' aria-disabled="true"':' tabindex="0"')+' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();this.click();}" data-k="'+_lxAttr(x.k)+'" onclick="'+(x.devis?'':'lxSmItem(this.getAttribute(\'data-k\'))')+'"><div class="lxsm-cb">'+(on?'✓':'')+'</div><div style="min-width:0"><div class="n">'+_lxSmE(x.nom)+(x.type==="forfait"?' <span class="lxsm-chip lxsm-gr">forfait</span>':'')+'</div><div class="d">'+_lxSmDuree(x.duree)+(x.pose?' · dont '+_lxSmDuree(x.pose)+' de pose':'')+'</div></div><div class="p">'+(x.devis?'Sur devis':(x.apartir?'à partir de ':'')+_lxSmEur(x.prix))+'</div></div>';
+  });
+  return n?h:'<div style="padding:16px;text-align:center;color:rgba(255,255,255,.45)">Aucune prestation trouvée</div>';
+}
+
+// Planning du jour (ordinateur) : une colonne par collaborateur, RDV existants, temps de pose hachurés, option surlignée,
+// conflit signalé, zones libres pour la durée de l'option ; clic dans une colonne = heure + collaborateur de l'option.
+function _lxSmBlocsJour(date, stId){
+  var out=[];
+  (typeof AP!=="undefined"&&Array.isArray(AP)?AP:[]).forEach(function(a){
+    if(!a||a.date!==date||a.cancelled||a.st==="canc"||a.st==="cancelled"||a.fromCaisse) return;
+    if((a.stId==null?null:Number(a.stId))!==stId) return;
+    var sv=(typeof gS==="function")?gS(a.sId):null;
+    var ph=(Array.isArray(a.aPhases)&&a.aPhases.length)?a.aPhases:((sv&&Array.isArray(sv.phases)&&sv.phases.length)?sv.phases:[{t:"w",d:30}]);
+    var t=_lxSmMin(a.time); if(t==null) return;
+    var nomS=sv?sv.n:(a.isOnline?"RDV en ligne":"Rendez-vous"), cur=t, deb=t, fin=t; ph.forEach(function(p){ fin+=Number(p.d)||0; });
+    ph.forEach(function(p,i){ var dd=Number(p.d)||0; out.push({deb:cur,fin:cur+dd,pose:p.t==="p",label:i===0?nomS:"",plage:i===0?(_lxSmHM(deb)+" – "+_lxSmHM(fin)):""}); cur+=dd; });
+  });
+  return out;
+}
+function _lxSmPlage(date, team, o, c){
+  var a=24*60, b=0;
+  team.forEach(function(t){ var h=(typeof getEffectiveHrs==="function")?getEffectiveHrs(date,t.id):null; if(h&&h.o&&h.c){ a=Math.min(a,_lxSmMin(h.o)); b=Math.max(b,_lxSmMin(h.c)); } });
+  if(a>=b){ var hs=(typeof H!=="undefined"&&H)?H[new Date(date+"T12:00:00").getDay()]:null; if(hs&&hs.o){ a=_lxSmMin(hs.o); b=_lxSmMin(hs.c); } else { a=9*60; b=19*60; } }
+  var dm=_lxSmMin(o.heure); if(dm!=null&&o.date===date){ a=Math.min(a,dm); b=Math.max(b,dm+c.duree); }
+  // contre-audit 30/10 (h) : un RDV qui déborde des horaires reste dans le cadre (plus de chevauchement avec la légende)
+  team.forEach(function(t){ _lxSmBlocsJour(date,t.id).forEach(function(x){ a=Math.min(a,x.deb); b=Math.max(b,x.fin); }); });
+  return {a:Math.floor(a/60)*60,b:Math.ceil(b/60)*60};
+}
+function _lxSmLibresCol(date, stId, plage, duree){
+  var h=(typeof getEffectiveHrs==="function")?getEffectiveHrs(date,stId):null; if(!h||!h.o||!h.c||!duree) return [];
+  var occ=[];
+  _lxSmBlocsJour(date,stId).forEach(function(b){ if(!b.pose) occ.push([b.deb,b.fin]); });
+  try{ (getBlockedSlots(stId,date)||[]).forEach(function(b){ occ.push([_lxSmMin(b.from),_lxSmMin(b.to)]); }); }catch(_){}
+  occ.sort(function(x,y){return x[0]-y[0];});
+  var libres=[], cur=_lxSmMin(h.o), fin=_lxSmMin(h.c);
+  occ.forEach(function(x){ if(x[0]>cur){ if(x[0]-cur>=duree) libres.push([cur,x[0]]); } cur=Math.max(cur,x[1]); });
+  if(fin-cur>=duree) libres.push([cur,fin]);
+  return libres;
+}
+function _lxSmPlanning(o,e){
+  var s=window._lxSm, c=e.c, date=o.date, team=_lxSmCollabs();
+  var h='<div class="lxsm-plan"><div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px"><div><div style="font-size:17px;font-weight:800">'+_lxSmE(_lxSmJour(date))+'</div>';
+  var hs=(typeof H!=="undefined"&&H&&date)?H[new Date(date+"T12:00:00").getDay()]:null;
+  h+='<div style="font-size:12px;color:rgba(255,255,255,.5)">'+(hs&&hs.o?'Horaires '+_lxSmE(hs.o)+' – '+_lxSmE(hs.c)+' · journée ouverte':'Établissement normalement fermé ce jour')+'</div></div>';
+  h+='<div style="display:flex;gap:6px"><button class="lxsm-btn" style="padding:6px 12px" onclick="lxSmJour(-1)" title="Jour précédent">‹</button><button class="lxsm-btn" style="padding:6px 12px" onclick="lxSmJour(1)" title="Jour suivant">›</button></div></div>';
+  if(!team.length){ return h+'<div style="color:rgba(255,255,255,.5);padding:20px;text-align:center">Ajoutez votre équipe (Paramètres › Équipe) pour voir le planning ici.</div></div>'; }
+  var pl=_lxSmPlage(date,team,o,c), K=1.15, H_=(pl.b-pl.a)*K;
+  h+='<div class="lxsm-cols"><div class="lxsm-hh"></div>';
+  team.forEach(function(t){ h+='<div style="flex:1;text-align:center;font-weight:700;font-size:13px;background:rgba(255,255,255,.04);border-radius:6px;padding:5px 0">'+_lxSmE(t.n)+'</div>'; });
+  h+='</div><div class="lxsm-cols" style="margin-top:6px"><div class="lxsm-hh" style="height:'+H_+'px">';
+  for(var m=pl.a;m<=pl.b;m+=60) h+='<div style="position:absolute;top:'+((m-pl.a)*K-6)+'px;right:4px">'+(m/60)+'h</div>';
+  h+='</div>';
+  var stOpt=o.collab?Number(o.collab):(e.stLibre||e.stConf||(team[0]&&team[0].id));
+  team.forEach(function(t){
+    h+='<div class="lxsm-col" style="height:'+H_+'px" data-st="'+t.id+'" onclick="lxSmClicPlanning(event,'+t.id+','+pl.a+','+K+')">';
+    for(var m=pl.a+60;m<pl.b;m+=60) h+='<div style="position:absolute;left:0;right:0;top:'+((m-pl.a)*K)+'px;border-top:1px dashed rgba(255,255,255,.05)"></div>';
+    try{ (getBlockedSlots(t.id,date)||[]).forEach(function(b){ var a=Math.max(_lxSmMin(b.from),pl.a), z=Math.min(_lxSmMin(b.to),pl.b); if(z>a) h+='<div class="lxsm-b bloc" style="top:'+((a-pl.a)*K)+'px;height:'+((z-a)*K)+'px">'+_lxSmE(b.label||"")+'</div>'; }); }catch(_){}
+    // contre-audit 30/10 (h) : plus de libellés superposés — ce qui chevauche l'option proposée passe dans la moitié gauche de la
+    // colonne, l'option dans la moitié droite ; texte réduit à une ligne (ou à une info-bulle) quand le bloc est trop court.
+    var oDeb=(t.id===stOpt&&c.duree)?_lxSmMin(o.heure):null, oFin=oDeb!=null?oDeb+c.duree:null, oChev=false;
+    var lane=function(deb,fin){ if(oDeb==null||!(deb<oFin&&fin>oDeb)) return ''; oChev=true; return 'right:50%;'; };
+    var txt=function(hp,l1,l2){ return hp<14?'':(hp<26||!l2?'<b>'+l1+'</b>':'<b>'+l1+'</b><br>'+l2); };
+    if(c.duree) _lxSmLibresCol(date,t.id,pl,c.duree).forEach(function(z){ var hp=(z[1]-z[0])*K-4; h+='<div class="lxsm-b lib" style="top:'+((z[0]-pl.a)*K+2)+'px;height:'+hp+'px">'+(hp>=14?'Libre':'')+'</div>'; });
+    _lxSmBlocsJour(date,t.id).forEach(function(b){ var hp=Math.max(4,(b.fin-b.deb)*K); h+='<div class="lxsm-b '+(b.pose?'pose':'rdv')+'" title="'+_lxAttr((b.label||"")+(b.plage?" "+b.plage:""))+'" style="top:'+((b.deb-pl.a)*K)+'px;height:'+hp+'px;'+lane(b.deb,b.fin)+'">'+(b.label?txt(hp,_lxSmE(b.label),_lxSmE(b.plage)):'')+'</div>'; });
+    // autres options du même jour (repère)
+    s.opts.forEach(function(x,i){ if(i===s.i||x.date!==date) return; var cx=_lxSmCalc(x), st=x.collab?Number(x.collab):null; if(st!==t.id||!cx.duree) return; var dm=_lxSmMin(x.heure), hp=cx.duree*K;
+      h+='<div class="lxsm-b autre" title="Option '+_lxSmLettre(i+1)+'" style="top:'+((dm-pl.a)*K)+'px;height:'+hp+'px;'+lane(dm,dm+cx.duree)+'">'+txt(hp,'Option '+_lxSmLettre(i+1))+'</div>'; });
+    // option en cours
+    if(t.id===stOpt && c.duree && _lxSmMin(o.heure)!=null){
+      var dm=_lxSmMin(o.heure), cur=dm, cote=oChev?'left:50%;':'', hpO=c.duree*K;
+      h+='<div class="lxsm-b opt" title="Option '+_lxSmLettre(s.i+1)+' '+_lxSmHM(dm)+' – '+_lxSmHM(dm+c.duree)+'" style="top:'+((dm-pl.a)*K)+'px;height:'+hpO+'px;background:#2a2416;'+cote+'">'+txt(hpO,'Option '+_lxSmLettre(s.i+1)+(oChev?'':' (proposée)')+(o.collab||oChev?'':' · pas de préférence'),_lxSmHM(dm)+' – '+_lxSmHM(dm+c.duree))+'</div>';
+      c.phases.forEach(function(p){ if(p.t==="p") h+='<div class="lxsm-b optp" style="top:'+((cur-pl.a)*K)+'px;height:'+(p.d*K)+'px;'+cote+'"></div>'; cur+=p.d; });
+      if(e.etat==="conflit" && e.stConf===t.id) (e.cf||[]).forEach(function(cf){ if(cf.overlapStart!=null) h+='<div class="lxsm-b cf" style="top:'+((cf.overlapStart-pl.a)*K)+'px;height:'+Math.max(10,(cf.overlapEnd-cf.overlapStart)*K)+'px"></div>'; });
+    }
+    h+='</div>';
+  });
+  h+='</div><div class="lxsm-leg"><span><i style="background:#2a2930;border:1px solid rgba(255,255,255,.2)"></i>RDV existant</span><span><i style="background:rgba(200,168,78,.35);border:1px solid #c8a84e"></i>Option proposée</span><span><i style="background:repeating-linear-gradient(135deg,rgba(255,255,255,.3) 0 3px,transparent 3px 6px)"></i>Temps de pose</span><span><i style="background:rgba(76,175,80,.3);border:1px solid rgba(76,175,80,.6)"></i>Libre'+(c.duree?' ('+_lxSmDuree(c.duree)+' et +)':'')+'</span></div>';
+  h+='<div style="font-size:12px;color:rgba(255,255,255,.4);margin-top:6px">Un clic dans une colonne place l’option à cette heure avec ce collaborateur.</div></div>';
+  return h;
+}
+function _lxSmPlanningMobile(o,e){
+  var s=window._lxSm, c=e.c, team=_lxSmCollabs(), date=o.date;
+  if(!team.length) return '';
+  if(s.agrandir) return '<div style="margin:8px 0">'+_lxSmPlanning(o,e)+'<div style="text-align:right"><a href="javascript:void 0" style="color:#e6c066;font-weight:800" onclick="lxSmAgrandir(false)">Réduire</a></div></div>';
+  var pl=_lxSmPlage(date,team,o,c), L=pl.b-pl.a, h='<div class="lxsm-card" style="padding:12px;margin:8px 0"><div style="display:flex;justify-content:space-between"><b>Planning du '+_lxSmE(_lxSmJour(date).split(" ").slice(0,2).join(" ").toLowerCase())+'</b><a href="javascript:void 0" style="color:#e6c066;font-weight:800" onclick="lxSmAgrandir(true)">Agrandir</a></div>';
+  h+='<div style="display:flex;margin:6px 0 2px 70px;font-size:11px;color:rgba(255,255,255,.45);justify-content:space-between">'; for(var m=pl.a;m<=pl.b;m+=120) h+='<span>'+(m/60)+'h</span>'; h+='</div>';
+  var stOpt=o.collab?Number(o.collab):(e.stLibre||e.stConf||(team[0]&&team[0].id));
+  team.forEach(function(t){
+    h+='<div style="display:flex;align-items:center;gap:6px;margin:6px 0"><div style="width:64px;font-weight:700;font-size:13px;overflow:hidden;text-overflow:ellipsis">'+_lxSmE(t.n)+'</div><div class="lxsm-band">';
+    _lxSmBlocsJour(date,t.id).forEach(function(b){ if(b.pose) return; h+='<div style="left:'+((b.deb-pl.a)/L*100)+'%;width:'+((b.fin-b.deb)/L*100)+'%;background:#3a3940"></div>'; });
+    if(t.id===stOpt&&c.duree&&_lxSmMin(o.heure)!=null){ var dm=_lxSmMin(o.heure); h+='<div style="left:'+((dm-pl.a)/L*100)+'%;width:'+(c.duree/L*100)+'%;background:rgba(200,168,78,.25);border:2px solid #c8a84e"></div>';
+      if(e.etat==="conflit"&&e.stConf===t.id) (e.cf||[]).forEach(function(cf){ if(cf.overlapStart!=null) h+='<div style="left:'+((cf.overlapStart-pl.a)/L*100)+'%;width:'+(Math.max(4,cf.overlapEnd-cf.overlapStart)/L*100)+'%;border:2px solid #ff6b5f;background:rgba(255,107,95,.2)"></div>'; }); }
+    h+='</div></div>';
+  });
+  if(e.etat==="conflit"){ h+='<div style="color:#ff7d70;font-weight:700;font-size:13px;margin-top:6px">'+_lxSmConflitTexte(e)+'</div>'; var lib=_lxSmLibres(o,2); if(lib.length){ h+='<div style="font-size:13px">Libres : '; lib.forEach(function(x){ h+='<button class="lxsm-pill" onclick="lxSmCreneau('+x.m+','+x.st+')">'+_lxSmHM(x.m)+' '+_lxSmE(x.n)+'</button>'; }); h+='</div>'; } }
+  return h+'</div>';
+}
+
+// ---- actions de la fenêtre
+function lxSmTab(i){ var s=window._lxSm; if(!s||!s.opts[i]) return; s.i=i; _lxSmRendre(); }
+function lxSmAjouter(){ var s=window._lxSm; if(!s||s.opts.length>=3) return; s.opts.push(_lxSmNouvelleOption(_lxSmO())); s.i=s.opts.length-1; _lxSmRendre(); }
+function lxSmDupliquer(){ var s=window._lxSm; if(!s) return; if(s.opts.length>=3){ if(typeof toast==="function") toast("3 options au maximum","warning"); return; } var c=JSON.parse(JSON.stringify(_lxSmO())); c.libelle=""; s.opts.push(c); s.i=s.opts.length-1; _lxSmRendre(); }
+function lxSmSupprimer(){ var s=window._lxSm; if(!s||s.opts.length<2) return; s.opts.splice(s.i,1); s.i=Math.max(0,s.i-1); _lxSmRendre(); }
+function lxSmChamp(k,v,sansRendu){
+  var o=_lxSmO(); if(!o) return;
+  if(k==="acOn") v=(v===true||v==="true");
+  o[k]=v;
+  if(k==="acMode") o.acVal=(v==="pct")?"30":String(Math.max(1,Math.round(_lxSmCalc(o).prix*0.3)));
+  if(sansRendu){
+    if(k==="acVal"){ var c=_lxSmCalc(o), a=document.getElementById("lxsmAc"), r=document.getElementById("lxsmReste"); if(a) a.textContent="= "+_lxSmEur(c.acompte); if(r) r.innerHTML=(c.acompte>c.prix?'<span style="color:#ff7d70">L’acompte dépasse le prix total.</span>':'Reste à régler au salon : '+_lxSmEur(c.reste)+'. Montant recalculé et vérifié par le serveur.'); }
+    return;
+  }
+  _lxSmRendre();
+}
+function lxSmItem(k){ var o=_lxSmO(); if(!o) return; var i=o.items.indexOf(k); if(i>=0) o.items.splice(i,1); else o.items.push(k); _lxSmRendre(); }
+function lxSmFamille(f){ var o=_lxSmO(); if(!o) return; o.fam=f||""; _lxSmRendre(); }
+function lxSmRecherche(q){ var o=_lxSmO(); if(!o) return; o.q=q; var l=document.getElementById("lxsmList"); if(l) l.innerHTML=_lxSmListeHtml(o); }
+function lxSmCreneau(m,st){ var o=_lxSmO(); if(!o) return; o.heure=_lxSmHM(m); if(st) o.collab=String(st); _lxSmRendre(); }
+function lxSmJour(delta){ var o=_lxSmO(); if(!o) return; var d=new Date(o.date+"T12:00:00"); d.setDate(d.getDate()+delta); var auj=_lxSmYmd(new Date()); var y=_lxSmYmd(d); if(y<auj) return; o.date=y; _lxSmRendre(); }
+function lxSmClicPlanning(ev,st,a,K){ try{ var r=ev.currentTarget.getBoundingClientRect(); var m=a+(ev.clientY-r.top)/K; var pas=(typeof SLOT!=="undefined"&&Number(SLOT)>0)?Number(SLOT):15; m=Math.round(m/pas)*pas; lxSmCreneau(m,st); }catch(_){} }
+function lxSmAgrandir(b){ var s=window._lxSm; if(!s) return; s.agrandir=!!b; _lxSmRendre(); }
+function lxSmExpire(h){ var s=window._lxSm; if(!s) return; s.exp=Number(h)||72; _lxSmRendre(); }
+function _lxSmClient(d){
+  var l=(typeof CL!=="undefined"&&Array.isArray(CL))?CL:[], tel=String(d.client_tel||"").replace(/\D/g,""), em=String(d.client_email||"").toLowerCase(), c=null;
+  for(var i=0;i<l.length&&!c;i++){ var x=l[i]; if(!x) continue; if((em&&String(x.email||"").toLowerCase()===em)||(tel.length>=9&&String(x.tel||x.telephone||"").replace(/\D/g,"").slice(-9)===tel.slice(-9))) c=x; }
+  if(!c) return null;
+  var v=(typeof AP!=="undefined"&&Array.isArray(AP))?AP.filter(function(a){ return a&&a.cId===c.id&&a.st==="done"&&!_lxIsContraTicketSafe(a); }).length:0;
+  return {id:c.id,visites:v};
+}
+function _lxIsContraTicketSafe(a){ try{ return typeof _lxIsContraTicket==="function"?_lxIsContraTicket(a):false; }catch(_){ return false; } }
+function lxSmFiche(){ var s=window._lxSm; if(!s) return; var c=_lxSmClient(s.d); if(!c) return; lxSmFermer(); try{ window._curClientId=c.id; if(typeof showClientDetail==="function") showClientDetail(c.id); else if(typeof openClient==="function") openClient(c.id); else { window.selC=c.id; go("detail"); } }catch(_){ } }
+
+// ---- envoi (edge rdv-demande-propose v6 : identifiants seulement, montants recalculés par le serveur)
+async function lxSmEnvoyer(forcer){
+  var s=window._lxSm; if(!s||s.envoi) return;
+  for(var i=0;i<s.opts.length;i++){ var o=s.opts[i], c=_lxSmCalc(o);
+    if(!o.date||!o.heure||!c.items.length){ s.i=i; _lxSmRendre(); showAlert("Option "+_lxSmLettre(i+1)+" : choisissez la date, l’heure et au moins une prestation.","warning"); return; }
+    if(o.acOn&&_lxSmStripeOk()){ if(!(c.acompte>=1)){ s.i=i; _lxSmRendre(); showAlert("Option "+_lxSmLettre(i+1)+" : acompte d’au moins 1 €.","warning"); return; } if(c.acompte>c.prix){ s.i=i; _lxSmRendre(); showAlert("Option "+_lxSmLettre(i+1)+" : l’acompte dépasse le prix total.","warning"); return; } }
+  }
+  var options=s.opts.map(function(o,i){ var st=_lxSmStripeOk()&&o.acOn;
+    return {rang:i+1,libelle:String(o.libelle||"").trim()||null,date:o.date,heure:o.heure,collaborateur_id:o.collab?Number(o.collab):null,
+      items:o.items.map(function(k){ var p=k.split(":"); return {type:p[0],id:Number(p[1])}; }),
+      acompte_mode:st?(o.acMode==="montant"?"montant":"pct"):"aucun",acompte_valeur:st?Number(String(o.acVal).replace(",",".")):null,note:String(o.note||"").trim()||null}; });
+  s.envoi=true; _lxSmRendre();
+  try{
+    var ses=await _sb.auth.getSession(); var tok=ses&&ses.data&&ses.data.session?ses.data.session.access_token:null;
+    if(!tok){ s.envoi=false; _lxSmRendre(); showAlert("Session expirée, reconnectez-vous.","info"); return; }
+    var r=await fetch(SB_URL_GLOBAL+"/functions/v1/rdv-demande-propose",{method:"POST",headers:{"Content-Type":"application/json","apikey":SB_KEY_GLOBAL,"Authorization":"Bearer "+tok},
+      body:JSON.stringify({demande_id:s.d.id,options:options,expire_heures:s.exp,forcer:!!forcer})});
+    var j=await r.json().catch(function(){return {};});
+    s.envoi=false;
+    if(r.status===409&&j.conflit){
+      _lxSmRendre();
+      var t=(j.conflits||[]).map(function(x){ return "Option "+_lxSmLettre(x.rang)+" : "+(x.raison||"créneau pris"); }).join("\n");
+      showConfirm("Un créneau n’est plus libre :\n"+t+"\n\nEnvoyer quand même ? (le créneau sera revérifié quand le client choisira)",function(){ lxSmEnvoyer(true); });
+      return;
+    }
+    if(!r.ok||!j.ok){ _lxSmRendre(); showAlert("Envoi impossible : "+(j.error||("erreur "+r.status)),"error"); return; }
+    try{ if(window._lxSmPrefill) delete window._lxSmPrefill[s.d.id]; }catch(_){}
+    var env=j.envoi||{}, msg=env.email==="envoye"?"E-mail envoyé au client.":(env.sms==="envoye"?"SMS envoyé au client.":"Le client n’a pas pu être prévenu automatiquement : envoyez-lui le lien ci-dessous.");
+    window._lxSm=null;
+    _lxSmResultat(j.proposal_url, msg, env.email!=="envoye"&&env.sms!=="envoye", s.d);
+    try{ await loadRdvDemandes(); }catch(_){}
+    if(window._currentPage==="home"&&typeof rHome==="function") try{ document.getElementById("app").innerHTML=rHome(); }catch(_){}
+  }catch(e){ s.envoi=false; _lxSmRendre(); showAlert("Erreur réseau : "+e.message,"error"); }
+}
+function _lxSmResultat(url, msg, insister, d){
+  var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="max-width:480px;text-align:center"><div style="font-size:42px">✨</div><h3 style="margin:6px 0">Proposition envoyée</h3><div style="color:var(--text2);font-size:14px;margin-bottom:12px">'+_lxSmE(msg)+'</div>';
+  h+='<input type="text" readonly value="'+_lxAttr(url)+'" onclick="this.select()" style="width:100%;padding:10px;border-radius:8px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.15);color:#fff;font-size:12px">';
+  h+='<div style="display:flex;gap:8px;margin-top:12px"><button class="btn bs" style="flex:1" onclick="try{navigator.clipboard.writeText(\''+_lxAttr(url)+'\');toast(\'Lien copié\',\'success\')}catch(e){}">Copier le lien</button>';
+  if(insister&&d&&d.client_tel) h+='<a class="btn bs" style="flex:1;text-decoration:none" href="sms:'+_lxAttr(String(d.client_tel).replace(/\s/g,""))+'?body='+encodeURIComponent("Votre proposition de rendez-vous : "+url)+'">Envoyer par SMS</a>';
+  h+='<button class="btn bg bs" style="flex:1" onclick="cM()">Fermer</button></div></div></div>';
+  document.getElementById("modal").innerHTML=h;
+}
+
+// ---- suivi d'une proposition au nouveau format (envoyée, choisie, payée, refusée, expirée…)
+var LX_SM_STATUTS={pending:{c:"#fbbf24",t:"⏳ En attente de votre proposition"},proposed:{c:"#60a5fa",t:"✉️ Proposition envoyée"},confirmed:{c:"#4ade80",t:"✅ Confirmée"},refused:{c:"#f87171",t:"❌ Refusée par le client"},expired:{c:"#9ca3af",t:"⌛ Expirée"},cancelled_by_salon:{c:"#9ca3af",t:"🚫 Annulée par vous"}};
+var LX_SM_OPT_ST={proposee:["Proposée","lxsm-gr"],choisie:["Choisie ✓","lxsm-ok"],liberee:["Libérée","lxsm-gr"],creneau_pris:["Créneau pris","lxsm-ko"],remplacee:["Remplacée","lxsm-gr"]};
+function _lxSmOptsDe(d){ var all=(window.RDV_DEMANDE_OPTIONS&&window.RDV_DEMANDE_OPTIONS[d.id])||[]; return all.filter(function(o){ return Number(o.envoi)===Number(d.envoi||1); }).sort(function(a,b){return a.rang-b.rang;}); }
+function _lxSmPaiementsDe(d){ return (window.RDV_DEMANDE_PAIEMENTS&&window.RDV_DEMANDE_PAIEMENTS[d.id])||[]; }
+function lxSmResume(d){
+  if(Number(d.proposal_version)!==2) return null;
+  var opts=_lxSmOptsDe(d), ch=opts.filter(function(o){return o.id===d.option_choisie_id;})[0], pay=_lxSmPaiementsDe(d).filter(function(p){return p.statut==="confirme";})[0];
+  if(d.status==="confirmed"&&ch) return "Option "+_lxSmLettre(ch.rang)+" choisie · "+(Number(ch.acompte_montant)>0?(pay?"acompte "+_lxSmEur(pay.montant)+" payé":"acompte à régler au salon"):"sans acompte");
+  if(d.status==="proposed"){ var t=opts.length+" option"+(opts.length>1?"s":"")+" · "+(d.vue_at?"vue par le client":"pas encore vue");
+    if(d.checkout_expires_at&&new Date(d.checkout_expires_at)>new Date()){ var co=opts.filter(function(o){return o.id===d.checkout_option_id;})[0]; t+=" · paiement en cours"+(co?" (option "+_lxSmLettre(co.rang)+")":""); }
+    if(d.proposal_expires_at) t+=" · expire le "+new Date(d.proposal_expires_at).toLocaleString("fr-FR",{dateStyle:"short",timeStyle:"short"});
+    return t; }
+  return opts.length+" option"+(opts.length>1?"s":"")+" proposée"+(opts.length>1?"s":"");
+}
+function lxSmSuivi(d){
+  _lxSmCssOk();
+  var st=LX_SM_STATUTS[d.status]||LX_SM_STATUTS.pending, opts=_lxSmOptsDe(d), pays=_lxSmPaiementsDe(d);
+  var nom=((d.client_prenom||"")+" "+(d.client_nom||"")).trim()||"Client";
+  var h='<div class="lxsm-bg" onclick="if(event.target===this)cM()"><div class="lxsm" style="max-width:760px" onclick="event.stopPropagation()"><div class="lxsm-in">';
+  h+='<button class="lxsm-x" onclick="cM()">✕</button><h2 style="font-size:24px">Demande sur mesure</h2>';
+  h+='<div style="margin:8px 0;display:inline-block;border-radius:8px;padding:6px 12px;font-weight:800;font-size:13px;color:'+st.c+';background:rgba(255,255,255,.05);border:1px solid '+st.c+'55">'+st.t+'</div>';
+  h+='<div class="lxsm-card" style="margin:10px 0"><div style="font-weight:800;font-size:16px">'+_lxSmE(nom)+'</div><div style="font-size:13px;color:rgba(255,255,255,.6)">'+_lxSmE(d.client_tel||"")+(d.client_email?' · '+_lxSmE(d.client_email):'')+'</div><div style="margin-top:8px">« '+_lxSmE(d.demande_text||"")+' »</div></div>';
+  var info=lxSmResume(d); if(info) h+='<div style="color:rgba(255,255,255,.7);margin-bottom:10px">'+_lxSmE(info)+'</div>';
+  opts.forEach(function(o){ var so=LX_SM_OPT_ST[o.statut]||[o.statut,"lxsm-gr"];
+    h+='<div class="lxsm-opt'+(o.statut==="choisie"?' ch':'')+'"><div style="display:flex;justify-content:space-between;gap:10px"><div><div style="font-size:11px;color:#e6c066;font-weight:800;letter-spacing:1px">OPTION '+_lxSmLettre(o.rang)+'</div><div style="font-weight:800;font-size:16px">'+_lxSmE(o.libelle)+'</div>';
+    h+='<div style="font-size:13px;color:rgba(255,255,255,.65)">'+_lxSmE(_lxSmJour(o.date_rdv))+' à '+_lxSmE(String(o.heure_rdv).slice(0,5))+' · '+_lxSmDuree(o.duree_minutes)+(o.collaborateur_nom?' avec '+_lxSmE(o.collaborateur_nom):' · pas de préférence')+'</div>';
+    h+='<div style="font-size:13px;margin-top:3px">'+(Number(o.acompte_montant)>0?'Acompte '+_lxSmEur(o.acompte_montant)+' en ligne':'Sans acompte')+(o.avertissement?' · <span style="color:#ffb74d">'+_lxSmE(o.avertissement)+'</span>':'')+'</div>';
+    if(o.note) h+='<div style="font-size:13px;color:rgba(255,255,255,.55);font-style:italic;margin-top:3px">« '+_lxSmE(o.note)+' »</div>';
+    h+='</div><div style="text-align:right"><div style="font-weight:800;color:#e6c066;font-size:17px">'+_lxSmEur(o.prix_total)+'</div><span class="lxsm-chip '+so[1]+'">'+so[0]+'</span></div></div></div>'; });
+  pays.forEach(function(p){ if(p.statut==="confirme") return; h+='<div style="font-size:13px;color:#ffb74d;margin:6px 0">⚠️ Paiement en trop de '+_lxSmEur(p.montant)+' : '+(p.statut==="rembourse"?'remboursé automatiquement au client':'remboursement à faire dans Stripe')+'.</div>'; });
+  if(d.refuse_reason&&d.status==="refused") h+='<div style="background:rgba(248,113,113,.08);border-left:3px solid #f87171;padding:10px;border-radius:6px;font-size:13px;margin:10px 0"><b>Message du client :</b> '+_lxSmE(d.refuse_reason)+'</div>';
+  h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">';
+  if(d.status==="proposed"){
+    var url="https://luxyra.fr/proposal.html?t="+(d.proposal_token||"");
+    h+='<button class="lxsm-btn" onclick="try{navigator.clipboard.writeText(\''+_lxAttr(url)+'\');toast(\'Lien copié\',\'success\')}catch(e){}">Copier le lien</button>';
+    h+='<button class="lxsm-btn" onclick="lxSmAction(\''+d.id+'\',\'reproposer\')">🕒 Proposer un autre horaire</button>';
+    h+='<button class="lxsm-btn" style="color:#f87171;border-color:rgba(248,113,113,.4)" onclick="lxSmAction(\''+d.id+'\',\'annuler\')">Annuler la proposition</button>';
+  }
+  if(d.status==="confirmed"&&d.rdv_online_id) h+='<button class="lxsm-btn go" onclick="lxSmVoirRdv(\''+d.rdv_online_id+'\')">Voir le rendez-vous</button>';
+  if(d.status==="refused"||d.status==="expired") h+='<button class="lxsm-btn go" onclick="lxSmAction(\''+d.id+'\',\'nouvelle\')">Faire une nouvelle proposition</button>';
+  h+='<button class="lxsm-btn" onclick="cM()">Fermer</button></div></div></div></div>';
+  document.getElementById("modal").innerHTML=h;
+}
+function lxSmVoirRdv(rid){ cM(); var a=null; (AP||[]).forEach(function(x){ if(x&&(x.onlineId===rid||x.id==="online_"+rid)) a=x; }); if(a&&typeof lxOuvrirRdv==="function") lxOuvrirRdv(a.id); else go("planning"); }
+// options d'un envoi précédent -> options de la fenêtre (dates passées remplacées par demain ; prestations supprimées retirées)
+function _lxSmPrefillDe(d){
+  var dem=new Date(); dem.setDate(dem.getDate()+1); var auj=_lxSmYmd(new Date());
+  return _lxSmOptsDe(d).map(function(o){ var dt=String(o.date_rdv||""); return {libelle:o.libelle||"",date:(dt&&dt>auj)?dt:_lxSmYmd(dem),heure:String(o.heure_rdv||"10:00").slice(0,5),collab:o.collaborateur_id?String(o.collaborateur_id):"",
+    items:(o.items||[]).map(function(i){return i.type+":"+i.id;}).filter(function(k){ return !!_lxSmItem(k); }),acOn:o.acompte_mode!=="aucun",acMode:o.acompte_mode==="montant"?"montant":"pct",acVal:String(o.acompte_valeur||"30"),note:o.note||""}; });
+}
+// Annuler / proposer un autre horaire : par le worker (expire la session de paiement en cours) ; repli : mise à jour directe
+function lxSmAction(id, op){
+  var d=getDemande(id); if(!d) return;
+  // contre-audit 30/10 (f) : après un refus ou une expiration, nouvelle proposition (nouveau lien ; l'ancien ne vaut plus rien)
+  if(op==="nouvelle"){ window._lxSmPrefill=window._lxSmPrefill||{}; window._lxSmPrefill[id]=_lxSmPrefillDe(d); cM(); lxSmOuvrir(d); return; }
+  var q=op==="annuler"?"Annuler cette proposition ? Le client ne pourra plus choisir ni payer.":"Préparer une nouvelle proposition ? L’actuelle ne pourra plus être choisie ni payée.";
+  showConfirm(q, async function(){
+    try{
+      var ses=await _sb.auth.getSession(); var tok=ses&&ses.data&&ses.data.session?ses.data.session.access_token:null;
+      var r=await fetch("/api/rdv-demande/salon-action",{method:"POST",headers:Object.assign({"Content-Type":"application/json"},tok?{Authorization:"Bearer "+tok}:{}),body:JSON.stringify({demande_id:id,op:op})});
+      var j=await r.json().catch(function(){return {};});
+      if(!r.ok){ showAlert(j.error||("Action impossible ("+r.status+")"),"warning"); try{ await loadRdvDemandes(); }catch(_){} return; }
+      if(op==="reproposer"){ window._lxSmPrefill=window._lxSmPrefill||{}; window._lxSmPrefill[id]=_lxSmPrefillDe(d); }
+      if(typeof toast==="function") toast(op==="annuler"?"Proposition annulée":"Vous pouvez préparer la nouvelle proposition","success");
+      await loadRdvDemandes(); cM();
+      if(op==="reproposer") openDemande(id);
+      if(window._currentPage==="home") try{ document.getElementById("app").innerHTML=rHome(); }catch(_){}
+    }catch(e){ showAlert("Erreur réseau : "+e.message,"error"); }
+  });
+}
+// ---- liste / suivi de toutes les demandes sur mesure
+function lxSmListe(){
+  _lxSmCssOk();
+  var l=(window.RDV_DEMANDES||[]).slice(), h='<div class="lxsm-bg" onclick="if(event.target===this)cM()"><div class="lxsm" style="max-width:820px" onclick="event.stopPropagation()"><div class="lxsm-in"><button class="lxsm-x" onclick="cM()">✕</button><h2 style="font-size:24px">✨ Demandes sur mesure</h2><div class="lxsm-sub">Demandes reçues de votre site et propositions envoyées (100 dernières)</div>';
+  if(!l.length) h+='<div style="padding:30px;text-align:center;color:rgba(255,255,255,.5)">Aucune demande pour le moment.</div>';
+  var ordre={pending:0,proposed:1,confirmed:2,refused:3,expired:4,cancelled_by_salon:5};
+  l.sort(function(a,b){ return (ordre[a.status]||9)-(ordre[b.status]||9) || String(b.created_at).localeCompare(String(a.created_at)); });
+  l.forEach(function(d){ var st=LX_SM_STATUTS[d.status]||LX_SM_STATUTS.pending, r=lxSmResume(d);
+    h+='<div class="lxsm-opt" style="cursor:pointer" onclick="cM();setTimeout(function(){openDemande(\''+d.id+'\')},60)"><div style="display:flex;justify-content:space-between;gap:10px"><div style="min-width:0"><div style="font-weight:800">'+_lxSmE(((d.client_prenom||"")+" "+(d.client_nom||"")).trim()||"Client")+'</div><div style="font-size:13px;color:rgba(255,255,255,.6);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">« '+_lxSmE(String(d.demande_text||"").slice(0,90))+' »</div>'+(r?'<div style="font-size:12px;color:rgba(255,255,255,.5)">'+_lxSmE(r)+'</div>':'')+'</div><div style="text-align:right;white-space:nowrap"><div style="font-size:12px;font-weight:800;color:'+st.c+'">'+st.t+'</div><div style="font-size:11px;color:rgba(255,255,255,.4)">'+new Date(d.created_at).toLocaleDateString("fr-FR")+'</div></div></div></div>'; });
+  h+='</div></div></div>';
+  document.getElementById("modal").innerHTML=h;
+}
+
+
 function rHome(){
   var h='';
   var today=TD;
@@ -11481,11 +12054,15 @@ function rHome(){
   } }catch(_eP){}
   // === Bandeau "Demandes sur mesure en attente" ===
   var pendingDemandes = (window.RDV_DEMANDES||[]).filter(function(x){return x.status==="pending";});
-  if(pendingDemandes.length){
-    h+='<div style="background:linear-gradient(135deg,rgba(200,168,78,.18),rgba(200,168,78,.06));border:1.5px solid rgba(200,168,78,.4);border-radius:14px;padding:14px 16px;margin-bottom:12px;display:flex;align-items:center;gap:12px;cursor:pointer" onclick="openDemande(\''+pendingDemandes[0].id+'\')">';
+  var _smEnCours = (window.RDV_DEMANDES||[]).filter(function(x){return x.status==="proposed";}); // 2026-10-30 (sur mesure v2) : propositions en attente du client
+  if(pendingDemandes.length || _smEnCours.length){
+    var _smClic = pendingDemandes.length===1 && !_smEnCours.length ? 'openDemande(\''+pendingDemandes[0].id+'\')' : 'lxSmListe()';
+    h+='<div style="background:linear-gradient(135deg,rgba(200,168,78,.18),rgba(200,168,78,.06));border:1.5px solid rgba(200,168,78,.4);border-radius:14px;padding:14px 16px;margin-bottom:12px;display:flex;align-items:center;gap:12px;cursor:pointer" onclick="'+_smClic+'">';
     h+='<div style="font-size:32px">✨</div>';
-    h+='<div style="flex:1"><div style="font-weight:800;font-size:15px;color:var(--gold)">'+pendingDemandes.length+' demande'+(pendingDemandes.length>1?"s":"")+' sur mesure</div>';
-    h+='<div style="font-size:12px;color:var(--text2);margin-top:2px">'+(pendingDemandes[0].client_prenom||"")+" "+(pendingDemandes[0].client_nom||"")+" — "+(pendingDemandes[0].demande_text||"").slice(0,60)+(pendingDemandes[0].demande_text&&pendingDemandes[0].demande_text.length>60?"…":"")+'</div></div>';
+    h+='<div style="flex:1"><div style="font-weight:800;font-size:15px;color:var(--gold)">'+(pendingDemandes.length?pendingDemandes.length+' demande'+(pendingDemandes.length>1?"s":"")+' sur mesure à traiter':'Demandes sur mesure')+(_smEnCours.length?' · '+_smEnCours.length+' proposition'+(_smEnCours.length>1?"s":"")+' en attente du client':'')+'</div>';
+    if(pendingDemandes.length) h+='<div style="font-size:12px;color:var(--text2);margin-top:2px">'+_lxEsc((pendingDemandes[0].client_prenom||"")+" "+(pendingDemandes[0].client_nom||""))+" — "+_lxEsc((pendingDemandes[0].demande_text||"").slice(0,60))+(pendingDemandes[0].demande_text&&pendingDemandes[0].demande_text.length>60?"…":"")+'</div>';
+    else h+='<div style="font-size:12px;color:var(--text2);margin-top:2px">Voir le suivi : vue, choix du client, acompte payé</div>';
+    h+='</div>';
     h+='<div style="color:var(--gold);font-size:18px">›</div>';
     h+='</div>';
   }
