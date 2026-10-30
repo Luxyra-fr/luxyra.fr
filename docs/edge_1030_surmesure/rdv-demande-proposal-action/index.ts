@@ -4,6 +4,10 @@
 //   choose -> public.lx_demande_choisir  { option_id } : UNE option sans acompte en ligne -> RDV confirmé (verrou de la demande,
 //             créneau revérifié avec le verrou de la journée, autres options libérées) ; e-mail de confirmation par le worker
 //   refuse -> public.lx_demande_refuser  { reason } (message au salon)
+//   (contre-audit 30/10, a) : avant « choose » / « refuse », une session de paiement encore ouverte (client revenu de Stripe sans
+//   payer) est EXPIRÉE chez Stripe par le worker (/api/rdv-demande/liberer-paiement) ; si elle a été payée entre-temps, elle est
+//   finalisée (RDV + ticket) et le nouveau choix est refusé. Si Stripe ne répond pas, le choix passe quand même : un paiement
+//   tardif de l'ancienne session est alors remboursé automatiquement (jamais d'argent gardé sans RDV ni ticket).
 //   (option AVEC acompte : paiement par le worker /api/rdv-demande/connect-pay { token, option_id } — chemin d'encaissement existant)
 // Ancien format (proposal_version = 1) : code v13 STRICTEMENT inchangé ci-dessous.
 // v13 (avant) : docs/edge_1030_surmesure/avant/rdv-demande-proposal-action/index.ts
@@ -24,7 +28,7 @@ function json(s:number,b:unknown){return new Response(JSON.stringify(b),{status:
 
 { const _LX_FN="rdv-demande-proposal-action"; const _LX_URL=Deno.env.get("SB_URL")||Deno.env.get("SUPABASE_URL")||""; const _LX_SR=Deno.env.get("SB_SERVICE_ROLE")||Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")||""; const _lxReport=async(msg:string,sev:"warning"|"error"|"critical",err?:unknown,ctx?:Record<string,unknown>)=>{try{await fetch(_LX_URL+"/rest/v1/rpc/report_server_error",{method:"POST",headers:{"Content-Type":"application/json","apikey":_LX_SR,"Authorization":"Bearer "+_LX_SR},body:JSON.stringify({p_source:"edge_fn:"+_LX_FN,p_message:String(msg||"").slice(0,800),p_severity:sev,p_stack:(err as Error)?.stack?String((err as Error).stack).slice(0,3000):null,p_context:ctx||null})});}catch(_){}}; (globalThis as any).__lxReport=_lxReport; const _orig=Deno.serve; (Deno as any).serve=(handler:any,opts?:any)=>_orig(async(req:Request)=>{try{const res=await handler(req); if(res&&res.status>=500){const body=await res.clone().text().catch(()=>""); await _lxReport("HTTP "+res.status,"error",undefined,{url:req.url,body:body.slice(0,500)});} return res;}catch(e){const err=e as Error; await _lxReport("Exception non gérée: "+(err?.message||String(e)),"critical",err,{url:req.url}); return new Response(JSON.stringify({error:"Internal server error"}),{status:500,headers:{"Content-Type":"application/json"}});}}, opts); }
 
-async function loadByToken(token: string) { const { data, error } = await sb.from("rdv_demandes").select("id, salon_id, client_nom, client_prenom, client_tel, client_email, client_luxyra_id, status, proposed_data, proposal_expires_at, refused_at, confirmed_at, rdv_online_id, proposal_version").eq("proposal_token", token).single(); if (error || !data) return null; return data; }
+async function loadByToken(token: string) { const { data, error } = await sb.from("rdv_demandes").select("id, salon_id, client_nom, client_prenom, client_tel, client_email, client_luxyra_id, status, proposed_data, proposal_expires_at, refused_at, confirmed_at, rdv_online_id, proposal_version, checkout_session_id, checkout_expires_at").eq("proposal_token", token).single(); if (error || !data) return null; return data; }
 async function loadSalon(salon_id: string) { const { data: pub } = await sb.from("salons_public").select("id, nom, adresse, cp, ville, logo, stripe_connect_id, stripe_connect_status, metier").eq("id", salon_id).single(); if (!pub) return null; const { data: priv } = await sb.from("salons").select("tel").eq("id", salon_id).single(); return { ...pub, telephone: priv?.tel || null }; }
 
 // ---------------- v14 : nouveau format (options) ----------------
@@ -47,6 +51,15 @@ async function salonV2(salon_id: string) {
   const actif = !!(s.stripe_connect_id && ["active", "enabled", "payouts_pending"].includes(String(s.stripe_connect_status || "")));
   return { id: s.id, nom: s.nom, adresse: s.adresse, cp: s.cp, ville: s.ville, logo: s.logo, metier: s.metier, telephone: s.telephone, stripe_actif: actif };
 }
+// session de paiement ouverte -> expirée par le worker avant un nouveau choix / un refus ; { paye } si elle venait d'être payée
+async function libererPaiement(token: string, session_id?: string | null): Promise<{ ok: boolean; paye?: boolean; confirme?: boolean }> {
+  try {
+    const r = await fetch(WORKER + "/api/rdv-demande/liberer-paiement", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(session_id ? { token, session_id } : { token }) });
+    const j = await r.json().catch(() => ({}));
+    return { ok: r.ok && j.ok !== false, paye: !!j.paye, confirme: !!j.confirme };
+  } catch (_) { return { ok: false }; }
+}
+function paiementOuvert(dem: any) { return !!(dem && dem.checkout_session_id && dem.checkout_expires_at && new Date(dem.checkout_expires_at) > new Date()); }
 function refusMetier(r: { erreur?: string; code?: string }) {
   const code = String(r.code || "");
   if (/^LX_SM_/.test(code)) return json(code === "LX_SM_INTROUVABLE" ? 404 : 409, { error: r.erreur, code });
@@ -62,17 +75,27 @@ async function actionV2(dem: any, token: string, action: string, body: any): Pro
   if (action === "choose") {
     const option_id = String(body.option_id || "");
     if (!/^[0-9a-f-]{36}$/i.test(option_id)) return json(400, { error: "Choisissez une option" });
+    if (paiementOuvert(dem)) {
+      const l = await libererPaiement(token);
+      if (l.paye) return json(409, { error: l.confirme ? "Votre paiement vient d'être reçu : votre rendez-vous est confirmé." : "Un paiement vient d'être reçu sur cette proposition. Rechargez la page.", code: "deja_paye", deja_paye: true });
+    }
     const r = await rpc("lx_demande_choisir", { p_token: token, p_option: option_id });
     if (r.erreur !== undefined) { const m = refusMetier(r); if (m) return m; await (globalThis as any).__lxReport?.("lx_demande_choisir : " + r.erreur, "critical", undefined, { id: dem.id, option_id }); return json(500, { error: "Confirmation momentanément impossible, réessayez." }); }
     const d = r.data || {};
     if (d.ok !== true) return json(409, { error: d.error || "Choix impossible", code: d.code || "", creneau_pris: !!d.creneau_pris });
+    if (d.session_a_expirer) await libererPaiement(token, d.session_a_expirer); // filet si l'expiration préalable a échoué
     await notifier(dem.id, "confirmation");
     return json(200, { ok: true, rdv_online_id: d.rdv_online_id, option_id: d.option_id, acompte_au_salon: !!d.acompte_au_salon });
   }
   if (action === "refuse") {
+    if (paiementOuvert(dem)) {
+      const l = await libererPaiement(token);
+      if (l.paye) return json(409, { error: l.confirme ? "Votre paiement vient d'être reçu : votre rendez-vous est confirmé." : "Un paiement vient d'être reçu sur cette proposition. Rechargez la page.", code: "deja_paye", deja_paye: true });
+    }
     const r = await rpc("lx_demande_refuser", { p_token: token, p_raison: body.reason ? String(body.reason).slice(0, 500) : null });
     if (r.erreur !== undefined) { const m = refusMetier(r); if (m) return m; return json(500, { error: "Refus momentanément impossible, réessayez." }); }
     if (!r.data || r.data.ok !== true) return json(409, { error: (r.data && r.data.error) || "Cette proposition n'est plus active", code: r.data && r.data.code });
+    if (r.data.session_a_expirer) await libererPaiement(token, r.data.session_a_expirer);
     return json(200, { ok: true });
   }
   if (action === "confirm") return json(409, { error: "Cette proposition comporte plusieurs options : rechargez la page pour choisir.", code: "LX_SM_FORMAT" });

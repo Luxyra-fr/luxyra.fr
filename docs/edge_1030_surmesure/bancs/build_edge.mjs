@@ -6,4 +6,6 @@ const base = "/sessions/quirky-affectionate-hypatia/wt-surmesure/docs/edge_1030_
 for (const [f, out] of [["rdv-demande-propose", "edge_propose.mjs"], ["rdv-demande-proposal-action", "edge_action.mjs"], ["avant/rdv-demande-proposal-action", "edge_action_v13.mjs"]]) {
   await esbuild.build({ entryPoints: [base + f + "/index.ts"], bundle: true, format: "esm", platform: "node", outfile: "/tmp/sm/" + out, plugins: [plugin], logLevel: "error" });
 }
-console.log("edge bundles OK");
+// worker (même regroupement que wrangler) : /tmp/sm/worker_bundle.mjs
+await esbuild.build({ entryPoints: ["/sessions/quirky-affectionate-hypatia/wt-surmesure/docs/luxyra-router-worker.js"], bundle: true, format: "esm", platform: "node", outfile: "/tmp/sm/worker_bundle.mjs", logLevel: "error" });
+console.log("edge + worker bundles OK");

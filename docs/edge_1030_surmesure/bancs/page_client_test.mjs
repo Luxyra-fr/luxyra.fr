@@ -21,6 +21,7 @@ const monde = creerMonde(db);
 monde.worker = (await import("./worker_bundle.mjs?" + Math.random())).default;
 const propose = await chargerEdge("./edge_propose.mjs");
 const action = await chargerEdge("./edge_action.mjs");
+const action13 = await chargerEdge("./edge_action_v13.mjs");
 monde.jwts.set("jwt-A", { id: U });
 let k = 0;
 async function demande(email = "julie@exemple.test") {
@@ -131,8 +132,11 @@ const attendre = (pg, re, ms = 8000) => pg.waitForFunction((s) => new RegExp(s).
   await Promise.all([pg.waitForNavigation({ waitUntil: "domcontentloaded" }).catch(() => {}), pg.click("#v2go")]);
   await attendre(pg, /Option B sélectionnée/);
   ok("paiement abandonné : retour sur la proposition, option B toujours sélectionnée", /Option B sélectionnée/.test(await txt(pg)), (await txt(pg)).slice(-300));
-  // la session abandonnée est encore « ouverte » côté base : on la fait expirer (comme Stripe au bout de 30 min)
-  await db.query(`update rdv_demandes set checkout_expires_at = now() - interval '1 minute' where id=$1`, [p.id]);
+  // contre-audit (a) : au retour, la page fait expirer la session abandonnée chez Stripe ; le paiement en cours est effacé
+  await new Promise((r) => setTimeout(r, 500));
+  const dd = (await db.query(`select checkout_session_id from rdv_demandes where id=$1`, [p.id])).rows[0];
+  const sAb = [...monde.stripe.sessions.values()].filter((x) => x.metadata && x.metadata.proposal_token === p.token).pop();
+  ok("a : retour « annuler » depuis Stripe : session expirée chez Stripe tout de suite, plus de paiement en cours", dd.checkout_session_id === null && sAb && sAb.status === "expired", { dd, st: sAb && sAb.status });
   // un autre client prend le créneau de A
   await db.query(`insert into appointments(id, salon_id, collab_id, date_rdv, heure, a_phases, status) values (gen_random_uuid(),$1,$2,$3,'16:00','[{"t":"w","d":30}]','conf')`, [S, C1, p.options[0].date_rdv]);
   await pg.evaluate((id) => v2Choisir(id), p.options[0].id);
@@ -168,6 +172,35 @@ const attendre = (pg, re, ms = 8000) => pg.waitForFunction((s) => new RegExp(s).
   await pg.evaluate(() => confirmFree());
   ok("ancien format : confirmation d'origine", await attendre(pg, /RDV confirme/));
   ok("aucune erreur JavaScript (refus / expirée / ancien format)", pg.errors.length === 0, pg.errors);
+  await pg.close();
+}
+// 5) contre-audit : clavier (i), liens « Refuser » avec adresse, compatibilité de déploiement (page v2 + fonction serveur v13)
+{
+  const p = await proposer([A({ heure: "09:00" }), B({ heure: "14:00" })]);
+  const pg = await page();
+  await pg.goto("https://luxyra.fr/proposal.html?t=" + p.token, { waitUntil: "domcontentloaded" });
+  await attendre(pg, /Option B/);
+  const r0 = await pg.evaluate(() => ({ grp: !!document.querySelector('[role="radiogroup"]'), radios: document.querySelectorAll('.v2opt[role="radio"][tabindex="0"]').length,
+    liens: [...document.querySelectorAll('a')].filter((a) => /Refuser/.test(a.innerText)).map((a) => a.getAttribute("href")) }));
+  await pg.focus('.v2opt[tabindex="0"]'); await pg.keyboard.press("ArrowRight"); await pg.keyboard.press("Enter");
+  const sel = await pg.evaluate(() => ({ sel: V2.sel, act: document.activeElement && document.activeElement.getAttribute("data-id"), aria: [...document.querySelectorAll('.v2opt')].map((e) => e.getAttribute("aria-checked")) }));
+  ok("i : cartes d'options = groupe de boutons radio, sélection au clavier (flèche + Entrée)", r0.grp && r0.radios === 2 && sel.sel === p.options[1].id && sel.act === p.options[1].id && sel.aria[1] === "true", { r0, sel });
+  ok("i : liens « Refuser » avec adresse (href) et rôle bouton", r0.liens.length >= 1 && r0.liens.every((h) => h && h.length > 1), r0.liens);
+  await pg.evaluate(() => { const a = [...document.querySelectorAll('a')].find((x) => /Refuser et écrire/.test(x.innerText)); a.click(); });
+  ok("i : lien « Refuser » ouvre la fenêtre de refus", await pg.evaluate(() => !!document.getElementById("refuseModal")));
+  // fonction serveur de l'ANCIEN format (v13) face à une proposition v2 (pendant un déploiement / retour arrière) : message, aucun bouton
+  const p1 = await proposer([A({ heure: "11:00" }), B({ heure: "15:00" })]);
+  pg.v13 = action13;
+  await pg.goto("https://luxyra.fr/proposal.html?t=" + p1.token, { waitUntil: "domcontentloaded" });
+  ok("compat : page v2 + fonction serveur v13 sur une proposition v2 -> « momentanément indisponible », aucun bouton", await attendre(pg, /momentanément indisponible/) && (await pg.evaluate(() => document.querySelectorAll("#root button").length)) === 0, await txt(pg));
+  // page v2 + fonction v13 sur une proposition de l'ancien format : affichage d'origine
+  const id3 = await demande(), tok = "v1v1v1v1v1v1v1v1v1v1v1v1v1v1v1v2";
+  await db.query(`update rdv_demandes set status='proposed', proposal_token=$2, proposal_expires_at=now()+interval '72 hours', proposed_at=now(), proposed_data=$3 where id=$1`, [id3, tok,
+    JSON.stringify({ date: jour(61), heure: "10:00", collaborateur_id: C2, collaborateur_nom: "Manue", items: [{ service_id: 9001, nom: "COUPE BRUSHING COURT", prix: 30, duree: 30 }], prix_total: 30, duree_minutes: 30, acompte_montant: 0 })]);
+  await pg.goto("https://luxyra.fr/proposal.html?t=" + tok, { waitUntil: "domcontentloaded" });
+  ok("compat : page v2 + fonction serveur v13 sur l'ancien format : page d'origine", await attendre(pg, /vous propose un rendez-vous personnalise/));
+  pg.v13 = null;
+  ok("aucune erreur JavaScript (clavier / compatibilité)", pg.errors.length === 0, pg.errors);
   await pg.close();
 }
 await b.close();

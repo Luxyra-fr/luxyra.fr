@@ -413,12 +413,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261030-2"></script>
+<script src="luxyra-supabase.js?v=20261030-3"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261030-2";
+  var attendu="20261030-3";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -11563,9 +11563,12 @@ function _lxSmCalc(o){
   items.forEach(function(it){ ph=ph.concat(it.phases); d+=it.duree; p+=it.pose; prix+=it.prix; });
   prix=Math.round(prix*100)/100;
   var ac=0;
-  if(o.acOn){ var v=Number(String(o.acVal||"").replace(",",".")); if(v>0){ ac=o.acMode==="pct"?Math.round(prix*Math.min(v,100))/100:Math.round(v*100)/100; } }
+  if(o.acOn){ var vc=_lxSmCentimes(o.acVal); if(vc>0){ var pc=Math.round(prix*100); ac=(o.acMode==="pct"?Math.floor(pc*Math.min(vc,10000)/10000):vc)/100; } }
   return {items:items,phases:ph,duree:d,pose:p,prix:prix,acompte:ac,reste:Math.round((prix-ac)*100)/100,fin:(_lxSmMin(o.heure)||0)+d};
 }
+// contre-audit 30/10 (e) : MÊME règle que le serveur (lx_prive.sm_centimes_inf) : valeur saisie tronquée au centime, acompte en %
+// = prix × % tronqué au centime inférieur ; calcul en centimes entiers (aucune erreur d'arrondi des nombres à virgule).
+function _lxSmCentimes(v){ var m=/^\s*(\d{1,9})(?:[.,](\d*))?\s*$/.exec(String(v==null?"":v)); if(!m) return 0; var dec=((m[2]||"")+"00").slice(0,2); return Number(m[1])*100+Number(dec); }
 function _lxSmCollabs(){ try{ return (typeof getActiveTeam==="function")?getActiveTeam():[]; }catch(_){ return []; } }
 function _lxSmNomCollab(id){ var t=(id!=null&&typeof gT==="function")?gT(Number(id)):null; return t?(t.n||""):""; }
 
@@ -11623,6 +11626,12 @@ function _lxSmNouvelleOption(prec){
 // Ouverture de la fenêtre pour une demande « pending » (pré-remplie si l'établissement « propose un autre horaire »)
 function lxSmOuvrir(d){
   _lxSmCssOk();
+  // contre-audit 30/10 (j) : offre Essentiel (ou essai Pro terminé) -> message clair au lieu d'un refus incompréhensible à l'envoi
+  if(typeof isPro==="function" && !isPro()){
+    var _tel=d&&d.client_tel?" Vous pouvez appeler le client ("+d.client_tel+") et créer le rendez-vous dans le planning.":" Vous pouvez appeler le client et créer le rendez-vous dans le planning.";
+    showAlert("Offre Pro requise : répondre à une demande sur mesure nécessite l’offre Pro (réservation en ligne)."+_tel,"info");
+    return;
+  }
   var pre=(window._lxSmPrefill&&window._lxSmPrefill[d.id])||null;
   var opts=pre&&pre.length?pre.map(function(x){ return Object.assign(_lxSmNouvelleOption(),x); }):[_lxSmNouvelleOption()];
   window._lxSm={d:d,opts:opts,i:0,exp:72,envoi:false,planJour:null,agrandir:false};
@@ -11640,13 +11649,14 @@ function _lxSmRendre(){
   var cli=null; try{ cli=_lxSmClient(d); }catch(_){}
   var h='<div class="lxsm-bg" onclick="if(event.target===this)lxSmFermer()"><div class="lxsm" onclick="event.stopPropagation()" data-lxsm="1"><div class="lxsm-in">';
   h+='<button class="lxsm-x" onclick="lxSmFermer()" title="Fermer">✕</button>';
-  h+='<h2>Répondre à la demande<span class="lxsm-badge">En attente de votre proposition</span></h2>';
+  h+='<h2>Répondre à la demande<span class="lxsm-badge">'+(d.status==="refused"?'Nouvelle proposition après refus':d.status==="expired"?'Nouvelle proposition après expiration':'En attente de votre proposition')+'</span></h2>';
   h+='<div class="lxsm-sub">Demande sur mesure reçue le '+_lxSmE(recuTxt)+' · via votre site</div>';
   // client + demande
   h+='<div class="lxsm-card lxsm-client"><div class="lxsm-av">'+_lxSmE(ini)+'</div><div style="flex:1;min-width:0">';
   h+='<div style="font-size:18px;font-weight:800">'+_lxSmE(nom)+' <span style="font-size:13px;font-weight:400;color:rgba(255,255,255,.5)">'+(d.client_luxyra_id?'compte Luxyra':'')+(cli&&cli.visites?' · '+cli.visites+' visite'+(cli.visites>1?'s':''):'')+'</span></div>';
   h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-top:8px"><div><div class="lxsm-lbl">Sa demande</div><div style="font-weight:700;font-size:15px;white-space:pre-wrap">« '+_lxSmE(d.demande_text||"")+' »</div></div>';
   if(d.dispo_text) h+='<div><div class="lxsm-lbl">Ses disponibilités</div><div style="font-size:15px;white-space:pre-wrap">'+_lxSmE(d.dispo_text)+'</div></div>';
+  if(d.status==="refused"&&d.refuse_reason) h+='<div><div class="lxsm-lbl">Son message (refus)</div><div style="font-size:15px;white-space:pre-wrap;color:#ffb3ab">'+_lxSmE(d.refuse_reason)+'</div></div>';
   h+='</div></div><div class="lxsm-cbtn" style="display:flex;gap:8px;flex-wrap:wrap">';
   if(d.client_tel) h+='<a class="lxsm-btn" style="text-decoration:none;padding:10px 16px" href="tel:'+_lxSmE(String(d.client_tel).replace(/\s/g,""))+'">Appeler</a>';
   if(cli&&cli.id) h+='<button class="lxsm-btn" style="padding:10px 16px" onclick="lxSmFiche()">Fiche</button>';
@@ -11745,7 +11755,7 @@ function _lxSmListeHtml(o){
     if(q && x.nom.toLowerCase().indexOf(q)<0) return;
     n++;
     var on=!!sel[x.k];
-    h+='<div class="lxsm-it'+(on?' on':'')+(x.devis?' dis':'')+'" data-k="'+_lxAttr(x.k)+'" onclick="'+(x.devis?'':'lxSmItem(this.getAttribute(\'data-k\'))')+'"><div class="lxsm-cb">'+(on?'✓':'')+'</div><div style="min-width:0"><div class="n">'+_lxSmE(x.nom)+(x.type==="forfait"?' <span class="lxsm-chip lxsm-gr">forfait</span>':'')+'</div><div class="d">'+_lxSmDuree(x.duree)+(x.pose?' · dont '+_lxSmDuree(x.pose)+' de pose':'')+'</div></div><div class="p">'+(x.devis?'Sur devis':(x.apartir?'à partir de ':'')+_lxSmEur(x.prix))+'</div></div>';
+    h+='<div class="lxsm-it'+(on?' on':'')+(x.devis?' dis':'')+'" role="checkbox" aria-checked="'+(on?'true':'false')+'"'+(x.devis?' aria-disabled="true"':' tabindex="0"')+' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();this.click();}" data-k="'+_lxAttr(x.k)+'" onclick="'+(x.devis?'':'lxSmItem(this.getAttribute(\'data-k\'))')+'"><div class="lxsm-cb">'+(on?'✓':'')+'</div><div style="min-width:0"><div class="n">'+_lxSmE(x.nom)+(x.type==="forfait"?' <span class="lxsm-chip lxsm-gr">forfait</span>':'')+'</div><div class="d">'+_lxSmDuree(x.duree)+(x.pose?' · dont '+_lxSmDuree(x.pose)+' de pose':'')+'</div></div><div class="p">'+(x.devis?'Sur devis':(x.apartir?'à partir de ':'')+_lxSmEur(x.prix))+'</div></div>';
   });
   return n?h:'<div style="padding:16px;text-align:center;color:rgba(255,255,255,.45)">Aucune prestation trouvée</div>';
 }
@@ -11770,6 +11780,8 @@ function _lxSmPlage(date, team, o, c){
   team.forEach(function(t){ var h=(typeof getEffectiveHrs==="function")?getEffectiveHrs(date,t.id):null; if(h&&h.o&&h.c){ a=Math.min(a,_lxSmMin(h.o)); b=Math.max(b,_lxSmMin(h.c)); } });
   if(a>=b){ var hs=(typeof H!=="undefined"&&H)?H[new Date(date+"T12:00:00").getDay()]:null; if(hs&&hs.o){ a=_lxSmMin(hs.o); b=_lxSmMin(hs.c); } else { a=9*60; b=19*60; } }
   var dm=_lxSmMin(o.heure); if(dm!=null&&o.date===date){ a=Math.min(a,dm); b=Math.max(b,dm+c.duree); }
+  // contre-audit 30/10 (h) : un RDV qui déborde des horaires reste dans le cadre (plus de chevauchement avec la légende)
+  team.forEach(function(t){ _lxSmBlocsJour(date,t.id).forEach(function(x){ a=Math.min(a,x.deb); b=Math.max(b,x.fin); }); });
   return {a:Math.floor(a/60)*60,b:Math.ceil(b/60)*60};
 }
 function _lxSmLibresCol(date, stId, plage, duree){
@@ -11801,16 +11813,21 @@ function _lxSmPlanning(o,e){
     h+='<div class="lxsm-col" style="height:'+H_+'px" data-st="'+t.id+'" onclick="lxSmClicPlanning(event,'+t.id+','+pl.a+','+K+')">';
     for(var m=pl.a+60;m<pl.b;m+=60) h+='<div style="position:absolute;left:0;right:0;top:'+((m-pl.a)*K)+'px;border-top:1px dashed rgba(255,255,255,.05)"></div>';
     try{ (getBlockedSlots(t.id,date)||[]).forEach(function(b){ var a=Math.max(_lxSmMin(b.from),pl.a), z=Math.min(_lxSmMin(b.to),pl.b); if(z>a) h+='<div class="lxsm-b bloc" style="top:'+((a-pl.a)*K)+'px;height:'+((z-a)*K)+'px">'+_lxSmE(b.label||"")+'</div>'; }); }catch(_){}
-    if(c.duree) _lxSmLibresCol(date,t.id,pl,c.duree).forEach(function(z){ h+='<div class="lxsm-b lib" style="top:'+((z[0]-pl.a)*K+2)+'px;height:'+((z[1]-z[0])*K-4)+'px">Libre</div>'; });
-    _lxSmBlocsJour(date,t.id).forEach(function(b){ h+='<div class="lxsm-b '+(b.pose?'pose':'rdv')+'" style="top:'+((b.deb-pl.a)*K)+'px;height:'+Math.max(4,(b.fin-b.deb)*K)+'px">'+(b.label?'<b>'+_lxSmE(b.label)+'</b><br>'+_lxSmE(b.plage):'')+'</div>'; });
+    // contre-audit 30/10 (h) : plus de libellés superposés — ce qui chevauche l'option proposée passe dans la moitié gauche de la
+    // colonne, l'option dans la moitié droite ; texte réduit à une ligne (ou à une info-bulle) quand le bloc est trop court.
+    var oDeb=(t.id===stOpt&&c.duree)?_lxSmMin(o.heure):null, oFin=oDeb!=null?oDeb+c.duree:null, oChev=false;
+    var lane=function(deb,fin){ if(oDeb==null||!(deb<oFin&&fin>oDeb)) return ''; oChev=true; return 'right:50%;'; };
+    var txt=function(hp,l1,l2){ return hp<14?'':(hp<26||!l2?'<b>'+l1+'</b>':'<b>'+l1+'</b><br>'+l2); };
+    if(c.duree) _lxSmLibresCol(date,t.id,pl,c.duree).forEach(function(z){ var hp=(z[1]-z[0])*K-4; h+='<div class="lxsm-b lib" style="top:'+((z[0]-pl.a)*K+2)+'px;height:'+hp+'px">'+(hp>=14?'Libre':'')+'</div>'; });
+    _lxSmBlocsJour(date,t.id).forEach(function(b){ var hp=Math.max(4,(b.fin-b.deb)*K); h+='<div class="lxsm-b '+(b.pose?'pose':'rdv')+'" title="'+_lxAttr((b.label||"")+(b.plage?" "+b.plage:""))+'" style="top:'+((b.deb-pl.a)*K)+'px;height:'+hp+'px;'+lane(b.deb,b.fin)+'">'+(b.label?txt(hp,_lxSmE(b.label),_lxSmE(b.plage)):'')+'</div>'; });
     // autres options du même jour (repère)
-    s.opts.forEach(function(x,i){ if(i===s.i||x.date!==date) return; var cx=_lxSmCalc(x), st=x.collab?Number(x.collab):null; if(st!==t.id||!cx.duree) return; var dm=_lxSmMin(x.heure);
-      h+='<div class="lxsm-b autre" style="top:'+((dm-pl.a)*K)+'px;height:'+(cx.duree*K)+'px">Option '+_lxSmLettre(i+1)+'</div>'; });
+    s.opts.forEach(function(x,i){ if(i===s.i||x.date!==date) return; var cx=_lxSmCalc(x), st=x.collab?Number(x.collab):null; if(st!==t.id||!cx.duree) return; var dm=_lxSmMin(x.heure), hp=cx.duree*K;
+      h+='<div class="lxsm-b autre" title="Option '+_lxSmLettre(i+1)+'" style="top:'+((dm-pl.a)*K)+'px;height:'+hp+'px;'+lane(dm,dm+cx.duree)+'">'+txt(hp,'Option '+_lxSmLettre(i+1))+'</div>'; });
     // option en cours
     if(t.id===stOpt && c.duree && _lxSmMin(o.heure)!=null){
-      var dm=_lxSmMin(o.heure), cur=dm;
-      h+='<div class="lxsm-b opt" style="top:'+((dm-pl.a)*K)+'px;height:'+(c.duree*K)+'px;background:rgba(200,168,78,.12)"><b>Option '+_lxSmLettre(s.i+1)+' (proposée)'+(o.collab?'':' · pas de préférence')+'</b><br>'+_lxSmHM(dm)+' – '+_lxSmHM(dm+c.duree)+'</div>';
-      c.phases.forEach(function(p){ if(p.t==="p") h+='<div class="lxsm-b optp" style="top:'+((cur-pl.a)*K)+'px;height:'+(p.d*K)+'px"></div>'; cur+=p.d; });
+      var dm=_lxSmMin(o.heure), cur=dm, cote=oChev?'left:50%;':'', hpO=c.duree*K;
+      h+='<div class="lxsm-b opt" title="Option '+_lxSmLettre(s.i+1)+' '+_lxSmHM(dm)+' – '+_lxSmHM(dm+c.duree)+'" style="top:'+((dm-pl.a)*K)+'px;height:'+hpO+'px;background:#2a2416;'+cote+'">'+txt(hpO,'Option '+_lxSmLettre(s.i+1)+(oChev?'':' (proposée)')+(o.collab||oChev?'':' · pas de préférence'),_lxSmHM(dm)+' – '+_lxSmHM(dm+c.duree))+'</div>';
+      c.phases.forEach(function(p){ if(p.t==="p") h+='<div class="lxsm-b optp" style="top:'+((cur-pl.a)*K)+'px;height:'+(p.d*K)+'px;'+cote+'"></div>'; cur+=p.d; });
       if(e.etat==="conflit" && e.stConf===t.id) (e.cf||[]).forEach(function(cf){ if(cf.overlapStart!=null) h+='<div class="lxsm-b cf" style="top:'+((cf.overlapStart-pl.a)*K)+'px;height:'+Math.max(10,(cf.overlapEnd-cf.overlapStart)*K)+'px"></div>'; });
     }
     h+='</div>';
@@ -11959,10 +11976,17 @@ function lxSmSuivi(d){
   document.getElementById("modal").innerHTML=h;
 }
 function lxSmVoirRdv(rid){ cM(); var a=null; (AP||[]).forEach(function(x){ if(x&&(x.onlineId===rid||x.id==="online_"+rid)) a=x; }); if(a&&typeof lxOuvrirRdv==="function") lxOuvrirRdv(a.id); else go("planning"); }
+// options d'un envoi précédent -> options de la fenêtre (dates passées remplacées par demain ; prestations supprimées retirées)
+function _lxSmPrefillDe(d){
+  var dem=new Date(); dem.setDate(dem.getDate()+1); var auj=_lxSmYmd(new Date());
+  return _lxSmOptsDe(d).map(function(o){ var dt=String(o.date_rdv||""); return {libelle:o.libelle||"",date:(dt&&dt>auj)?dt:_lxSmYmd(dem),heure:String(o.heure_rdv||"10:00").slice(0,5),collab:o.collaborateur_id?String(o.collaborateur_id):"",
+    items:(o.items||[]).map(function(i){return i.type+":"+i.id;}).filter(function(k){ return !!_lxSmItem(k); }),acOn:o.acompte_mode!=="aucun",acMode:o.acompte_mode==="montant"?"montant":"pct",acVal:String(o.acompte_valeur||"30"),note:o.note||""}; });
+}
 // Annuler / proposer un autre horaire : par le worker (expire la session de paiement en cours) ; repli : mise à jour directe
 function lxSmAction(id, op){
   var d=getDemande(id); if(!d) return;
-  if(op==="nouvelle"){ showAlert("Pour refaire une proposition, le client doit envoyer une nouvelle demande depuis votre site, ou appelez-le et créez le rendez-vous dans le planning.","info"); return; }
+  // contre-audit 30/10 (f) : après un refus ou une expiration, nouvelle proposition (nouveau lien ; l'ancien ne vaut plus rien)
+  if(op==="nouvelle"){ window._lxSmPrefill=window._lxSmPrefill||{}; window._lxSmPrefill[id]=_lxSmPrefillDe(d); cM(); lxSmOuvrir(d); return; }
   var q=op==="annuler"?"Annuler cette proposition ? Le client ne pourra plus choisir ni payer.":"Préparer une nouvelle proposition ? L’actuelle ne pourra plus être choisie ni payée.";
   showConfirm(q, async function(){
     try{
@@ -11970,8 +11994,7 @@ function lxSmAction(id, op){
       var r=await fetch("/api/rdv-demande/salon-action",{method:"POST",headers:Object.assign({"Content-Type":"application/json"},tok?{Authorization:"Bearer "+tok}:{}),body:JSON.stringify({demande_id:id,op:op})});
       var j=await r.json().catch(function(){return {};});
       if(!r.ok){ showAlert(j.error||("Action impossible ("+r.status+")"),"warning"); try{ await loadRdvDemandes(); }catch(_){} return; }
-      if(op==="reproposer"){ window._lxSmPrefill=window._lxSmPrefill||{}; window._lxSmPrefill[id]=_lxSmOptsDe(d).map(function(o){ return {libelle:o.libelle||"",date:String(o.date_rdv),heure:String(o.heure_rdv).slice(0,5),collab:o.collaborateur_id?String(o.collaborateur_id):"",
-        items:(o.items||[]).map(function(i){return i.type+":"+i.id;}),acOn:o.acompte_mode!=="aucun",acMode:o.acompte_mode==="montant"?"montant":"pct",acVal:String(o.acompte_valeur||"30"),note:o.note||""}; }); }
+      if(op==="reproposer"){ window._lxSmPrefill=window._lxSmPrefill||{}; window._lxSmPrefill[id]=_lxSmPrefillDe(d); }
       if(typeof toast==="function") toast(op==="annuler"?"Proposition annulée":"Vous pouvez préparer la nouvelle proposition","success");
       await loadRdvDemandes(); cM();
       if(op==="reproposer") openDemande(id);

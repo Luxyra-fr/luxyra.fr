@@ -57,9 +57,11 @@ const DEM = { id: 'd0000000-0000-4000-8000-000000000001', status: 'pending', cli
   const scen = await pg.evaluate(() => {
     const pose = _lxSmCatalogue().find(x => x.type === 'service' && !x.devis && x.pose > 0) || _lxSmCatalogue().find(x => !x.devis);
     const auj = _lxSmYmd(new Date());
-    const rdv = AP.filter(a => a && a.date > auj && a.stId && a.time && !a.cancelled && a.st !== 'canc' && !a.fromCaisse).sort((a, b) => a.date.localeCompare(b.date))[0];
+    // RDV existant d'un jour à venir qui laisse au moins un créneau libre ce jour-là (les données de démo dépendent de l'heure)
+    const cands = AP.filter(a => a && a.date > auj && a.stId && a.time && !a.cancelled && a.st !== 'canc' && !a.fromCaisse).sort((a, b) => a.date.localeCompare(b.date));
     lxSmItem(pose.k);
-    if (rdv) { lxSmChamp('date', rdv.date); lxSmChamp('collab', String(rdv.stId)); lxSmChamp('heure', rdv.time); }
+    let rdv = null;
+    for (const c of cands) { lxSmChamp('date', c.date); lxSmChamp('collab', String(c.stId)); lxSmChamp('heure', c.time); if (_lxSmEtat(_lxSmO()).etat === 'conflit' && _lxSmLibres(_lxSmO(), 3).length) { rdv = c; break; } }
     const o = _lxSmO(), e = _lxSmEtat(o);
     return { pose: pose.pose, nom: pose.nom, rdv: rdv ? { d: rdv.date, t: rdv.time } : null, etat: e.etat, txt: (document.querySelector('.lxsm-conf') || {}).innerText || '', pills: document.querySelectorAll('.lxsm-conf .lxsm-pill').length,
       tot: document.querySelector('.lxsm-tot').innerText, planCf: document.querySelectorAll('.lxsm-desk .lxsm-b.cf').length, planOpt: document.querySelectorAll('.lxsm-desk .lxsm-b.opt').length, planPose: document.querySelectorAll('.lxsm-desk .lxsm-b.optp').length, rdvs: document.querySelectorAll('.lxsm-desk .lxsm-b.rdv').length };
@@ -69,6 +71,20 @@ const DEM = { id: 'd0000000-0000-4000-8000-000000000001', status: 'pending', cli
   ok('mini-planning du jour : RDV existants + option surlignée + temps de pose hachuré', scen.rdvs >= 1 && scen.planOpt === 1 && (scen.pose ? scen.planPose >= 1 : true), scen);
   ok('créneaux libres suggérés', scen.pills >= 1, scen.pills);
   await pg.screenshot({ path: OUT + '/1-pro-ordinateur-conflit.png' });
+  // contre-audit (h) : aucun libellé du mini-planning ne se superpose à un autre (cas du conflit : option sur un RDV existant)
+  const sup = await pg.evaluate(() => {
+    const res = []; document.querySelectorAll('.lxsm-desk .lxsm-col').forEach((col) => {
+      const bl = [...col.querySelectorAll('.lxsm-b')].filter((e) => (e.innerText || '').trim() && !e.classList.contains('lib'));
+      for (let i = 0; i < bl.length; i++) for (let j = i + 1; j < bl.length; j++) { const a = bl[i].getBoundingClientRect(), c = bl[j].getBoundingClientRect();
+        const x = Math.min(a.right, c.right) - Math.max(a.left, c.left), y = Math.min(a.bottom, c.bottom) - Math.max(a.top, c.top);
+        if (x > 1 && y > 1) res.push([bl[i].innerText.slice(0, 30), bl[j].innerText.slice(0, 30)]); } });
+    const opt = document.querySelector('.lxsm-desk .lxsm-b.opt'); return { res, gauche: opt ? opt.style.left : null };
+  });
+  ok('h : mini-planning : aucun libellé superposé (option dans la moitié droite en cas de chevauchement)', sup.res.length === 0 && sup.gauche === '50%', sup);
+  // contre-audit (i) : liste des prestations au clavier (Tab + Entrée)
+  const kb = await pg.evaluate(() => { const it = [...document.querySelectorAll('.lxsm-it[tabindex="0"]')].find((e) => e.getAttribute('aria-checked') === 'false'); const k = it.getAttribute('data-k'); it.focus();
+    it.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); const sel = _lxSmO().items.indexOf(k) >= 0; lxSmItem(k); return { sel, role: it.getAttribute('role') }; });
+  ok('i : prestation cochée au clavier (rôle case à cocher)', kb.sel && kb.role === 'checkbox', kb);
   const apres = await pg.evaluate(() => { document.querySelector('.lxsm-conf .lxsm-pill').click(); return { etat: _lxSmEtat(_lxSmO()).etat, heure: _lxSmO().heure, libre: !!document.querySelector('.lxsm-libre') }; });
   ok('clic sur un créneau libre : appliqué, plus de conflit', apres.etat === 'libre' && apres.libre, apres);
   // clic dans le planning
@@ -83,10 +99,16 @@ const DEM = { id: 'd0000000-0000-4000-8000-000000000001', status: 'pending', cli
     const c = _lxSmCalc(_lxSmO()), aff = document.getElementById('lxsmAc').innerText;
     lxSmChamp('acMode', 'montant'); lxSmChamp('acVal', '15');
     const c2 = _lxSmCalc(_lxSmO()), aff2 = document.getElementById('lxsmAc').innerText;
-    return { dis, txtOk: /non activés/.test(txt), pct: c.acompte, prix: c.prix, aff, eur: c2.acompte, aff2, reste: document.getElementById('lxsmReste').innerText };
+    const reste = document.getElementById('lxsmReste').innerText;
+    // contre-audit (e) : même arrondi que le serveur (centime inférieur)
+    lxSmChamp('acVal', String(Math.floor(c.prix) + '.005')); const c3 = _lxSmCalc(_lxSmO());
+    lxSmChamp('acMode', 'pct'); lxSmChamp('acVal', '33.333'); const c4 = _lxSmCalc(_lxSmO());
+    lxSmChamp('acMode', 'montant'); lxSmChamp('acVal', '15');
+    return { dis, txtOk: /non activés/.test(txt), pct: c.acompte, prix: c.prix, aff, eur: c2.acompte, aff2, reste, tronc: c3.acompte, tronc2: c4.acompte, att2: Math.floor(Math.round(c.prix * 100) * 3333 / 10000) / 100 };
   });
+  ok('e : acompte tronqué au centime inférieur comme le serveur (x,005 € -> x,00 ; 33,333 %)', ac.tronc === Math.floor(ac.prix) && ac.tronc2 === ac.att2, ac);
   ok('établissement sans Stripe actif : interrupteur d\'acompte désactivé + explication', ac.dis && ac.txtOk, ac);
-  ok('acompte 30 % calculé à l\'écran', Math.abs(ac.pct - Math.round(ac.prix * 30) / 100) < 0.001 && ac.aff.indexOf(ac.pct.toFixed(2).replace('.', ',')) >= 0, ac);
+  ok('acompte 30 % calculé à l\'écran', Math.abs(ac.pct - Math.floor(Math.round(ac.prix * 100) * 30 / 100) / 100) < 0.001 && ac.aff.indexOf(ac.pct.toFixed(2).replace('.', ',')) >= 0, ac);
   ok('acompte en € + reste à régler + « vérifié par le serveur »', ac.eur === 15 && /15,00/.test(ac.aff2) && /vérifié par le serveur/.test(ac.reste), ac);
   // 3 options maximum, intitulé, note, dupliquer, supprimer
   const opts = await pg.evaluate(() => {
@@ -144,6 +166,20 @@ const DEM = { id: 'd0000000-0000-4000-8000-000000000001', status: 'pending', cli
   ok('suivi : proposition vue, paiement en cours (option A), actions', /vue par le client/.test(suivi.t3) && /paiement en cours \(option A\)/.test(suivi.t3) && /Proposer un autre horaire/.test(suivi.t3) && /Annuler la proposition/.test(suivi.t3), suivi.t3.slice(0, 400));
   ok('liste des demandes : statuts', /Confirmée/.test(suivi.tl) && /Proposition envoyée/.test(suivi.tl), suivi.tl.slice(0, 300));
   ok('accueil : bandeau « proposition en attente du client »', /proposition en attente du client/.test(suivi.home), null);
+  // contre-audit (f) : « Faire une nouvelle proposition » après un refus ouvre réellement la fenêtre, préremplie
+  const nv = await pg.evaluate(() => {
+    const d4 = { id: 'd4', status: 'refused', proposal_version: 2, envoi: 1, client_prenom: 'Léa', client_nom: 'B.', client_tel: '0611', demande_text: 'Balayage', refuse_reason: 'Pas le samedi', created_at: new Date().toISOString() };
+    window.RDV_DEMANDES.push(d4);
+    const s0 = SVC.find((x) => x && !x.devis && x.actif !== false);
+    window.RDV_DEMANDE_OPTIONS.d4 = [{ id: 'o9', demande_id: 'd4', envoi: 1, rang: 1, libelle: 'Balayage', date_rdv: '2020-01-04', heure_rdv: '10:00:00', duree_minutes: 60, prix_total: 50, acompte_montant: 0, acompte_mode: 'aucun', statut: 'liberee', items: [{ type: 'service', id: s0.id }] }];
+    openDemande('d4'); const t = document.getElementById('modal').innerText;
+    const btn = [...document.querySelectorAll('#modal button')].find((x) => /Faire une nouvelle proposition/.test(x.innerText)); btn.click();
+    const o = _lxSmO(); return { t: t.slice(0, 200), fen: !!document.querySelector('.lxsm-tabs'), titre: (document.querySelector('.lxsm h2') || {}).innerText, msg: /Pas le samedi/.test(document.querySelector('.lxsm-client').innerText), items: o && o.items.length, date: o && o.date, auj: _lxSmYmd(new Date()) };
+  });
+  ok('f : après refus, « Faire une nouvelle proposition » ouvre la fenêtre préremplie (date passée remplacée), message du client visible', nv.fen && /après refus/.test(nv.titre) && nv.msg && nv.items === 1 && nv.date > nv.auj, nv);
+  // contre-audit (j) : offre Essentiel -> « Offre Pro requise » au lieu de la fenêtre
+  const es = await pg.evaluate((DEM) => { cM(); window.RDV_DEMANDES.push(DEM); const ip = window.isPro; window.isPro = () => false; openDemande(DEM.id); const t = document.getElementById('modal').innerText; const fen = !!document.querySelector('.lxsm-tabs'); window.isPro = ip; return { t: t.slice(0, 300), fen }; }, Object.assign({}, DEM, { id: 'd5' }));
+  ok('j : offre Essentiel : message « Offre Pro requise » (pas de fenêtre ni d\'erreur à l\'envoi)', !es.fen && /Offre Pro requise/.test(es.t), es);
   await pg.close();
 }
 // ---------------- téléphone ----------------
