@@ -11653,7 +11653,11 @@ function _lxSmRendre(){
   h+='<div class="lxsm-sub">Demande sur mesure reçue le '+_lxSmE(recuTxt)+' · via votre site</div>';
   // client + demande
   h+='<div class="lxsm-card lxsm-client"><div class="lxsm-av">'+_lxSmE(ini)+'</div><div style="flex:1;min-width:0">';
-  h+='<div style="font-size:18px;font-weight:800">'+_lxSmE(nom)+' <span style="font-size:13px;font-weight:400;color:rgba(255,255,255,.5)">'+(d.client_luxyra_id?'compte Luxyra':'')+(cli&&cli.visites?' · '+cli.visites+' visite'+(cli.visites>1?'s':''):'')+'</span></div>';
+  h+='<div style="font-size:18px;font-weight:800">'+_lxSmE(nom)+' <span style="font-size:13px;font-weight:400;color:rgba(255,255,255,.5)">'+(d.client_luxyra_id?'compte Luxyra':'')+'</span></div>';
+  // 30/10 : client connu ou nouveau, visible aussi sur téléphone (le bouton « Fiche » y est masqué)
+  if(cli&&cli.id){ var _dv=cli.derniere?new Date(cli.derniere+"T12:00:00").toLocaleDateString("fr-FR",{day:"numeric",month:"long",year:"numeric"}):"";
+    h+='<div style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:6px;background:rgba(76,175,80,.15);border:1px solid rgba(76,175,80,.6);color:#9be8b0;border-radius:999px;padding:4px 12px;font-size:13px;font-weight:700;cursor:pointer" onclick="lxSmFiche()">Client existant · '+(cli.visites?cli.visites+' visite'+(cli.visites>1?'s':'')+(_dv?' · dernière le '+_lxSmE(_dv):''):'aucune visite encaissée')+' · voir la fiche ›</div>';
+  } else h+='<div style="display:inline-block;margin-top:6px;background:rgba(200,168,78,.15);border:1px solid rgba(200,168,78,.6);color:#e6c066;border-radius:999px;padding:4px 12px;font-size:13px;font-weight:700">Nouveau client · aucune fiche avec ce téléphone ou cet e-mail</div>';
   h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-top:8px"><div><div class="lxsm-lbl">Sa demande</div><div style="font-weight:700;font-size:15px;white-space:pre-wrap">« '+_lxSmE(d.demande_text||"")+' »</div></div>';
   if(d.dispo_text) h+='<div><div class="lxsm-lbl">Ses disponibilités</div><div style="font-size:15px;white-space:pre-wrap">'+_lxSmE(d.dispo_text)+'</div></div>';
   if(d.status==="refused"&&d.refuse_reason) h+='<div><div class="lxsm-lbl">Son message (refus)</div><div style="font-size:15px;white-space:pre-wrap;color:#ffb3ab">'+_lxSmE(d.refuse_reason)+'</div></div>';
@@ -11884,8 +11888,9 @@ function _lxSmClient(d){
   var l=(typeof CL!=="undefined"&&Array.isArray(CL))?CL:[], tel=String(d.client_tel||"").replace(/\D/g,""), em=String(d.client_email||"").toLowerCase(), c=null;
   for(var i=0;i<l.length&&!c;i++){ var x=l[i]; if(!x) continue; if((em&&String(x.email||"").toLowerCase()===em)||(tel.length>=9&&String(x.tel||x.telephone||"").replace(/\D/g,"").slice(-9)===tel.slice(-9))) c=x; }
   if(!c) return null;
-  var v=(typeof AP!=="undefined"&&Array.isArray(AP))?AP.filter(function(a){ return a&&a.cId===c.id&&a.st==="done"&&!_lxIsContraTicketSafe(a); }).length:0;
-  return {id:c.id,visites:v};
+  var vs=(typeof AP!=="undefined"&&Array.isArray(AP))?AP.filter(function(a){ return a&&a.cId===c.id&&a.st==="done"&&!a.cancelled&&!_lxIsContraTicketSafe(a); }):[];
+  var der=""; vs.forEach(function(a){ if(a.date&&a.date>der) der=a.date; }); // 30/10 : dernière visite (cliente connue ou non)
+  return {id:c.id,visites:vs.length,derniere:der};
 }
 function _lxIsContraTicketSafe(a){ try{ return typeof _lxIsContraTicket==="function"?_lxIsContraTicket(a):false; }catch(_){ return false; } }
 function lxSmFiche(){ var s=window._lxSm; if(!s) return; var c=_lxSmClient(s.d); if(!c) return; lxSmFermer(); try{ window._curClientId=c.id; if(typeof showClientDetail==="function") showClientDetail(c.id); else if(typeof openClient==="function") openClient(c.id); else { window.selC=c.id; go("detail"); } }catch(_){ } }
