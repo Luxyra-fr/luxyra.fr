@@ -143,7 +143,7 @@ export function creerMonde(db) {
       return json(200, {});
     }
     if (url.hostname === "luxyra.fr" && url.pathname.startsWith("/api/")) { monde.appelsWorker.push(url.pathname); return monde.worker.fetch(req, monde.env, { waitUntil() {} }); }
-    if (url.origin === SB && url.pathname.startsWith("/functions/v1/")) return json(200, { ok: true });
+    if (url.origin === SB && url.pathname.startsWith("/functions/v1/")) { const nom = url.pathname.slice(14); if (monde.edges && monde.edges[nom]) return monde.edges[nom](req); return json(200, { ok: true }); }
     throw new Error("fetch non simulé : " + req.url);
   };
   monde.restaurer = () => { globalThis.fetch = realFetch; };

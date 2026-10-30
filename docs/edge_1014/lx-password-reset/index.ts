@@ -1,3 +1,4 @@
+// lx-password-reset v8 — 2026-10-30 (contre-audit 2) : e-mail sans prénom ; verification_email effacé à la confirmation.
 // lx-password-reset v7 — 2026-10-30 SECURITE (contre-audit B1) : le jeton garde l'adresse d'envoi ; la confirmation ne
 //   vérifie l'adresse que si elle est inchangée (sinon : mot de passe changé, adresse non vérifiée).
 // lx-password-reset v5 — 2026-10-14 SECURITE : après réinitialisation, la version de session du compte est
@@ -64,8 +65,8 @@ Deno.serve(async (req) => {
       if (insErr) { await report("insert reset: " + insErr.message); return json(500, { error: "Erreur interne" }); }
       const retour = retourSur(body.retour);
       const lien = `https://luxyra.fr/compte.html?reset=${token}` + (retour ? `&retour=${encodeURIComponent(retour)}` : "");
-      const html = lxMailLayout(`<p style="font-size:15px">Bonjour ${esc(u.prenom || "")},</p><p style="font-size:15px;line-height:1.6">Vous avez demandé à réinitialiser le mot de passe de votre compte Luxyra.</p>${lxMailBouton("Choisir un nouveau mot de passe", esc(lien))}<p style="font-size:12px;color:#8a8a8a">Ce lien est valable 1 heure et ne peut servir qu'une fois. Si vous n'êtes pas à l'origine de cette demande, ignorez cet email : votre mot de passe actuel reste valable.</p>`, { titre: "Réinitialisation de votre mot de passe" });
-      const r = await fetch(`${WORKER_BASE}/api/email/custom`, { method: "POST", headers: { "Content-Type": "application/json", "x-lx-internal": SB_SR }, body: JSON.stringify({ to: u.email, toName: u.prenom || "", salonName: "Luxyra", subject: "Réinitialisation de votre mot de passe Luxyra", htmlContent: html, textContent: `Bonjour,\n\nPour choisir un nouveau mot de passe (lien valable 1 heure) :\n${lien}\n\nSi vous n'êtes pas à l'origine de cette demande, ignorez cet email.\n\nLuxyra` }) });
+      const html = lxMailLayout(`<p style="font-size:15px">Bonjour,</p><p style="font-size:15px;line-height:1.6">Vous avez demandé à réinitialiser le mot de passe de votre compte Luxyra.</p>${lxMailBouton("Choisir un nouveau mot de passe", esc(lien))}<p style="font-size:12px;color:#8a8a8a">Ce lien est valable 1 heure et ne peut servir qu'une fois. Si vous n'êtes pas à l'origine de cette demande, ignorez cet email : votre mot de passe actuel reste valable.</p>`, { titre: "Réinitialisation de votre mot de passe" });
+      const r = await fetch(`${WORKER_BASE}/api/email/custom`, { method: "POST", headers: { "Content-Type": "application/json", "x-lx-internal": SB_SR }, body: JSON.stringify({ to: u.email, toName: "", salonName: "Luxyra", subject: "Réinitialisation de votre mot de passe Luxyra", htmlContent: html, textContent: `Bonjour,\n\nPour choisir un nouveau mot de passe (lien valable 1 heure) :\n${lien}\n\nSi vous n'êtes pas à l'origine de cette demande, ignorez cet email.\n\nLuxyra` }) });
       if (!r.ok) { await report("envoi email reset HTTP " + r.status + ": " + (await r.text()).slice(0, 200)); }
       return json(200, neutre);
     }
@@ -83,7 +84,7 @@ Deno.serve(async (req) => {
       const { data: cur } = await sb.from("clients_luxyra").select("email").eq("id", rs.client_id).maybeSingle();
       const memeAdresse = !!(rs.email && cur && String(cur.email || "").toLowerCase() === String(rs.email).toLowerCase());
       const patchMdp: Record<string, unknown> = { password_hash: await hashPassword(password), updated_at: new Date().toISOString() };
-      if (memeAdresse) { patchMdp.email_verified = true; patchMdp.verification_code = null; patchMdp.verification_expires_at = null; }
+      if (memeAdresse) { patchMdp.email_verified = true; patchMdp.verification_code = null; patchMdp.verification_email = null; patchMdp.verification_expires_at = null; }
       let q = sb.from("clients_luxyra").update(patchMdp).eq("id", rs.client_id);
       if (memeAdresse) q = q.eq("email", cur!.email); // course avec un changement d'adresse : rien n'est écrit
       const { data: u, error: upErr } = await q.select("email").single();

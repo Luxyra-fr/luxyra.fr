@@ -1,3 +1,4 @@
+// lx-profile v13 — 2026-10-30 (contre-audit 2) : lien de confirmation lié à l'adresse (verification_email), écritures conditionnelles atomiques (délai 2 min + limite du jour), e-mails sans prénom, champs de update bornés.
 // lx-profile v12 — 2026-10-30 (contre-audit) : change_email annule les liens « mot de passe oublié » en attente (B1) ;
 //   e-mail de confirmation sans prénom + « si vous n'avez pas créé ce compte, ne cliquez pas » (M1) ; update : nom/prénom
 //   80 caractères max, sans lien ni @ (m2).
@@ -108,9 +109,11 @@ Deno.serve(async (req) => {
       const token = String(body.token || "").trim();
       if (!/^[0-9a-f]{64}$/.test(token)) return json(400, { error: "Lien invalide ou expiré. Demandez un nouveau lien depuis votre compte." });
       const h = await sha256Hex(token);
-      const { data: row } = await sb.from("clients_luxyra").select("id, email, verification_expires_at, email_verified").eq("verification_code", h).maybeSingle();
+      const { data: row } = await sb.from("clients_luxyra").select("id, email, verification_email, verification_expires_at, email_verified").eq("verification_code", h).maybeSingle();
       if (!row || !row.verification_expires_at || new Date(row.verification_expires_at).getTime() < Date.now()) return json(400, { error: "Lien invalide ou expiré. Demandez un nouveau lien depuis votre compte." });
-      const { data: maj, error } = await sb.from("clients_luxyra").update({ email_verified: true, verification_code: null, verification_expires_at: null, email_rejete_at: null, email_rejet_motif: null, updated_at: new Date().toISOString() }).eq("id", row.id).eq("verification_code", h).select("id");
+      // 30/10/2026 (contre-audit 2) : le lien ne confirme QUE l'adresse à laquelle il a été envoyé
+      if (!row.verification_email || String(row.verification_email).toLowerCase() !== String(row.email || "").toLowerCase()) return json(400, { error: "Lien invalide ou expiré. Demandez un nouveau lien depuis votre compte." });
+      const { data: maj, error } = await sb.from("clients_luxyra").update({ email_verified: true, verification_code: null, verification_expires_at: null, email_rejete_at: null, email_rejet_motif: null, verification_email: null, updated_at: new Date().toISOString() }).eq("id", row.id).eq("verification_code", h).eq("email", row.email).eq("email_verified", false).select("id");
       if (error || !maj || !maj.length) return json(400, { error: "Lien déjà utilisé." });
       return json(200, { ok: true, email: row.email });
     }
@@ -130,11 +133,17 @@ Deno.serve(async (req) => {
       const nb = (u.verification_jour === jour ? Number(u.verification_envois) || 0 : 0);
       if (nb >= 5) return json(429, { error: "Trop d'envois aujourd'hui. Réessayez demain ou écrivez à contact@luxyra.fr." });
       const token = toHex(crypto.getRandomValues(new Uint8Array(32)));
-      const { error: upErr } = await sb.from("clients_luxyra").update({ verification_code: await sha256Hex(token), verification_expires_at: new Date(now.getTime() + 48 * 3600 * 1000).toISOString(), verification_sent_at: now.toISOString(), verification_envois: nb + 1, verification_jour: jour }).eq("id", lx_id);
+      // 30/10/2026 (contre-audit 2) : écriture conditionnelle et atomique — même adresse, toujours non confirmée, délai de 2 min
+      // et limite du jour revérifiés par la base ; le lien est lié à l'adresse (verification_email). 0 ligne = aucun envoi.
+      const { data: res, error: upErr } = await sb.from("clients_luxyra").update({ verification_code: await sha256Hex(token), verification_email: String(u.email).toLowerCase(), verification_expires_at: new Date(now.getTime() + 48 * 3600 * 1000).toISOString(), verification_sent_at: now.toISOString(), verification_envois: nb + 1, verification_jour: jour })
+        .eq("id", lx_id).eq("email", u.email).eq("email_verified", false)
+        .or(`verification_sent_at.is.null,verification_sent_at.lt.${new Date(now.getTime() - 120 * 1000).toISOString()}`)
+        .or(`verification_jour.is.null,verification_jour.neq.${jour},verification_envois.lt.5`).select("id");
       if (upErr) return json(500, { error: "Erreur interne" });
+      if (!res || !res.length) return json(429, { error: "Un email vient d'être envoyé ou votre compte a changé. Patientez 2 minutes, rechargez la page et réessayez." });
       const lien = `https://luxyra.fr/compte.html?verif=${token}`;
-      const html = lxMailLayout(`<p style="font-size:15px">Bonjour ${esc(u.prenom || "")},</p><p style="font-size:15px;line-height:1.6">Confirmez votre adresse email pour retrouver dans votre compte Luxyra vos rendez-vous, tickets, points de fidélité et cartes enregistrés par vos établissements.</p><p style="text-align:center;margin:22px 0"><a href="${esc(lien)}" style="display:inline-block;background:#c8a84e;color:#111;text-decoration:none;font-weight:700;padding:13px 26px;border-radius:30px">Confirmer mon adresse email</a></p><p style="font-size:12px;color:#8a8a8a">Ce lien est valable 48 heures. Si vous n'êtes pas à l'origine de cette demande, ignorez cet email.</p>`, "Confirmez votre adresse email");
-      const r = await fetch(`${WORKER_BASE}/api/email/custom`, { method: "POST", headers: { "Content-Type": "application/json", "x-lx-internal": SB_SR }, body: JSON.stringify({ to: u.email, toName: u.prenom || "", salonName: "Luxyra", subject: "Confirmez votre adresse email Luxyra", htmlContent: html, textContent: `Bonjour,\n\nConfirmez votre adresse email Luxyra (lien valable 48 heures) :\n${lien}\n\nLuxyra` }) }).catch(() => null);
+      const html = lxMailLayout(`<p style="font-size:15px">Bonjour,</p><p style="font-size:15px;line-height:1.6">Confirmez votre adresse email pour retrouver dans votre compte Luxyra vos rendez-vous, tickets, points de fidélité et cartes enregistrés par vos établissements.</p><p style="text-align:center;margin:22px 0"><a href="${esc(lien)}" style="display:inline-block;background:#c8a84e;color:#111;text-decoration:none;font-weight:700;padding:13px 26px;border-radius:30px">Confirmer mon adresse email</a></p><p style="font-size:12px;color:#8a8a8a">Ce lien est valable 48 heures. Si vous n'êtes pas à l'origine de cette demande, ignorez cet email.</p>`, "Confirmez votre adresse email");
+      const r = await fetch(`${WORKER_BASE}/api/email/custom`, { method: "POST", headers: { "Content-Type": "application/json", "x-lx-internal": SB_SR }, body: JSON.stringify({ to: u.email, toName: "", salonName: "Luxyra", subject: "Confirmez votre adresse email Luxyra", htmlContent: html, textContent: `Bonjour,\n\nConfirmez votre adresse email Luxyra (lien valable 48 heures) :\n${lien}\n\nLuxyra` }) }).catch(() => null);
       if (!r || !r.ok) { await (globalThis as any).__lxReport?.("Renvoi email de vérification HTTP " + (r ? r.status : "réseau"), "warning"); return json(502, { error: "L'email n'a pas pu être envoyé. Réessayez dans quelques minutes." }); }
       return json(200, { ok: true });
     }
@@ -160,10 +169,12 @@ Deno.serve(async (req) => {
       // 30/10/2026 contre-audit B1 : tout lien « mot de passe oublié » en attente est annulé (il visait l'ancienne adresse)
       await sb.from("client_password_resets").update({ used_at: new Date().toISOString() }).eq("client_id", lx_id).is("used_at", null);
       const token = toHex(crypto.getRandomValues(new Uint8Array(32)));
-      const patch: Record<string, unknown> = { email: nouv, email_verified: false, email_rejete_at: null, email_rejet_motif: null, verification_code: await sha256Hex(token), verification_expires_at: new Date(now.getTime() + 48 * 3600 * 1000).toISOString(), verification_sent_at: now.toISOString(), verification_envois: nb + 1, verification_jour: jour, updated_at: now.toISOString() };
+      const patch: Record<string, unknown> = { email: nouv, email_verified: false, email_rejete_at: null, email_rejet_motif: null, verification_code: await sha256Hex(token), verification_email: nouv, verification_expires_at: new Date(now.getTime() + 48 * 3600 * 1000).toISOString(), verification_sent_at: now.toISOString(), verification_envois: nb + 1, verification_jour: jour, updated_at: now.toISOString() };
       // ancien format de mot de passe (empreinte liée à l'adresse) : réécrit au format actuel, sinon la connexion casserait
       if (!String(u.password_hash || "").startsWith("pbkdf2$")) patch.password_hash = await hashPassword(String(body.password || ""));
-      const { data: maj, error: upErr } = await sb.from("clients_luxyra").update(patch).eq("id", lx_id).eq("email_verified", false).eq("email", u.email).select("id");
+      const { data: maj, error: upErr } = await sb.from("clients_luxyra").update(patch).eq("id", lx_id).eq("email_verified", false).eq("email", u.email)
+        .or(`verification_sent_at.is.null,verification_sent_at.lt.${new Date(now.getTime() - 120 * 1000).toISOString()}`)
+        .or(`verification_jour.is.null,verification_jour.neq.${jour},verification_envois.lt.5`).select("id"); // 30/10 contre-audit 2 : limites revérifiées atomiquement
       if (upErr) { if (String((upErr as any).code) === "23505") return json(409, { error: "Cette adresse est déjà utilisée par un autre compte Luxyra. Connectez-vous avec ce compte, ou choisissez une autre adresse." }); return json(500, { error: "Erreur interne" }); }
       if (!maj || !maj.length) return json(409, { error: "Votre compte a changé entre-temps. Rechargez la page et réessayez." });
       const sv = await nouvelleVersion(lx_id); // les autres appareils sont déconnectés
@@ -180,7 +191,7 @@ Deno.serve(async (req) => {
       if (refus) return refus;
       return json(200, { ok: true, lx_id, email: session.email, email_verified: session.email_verified });
     }
-    if (action === "update") { const allowed = ["nom","prenom","telephone","date_naissance","genre","sms_ok","email_ok","adresse","cp","ville","pays","avatar_url"]; const patch: Record<string, unknown> = {}; for (const k of allowed) if (k in body) patch[k] = body[k]; if ("pays" in patch && !PAYS.includes(String(patch.pays))) delete patch.pays; if (Object.keys(patch).length === 0) return json(400, { error: "Aucun champ à mettre à jour" }); for (const k of ["nom","prenom"]) if (k in patch) { const v = String(patch[k] ?? "").trim(); if (v.length > 80 || /https?:|www\.|@|<|>/i.test(v)) return json(400, { error: "Nom ou prénom invalide" }); patch[k] = v; } /* 30/10 contre-audit m2 */ patch.updated_at = new Date().toISOString(); const { data: user, error } = await sb.from("clients_luxyra").update(patch).eq("id", lx_id).select(SAFE_COLUMNS).single(); if (error) return json(500, { error: error.message }); return json(200, { user }); }
+    if (action === "update") { const allowed = ["nom","prenom","telephone","date_naissance","genre","sms_ok","email_ok","adresse","cp","ville","pays","avatar_url"]; const patch: Record<string, unknown> = {}; for (const k of allowed) if (k in body) patch[k] = body[k]; if ("pays" in patch && !PAYS.includes(String(patch.pays))) delete patch.pays; if (Object.keys(patch).length === 0) return json(400, { error: "Aucun champ à mettre à jour" }); /* 30/10 contre-audit 2 : champs bornés */ const BORNES: Record<string, number> = { adresse: 200, ville: 100, cp: 10, telephone: 30 }; for (const k of Object.keys(BORNES)) if (k in patch && patch[k] != null) { const v = String(patch[k]).trim(); if (v.length > BORNES[k] || /[<>]/.test(v) || (k === "telephone" && !/^[0-9 +().-]*$/.test(v))) return json(400, { error: "Champ « " + k + " » invalide" }); patch[k] = v; } if ("avatar_url" in patch && patch.avatar_url != null && patch.avatar_url !== "") { const v = String(patch.avatar_url); if (v.length > 500 || !v.startsWith("https://kxdgjtvrkwugbifgppai.supabase.co/storage/v1/object/public/")) return json(400, { error: "Image de profil invalide" }); } for (const k of ["nom","prenom"]) if (k in patch) { const v = String(patch[k] ?? "").trim(); if (v.length > 80 || /https?:|www\.|@|<|>|\.[a-z]{2,}\b/i.test(v)) return json(400, { error: "Nom ou prénom invalide" }); patch[k] = v; } /* 30/10 contre-audit m2 */ patch.updated_at = new Date().toISOString(); const { data: user, error } = await sb.from("clients_luxyra").update(patch).eq("id", lx_id).select(SAFE_COLUMNS).single(); if (error) return json(500, { error: error.message }); return json(200, { user }); }
     if (action === "change_password") {
       const oldPass = String(body.old_password || ""); const newPass = String(body.new_password || "");
       if (newPass.length < 8) return json(400, { error: "Nouveau mot de passe trop court (8 caractères minimum)" }); // 2026-10-14 audit site

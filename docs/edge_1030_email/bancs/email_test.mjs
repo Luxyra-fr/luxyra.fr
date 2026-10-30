@@ -18,6 +18,11 @@ await appliquerV2(db);
 const SQL = fs.readFileSync("/sessions/quirky-affectionate-hypatia/wt-email/docs/migrations_1030_email/email_client_rejete.sql", "utf8");
 await db.exec("set search_path = public, extensions;"); await db.exec(SQL);
 await db.exec("set search_path = public, extensions;"); await db.exec(SQL); // rejouable
+await db.exec("alter table public.client_password_resets add column if not exists email text;");
+await db.exec("set search_path = public, extensions;");
+await db.exec(fs.readFileSync("/sessions/quirky-affectionate-hypatia/luxyra.fr/docs/migrations_1030_email/verification_email.sql", "utf8"));
+await db.exec("set search_path = public, extensions;");
+await db.exec(fs.readFileSync("/sessions/quirky-affectionate-hypatia/luxyra.fr/docs/migrations_1030_email/verification_email.sql", "utf8")); // rejouable
 const monde = creerMonde(db);
 monde.worker = (await import("./worker_bundle.mjs?" + Math.random())).default;
 const profil = await chargerEdge("./edge_profile.mjs");
@@ -171,7 +176,7 @@ await garde("L", async () => {
 
 // ---------- verify_email efface le marquage ----------
 await garde("V", async () => {
-  await db.query(`update clients_luxyra set email_rejete_at=now(), email_rejet_motif='x', email_verified=false, verification_code=encode(extensions.digest('${"a".repeat(64)}','sha256'),'hex'), verification_expires_at=now()+interval '1 day' where id=$1`, [B]);
+  await db.query(`update clients_luxyra set email_rejete_at=now(), email_rejet_motif='x', email_verified=false, verification_code=encode(extensions.digest('${"a".repeat(64)}','sha256'),'hex'), verification_expires_at=now()+interval '1 day', verification_email=email where id=$1`, [B]);
   const rv = await appelEdge(profil, { action: "verify_email", token: "a".repeat(64) });
   const b = await row(B);
   ok("verify_email : marquage effacé à la confirmation", rv.status === 200 && b.email_verified === true && b.email_rejete_at === null && b.email_rejet_motif === null, rv);
@@ -267,6 +272,70 @@ await garde("M2", async () => {
   const r2 = await appelWorker(monde, "/api/client/invite/verify", { token: inv2.token, password: "Mdp-Invite-2026!" });
   const f2 = (await db.query(`select client_luxyra_id from clients where id=$1`, [fiche.id])).rows[0];
   ok("non-régression M2 : compte confirmé -> fiche reliée (409 compte_existant)", r2.status === 409 && r2.body.compte_existant === true && f2.client_luxyra_id === "dddddddd-dddd-4ddd-8ddd-dddddddddd24", { r2, f2 });
+});
+
+// ---------- contre-audit 2 (30/10 nuit) : lien de confirmation lié à l'adresse (verification_email) ----------
+const sha = (t) => crypto.createHash("sha256").update(t).digest("hex");
+await garde("C2-course", async () => {
+  const Z = "dddddddd-dddd-4ddd-8ddd-dddddddddd31";
+  await db.query(`insert into clients_luxyra(id,email,password_hash,nom,prenom,email_verified,session_version) values ($1,'a31@exemple.test',$2,'Z','Zoe',false,0)`, [Z, hash(PASS)]);
+  const rc = await appelEdge(profil, { session_token: await jeton(Z, "a31@exemple.test"), action: "change_email", new_email: "victime31@exemple.test", password: PASS });
+  ok("C2 : change_email lie le lien à la nouvelle adresse", rc.status === 200 && (await row(Z)).verification_email === "victime31@exemple.test", rc.status);
+  // course simulée : un send_verification « en retard » écrit un code destiné à l'ANCIENNE adresse
+  const tk = "e".repeat(64);
+  await db.query(`update clients_luxyra set verification_code=$2, verification_email='a31@exemple.test', verification_expires_at=now()+interval '1 day' where id=$1`, [Z, sha(tk)]);
+  const rv = await appelEdge(profil, { action: "verify_email", token: tk });
+  ok("C2 : un lien parti à l'ancienne adresse ne confirme PAS la nouvelle", rv.status === 400 && (await row(Z)).email_verified === false, rv);
+  // send_verification juste après change_email : refusé atomiquement (délai 2 min), aucun envoi
+  const n0 = monde.emails.length;
+  const rs = await appelEdge(profil, { session_token: rc.body.session_token, action: "send_verification" });
+  ok("C2 : renvoi dans les 2 min refusé, aucun e-mail", rs.status === 429 && monde.emails.length === n0, rs.status);
+  // send_verification alors que l'adresse a changé depuis la lecture : 0 ligne -> aucun envoi (filtre .eq(email))
+  await db.query(`update clients_luxyra set verification_sent_at=now()-interval '1 hour' where id=$1`, [Z]);
+  const okLien = await appelEdge(profil, { session_token: rc.body.session_token, action: "send_verification" });
+  const lien = (() => { for (let i = monde.emails.length - 1; i >= 0; i--) { const m = JSON.stringify(monde.emails[i]).match(/verif=([0-9a-f]{64})/); if (m) return m[1]; } return null; })();
+  const z = await row(Z);
+  ok("C2 : renvoi normal -> lien lié à l'adresse actuelle, e-mail sans prénom", okLien.status === 200 && z.verification_email === "victime31@exemple.test" && !/Zoe/.test(JSON.stringify(monde.emails.at(-1))), okLien);
+  const rv2 = await appelEdge(profil, { action: "verify_email", token: lien });
+  ok("non-régression : le bon lien confirme l'adresse et efface verification_email", rv2.status === 200 && (await row(Z)).email_verified === true && (await row(Z)).verification_email === null, rv2);
+});
+await garde("C2-ancien-null", async () => {
+  const Q = "dddddddd-dddd-4ddd-8ddd-dddddddddd32"; const tk = "f".repeat(64);
+  await db.query(`insert into clients_luxyra(id,email,password_hash,nom,prenom,email_verified,session_version,verification_code,verification_expires_at,verification_sent_at) values ($1,'a32@exemple.test',$2,'Q','Quentin',false,0,$3,now()+interval '1 day',now())`, [Q, hash(PASS), sha(tk)]);
+  const rv = await appelEdge(profil, { action: "verify_email", token: tk });
+  ok("C2 : code récent sans verification_email -> refusé", rv.status === 400 && (await row(Q)).email_verified === false, rv);
+  await db.query(`update clients_luxyra set verification_email=null, verification_sent_at='2026-10-29 10:00+00' where id=$1`, [Q]);
+  await db.exec(fs.readFileSync("/sessions/quirky-affectionate-hypatia/luxyra.fr/docs/migrations_1030_email/verification_email.sql", "utf8").replace(/^begin;|commit;/gm, ""));
+  const rv2 = await appelEdge(profil, { action: "verify_email", token: tk });
+  ok("C2 : code antérieur au 30/10 20:15 UTC repris par la migration -> accepté", rv2.status === 200 && (await row(Q)).email_verified === true, rv2);
+});
+await garde("C2-signup", async () => {
+  const signup = await chargerEdge("./edge_signup.mjs");
+  const n0 = monde.emails.length;
+  const r = await appelEdge(signup, { email: "nouveau33@exemple.test", password: "Tres-Long-Mdp-2026!q", nom: "NOUV", prenom: "Visitez evil.fr" });
+  const r2 = await appelEdge(signup, { email: "nouveau34@exemple.test", password: "Tres-Long-Mdp-2026!q", nom: "NOUV", prenom: "Sandra" });
+  const u = (await db.query(`select verification_email from clients_luxyra where email='nouveau34@exemple.test'`)).rows[0];
+  const m = JSON.stringify(monde.emails.slice(n0));
+  ok("C2 : inscription -> lien lié à l'adresse, e-mail sans prénom", r2.status === 200 && u && u.verification_email === "nouveau34@exemple.test" && !/Sandra|evil\.fr/.test(m), { r: r.status, r2: r2.status, u, m: m.slice(0, 200) });
+});
+await garde("C2-invitation", async () => {
+  const fiche = (await db.query(`update clients set client_luxyra_id=null where id=(select id from clients where salon_id=$1 order by id desc limit 1) returning id`, [S])).rows[0];
+  if (!fiche) { ok("invitation : fiche libre disponible", false); return; }
+  monde.edges = { "lx-signup": await chargerEdge("./edge_signup.mjs") };
+  const inv = (await db.query(`insert into client_invites(salon_id,client_id,email) values ($1,$2,'invite35@exemple.test') returning token`, [S, fiche.id])).rows[0];
+  const r = await appelWorker(monde, "/api/client/invite/verify", { token: inv.token, password: "Mdp-Invite-2026!Lx" });
+  const u = (await db.query(`select id,email_verified,verification_email from clients_luxyra where email='invite35@exemple.test'`)).rows[0];
+  const f = (await db.query(`select client_luxyra_id from clients where id=$1`, [fiche.id])).rows[0];
+  ok("non-régression invitation : compte créé, confirmé (écriture conditionnelle), fiche reliée", r.status === 200 && u && u.email_verified === true && f.client_luxyra_id === u.id, { r: r.status, b: r.body, u, f });
+});
+await garde("C2-update", async () => {
+  const t = await jeton(V, "verifiee@exemple.test");
+  const a = await appelEdge(profil, { session_token: t, action: "update", telephone: "appelez-moi" });
+  const b = await appelEdge(profil, { session_token: t, action: "update", avatar_url: "https://evil.example/x.png" });
+  const c = await appelEdge(profil, { session_token: t, action: "update", prenom: "evil.fr" });
+  const d = await appelEdge(profil, { session_token: t, action: "update", adresse: "x".repeat(201) });
+  const e = await appelEdge(profil, { session_token: t, action: "update", telephone: "06 12 34 56 78", ville: "Sarreguemines", cp: "57200", adresse: "20 rue Nationale" });
+  ok("C2 : champs de update bornés (téléphone, avatar, domaine nu, adresse) ; valeurs normales acceptées", [a, b, c, d].every((x) => x.status === 400) && e.status === 200, [a.status, b.status, c.status, d.status, e.status]);
 });
 monde.restaurer();
 console.log(`E-mail client mal saisi : ${nOk}/${nOk + nKo} OK`);

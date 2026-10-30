@@ -11,6 +11,7 @@ for (const [f, out] of [["lx-profile", "edge_profile.mjs"], ["avant/lx-profile",
 }
 await esbuild.build({ entryPoints: ["/sessions/quirky-affectionate-hypatia/luxyra.fr/docs/luxyra-router-worker.js"], bundle: true, format: "esm", platform: "node", outfile: "/tmp/em/worker_bundle.mjs", logLevel: "error" });
 await esbuild.build({ entryPoints: ["/sessions/quirky-affectionate-hypatia/luxyra.fr/docs/edge_1014/lx-password-reset/index.ts"], bundle: true, format: "esm", platform: "node", outfile: "/tmp/em/edge_reset.mjs", plugins: [plugin], logLevel: "error" });
+await esbuild.build({ entryPoints: ["/sessions/quirky-affectionate-hypatia/luxyra.fr/docs/edge_1014/lx-signup/index.ts"], bundle: true, format: "esm", platform: "node", outfile: "/tmp/em/edge_signup.mjs", plugins: [plugin], logLevel: "error" });
 console.log("bundles OK");
 await esbuild.build({ entryPoints: ["/sessions/quirky-affectionate-hypatia/luxyra.fr/docs/edge_1030_surmesure/rdv-demande-propose/index.ts"], bundle: true, format: "esm", platform: "node", outfile: "/tmp/em/edge_propose.mjs", plugins: [plugin], logLevel: "error" });
 console.log("propose OK");
