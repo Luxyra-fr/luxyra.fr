@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Mon compte – Luxyra</title>
 <link rel="stylesheet" href="https://luxyra.fr/fonts/luxyra-fonts.css">
-<script src="/lx-client.js?v=20261014-3"></script>
+<script src="/lx-client.js?v=20261030-1"></script>
 <style>
 :root{--bg:#050508;--bg2:#0d0d14;--card:#12121c;--border:rgba(255,255,255,.06);--border2:rgba(255,255,255,.12);--text:#f5f5f7;--text2:#a0a0b0;--text3:#606070;--gold:#c8a84e;--gold-bg:rgba(200,168,78,.08);--gold2:rgba(200,168,78,.15);--green:#4ade80;--red:#f87171;--blue:#60a5fa;--orange:#fb923c;--r:14px;--f1:'DM Sans',sans-serif;--f2:'Playfair Display',serif}
 *{margin:0;padding:0;box-sizing:border-box}
@@ -285,12 +285,49 @@ function render(){
 
 // ========== VERIFICATION EMAIL (2026-10-14) ==========
 function renderVerifBanner(){
-  var h='<div id="verifBanner" style="margin:0 0 14px;padding:14px;border-radius:12px;border:1px solid rgba(200,168,78,.6);background:rgba(200,168,78,.08);font-size:13px;line-height:1.55;color:var(--text2)">';
+  // 2026-10-30 : adresse refusée par la messagerie (faute de frappe probable) -> bandeau rouge + correction ouverte
+  var rej=!!CLIENT.email_rejete_at;
+  var h='<div id="verifBanner" style="margin:0 0 14px;padding:14px;border-radius:12px;border:1px solid '+(rej?'rgba(248,113,113,.6)':'rgba(200,168,78,.6)')+';background:'+(rej?'rgba(248,113,113,.08)':'rgba(200,168,78,.08)')+';font-size:13px;line-height:1.55;color:var(--text2)">';
+  if(rej){
+    h+='<div style="font-weight:800;color:#ff8a80;margin-bottom:4px">\u26a0\ufe0f Votre adresse e-mail semble incorrecte : corrigez-la</div>';
+    h+='Nos e-mails envoy\u00e9s \u00e0 <b>'+escAttr(CLIENT.email)+'</b> sont refus\u00e9s (adresse inexistante, souvent une faute de frappe). Tant qu\u2019elle n\u2019est pas corrig\u00e9e, vous ne recevez ni confirmation ni rappel par e-mail.';
+    h+=renderCorrigerEmail(true);
+    h+='</div>';
+    return h;
+  }
   h+='<div style="font-weight:800;color:var(--gold);margin-bottom:4px">\u2709\ufe0f Confirmez votre adresse email</div>';
   h+='Pour votre s\u00e9curit\u00e9, les rendez-vous, tickets, points de fid\u00e9lit\u00e9 et cartes enregistr\u00e9s par vos \u00e9tablissements avec l\u2019adresse <b>'+escAttr(CLIENT.email)+'</b> n\u2019apparaissent qu\u2019apr\u00e8s confirmation. Ouvrez le lien re\u00e7u par email (pensez aux courriers ind\u00e9sirables).';
   h+='<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center"><button id="btnVerifRenvoi" onclick="doSendVerification()" style="padding:9px 16px;border-radius:10px;border:none;background:var(--gold);color:#000;font-weight:800;cursor:pointer;font-size:13px">Renvoyer l\u2019email</button><span id="verifMsg" style="font-size:12px"></span></div>';
+  h+=renderCorrigerEmail(false); // 2026-10-30
   h+='</div>';
   return h;
+}
+// 2026-10-30 : correction de l'adresse tant qu'elle n'est pas confirmée (mot de passe exigé)
+function renderCorrigerEmail(ouvert){
+  var h='<div style="margin-top:10px">';
+  if(!ouvert) h+='<a href="#" id="lnkCorrEmail" onclick="event.preventDefault();var f=document.getElementById(\'corrEmailForm\');if(f){f.style.display=\'block\';this.style.display=\'none\';var i=document.getElementById(\'ceNew\');if(i)i.focus();}" style="color:var(--gold);font-size:13px">Adresse mal saisie ? Corrigez-la</a>';
+  h+='<div id="corrEmailForm" style="display:'+(ouvert?'block':'none')+';margin-top:8px">';
+  h+='<div class="fg" style="margin-bottom:8px"><label style="font-size:12px">Nouvelle adresse e-mail</label><input id="ceNew" type="email" autocomplete="email" placeholder="votre@email.fr" data-lx-sugg="1"></div>';
+  h+='<div class="fg" style="margin-bottom:8px"><label style="font-size:12px">Votre mot de passe Luxyra</label><input id="cePass" type="password" autocomplete="current-password" onkeydown="if(event.key===\'Enter\')doCorrigerEmail()"></div>';
+  h+='<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><button id="btnCorrEmail" onclick="doCorrigerEmail()" style="padding:9px 16px;border-radius:10px;border:none;background:var(--gold);color:#000;font-weight:800;cursor:pointer;font-size:13px">Corriger et recevoir le lien</button><span id="ceMsg" style="font-size:12px"></span></div>';
+  h+='</div></div>';
+  return h;
+}
+async function doCorrigerEmail(){
+  var i=document.getElementById("ceNew"), p=document.getElementById("cePass"), b=document.getElementById("btnCorrEmail"), m=document.getElementById("ceMsg");
+  var v=String((i&&i.value)||"").trim().toLowerCase(), pw=String((p&&p.value)||"");
+  function msg(t,ok){ if(m){ m.textContent=t; m.style.color=ok?"#81c784":"#f87171"; } }
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)){ msg("Saisissez une adresse e-mail valide."); return; }
+  if(!pw){ msg("Saisissez votre mot de passe."); return; }
+  if(b){ b.disabled=true; b.textContent="Envoi\u2026"; }
+  var res=await LX.changeEmail(v,pw);
+  if(b){ b.disabled=false; b.textContent="Corriger et recevoir le lien"; }
+  if(res.ok&&res.data&&res.data.user){
+    CLIENT=res.data.user; saveSession();
+    window._lxVerifMsg={ok:true,t:res.data.envoye?("Adresse corrig\u00e9e. Un lien de confirmation a \u00e9t\u00e9 envoy\u00e9 \u00e0 "+v+" (pensez aux courriers ind\u00e9sirables)."):("Adresse corrig\u00e9e en "+v+". L\u2019e-mail de confirmation n\u2019a pas pu partir : utilisez \u00ab Renvoyer l\u2019email \u00bb dans quelques minutes.")};
+    render(); return;
+  }
+  msg((res.data&&res.data.error)||"Correction impossible, r\u00e9essayez.");
 }
 async function doSendVerification(){
   var b=document.getElementById("btnVerifRenvoi"), m=document.getElementById("verifMsg");
@@ -382,7 +419,7 @@ function renderRegister(){
   h+='<div class="fg"><label>Pays *</label><select id="rPays" data-lx-pays="1">'+['France','Allemagne','Luxembourg','Belgique','Suisse','Autre pays'].map(function(p){return '<option'+(p===("France")?' selected':'')+'>'+p+'</option>';}).join('')+'</select></div>';
   h+='<div class="fg-row"><div class="fg"><label>Code postal *</label><input id="rCp" inputmode="numeric" placeholder="Code postal" autocomplete="postal-code"></div>';
   h+='<div class="fg"><label>Ville *</label><input id="rVille" readonly data-lx-ville-liste="1" style="cursor:default" placeholder="Choisie d\u2019apr\u00e8s le code postal" autocomplete="address-level2"></div></div>';
-  h+='<div class="fg"><label>Email *</label><input id="rEmail" type="email" placeholder="votre@email.fr"></div>';
+  h+='<div class="fg"><label>Email *</label><input id="rEmail" type="email" placeholder="votre@email.fr" data-lx-sugg="1" autocomplete="email"></div>';
   h+='<div class="fg"><label>Mot de passe *</label><input id="rPass" type="password" placeholder="Minimum 8 caract\u00e8res"></div>';
   h+='<div class="fg"><label>Confirmer le mot de passe *</label><input id="rPass2" type="password" placeholder="Confirmez" onkeydown="if(event.key===\'Enter\')doRegister()"></div>';
   h+='<div class="consent">';
@@ -491,6 +528,7 @@ function renderDashboard(){
   // 2026-10-14 : bandeau de vérification de l'adresse email
   if(window._lxVerifMsg) h+='<div style="margin:0 0 14px;padding:12px 14px;border-radius:12px;border:1px solid '+(window._lxVerifMsg.ok?'rgba(129,199,132,.5)':'rgba(248,113,113,.5)')+';font-size:13px;line-height:1.5;color:var(--text2)">'+escAttr(window._lxVerifMsg.t)+'</div>';
   if(CLIENT.email_verified!==true) h+=renderVerifBanner();
+  else if(CLIENT.email_rejete_at) h+='<div style="margin:0 0 14px;padding:14px;border-radius:12px;border:1px solid rgba(248,113,113,.55);background:rgba(248,113,113,.08);font-size:13px;line-height:1.55;color:var(--text2)"><div style="font-weight:800;color:#ff8a80;margin-bottom:4px">\u26a0\ufe0f Votre adresse e-mail semble incorrecte</div>Nos e-mails envoy\u00e9s \u00e0 <b>'+escAttr(CLIENT.email)+'</b> sont refus\u00e9s. Comme elle est d\u00e9j\u00e0 confirm\u00e9e, \u00e9crivez \u00e0 <a href="mailto:contact@luxyra.fr" style="color:var(--gold)">contact@luxyra.fr</a> pour la changer.</div>'; // 2026-10-30
   if(!CLIENT.adresse||!CLIENT.cp||!CLIENT.ville) h+='<div onclick="TAB=\'profile\';render()" style="cursor:pointer;margin:0 0 14px;padding:12px 14px;border-radius:12px;border:1px solid rgba(200,168,78,.5);background:rgba(200,168,78,.1);font-size:13px;line-height:1.45">\ud83c\udfe0 <b>Compl\u00e9tez votre adresse</b> : elle est n\u00e9cessaire pour les prestations \u00e0 domicile. <span style="color:#c8a84e;font-weight:700">Compl\u00e9ter \u203a</span></div>';
   
   // Tabs
