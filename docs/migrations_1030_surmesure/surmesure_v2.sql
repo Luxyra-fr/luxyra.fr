@@ -496,7 +496,7 @@ $f$;
 
 create or replace function public.lx_demande_consulter(p_token text)
  returns jsonb language plpgsql security definer set search_path to 'public', 'pg_temp' as $f$
-declare v_d public.rdv_demandes; v_opts jsonb; v_paye numeric;
+declare v_d public.rdv_demandes; v_opts jsonb; v_paye numeric; v_recu integer;
 begin
   if not lx_prive.appel_serveur() then perform lx_prive.sm_erreur('LX_SM_INTERDIT', 'Accès refusé'); end if;
   if coalesce(length(p_token), 0) < 16 then return jsonb_build_object('ok', false, 'code', 'introuvable'); end if;
@@ -512,10 +512,11 @@ begin
   select coalesce(jsonb_agg(lx_prive.sm_option_json(o) order by o.rang), '[]'::jsonb) into v_opts
     from public.rdv_demande_options o where o.demande_id = v_d.id and o.envoi = v_d.envoi;
   select coalesce(sum(p.montant), 0) into v_paye from public.rdv_demande_paiements p where p.demande_id = v_d.id and p.statut = 'confirme';
+  if v_d.rdv_online_id is not null then select r.acompte_tk_num into v_recu from public.rdv_online r where r.id = v_d.rdv_online_id; end if;
   return jsonb_build_object('ok', true, 'demande', jsonb_build_object(
       'id', v_d.id, 'salon_id', v_d.salon_id, 'status', v_d.status, 'version', v_d.proposal_version, 'expires_at', v_d.proposal_expires_at,
       'proposed_at', v_d.proposed_at, 'confirmed_at', v_d.confirmed_at, 'refused_at', v_d.refused_at, 'rdv_online_id', v_d.rdv_online_id,
-      'demande_text', v_d.demande_text, 'option_choisie_id', v_d.option_choisie_id, 'acompte_paye', v_paye,
+      'demande_text', v_d.demande_text, 'option_choisie_id', v_d.option_choisie_id, 'acompte_paye', v_paye, 'recu_acompte', v_recu,
       'paiement_en_cours', v_d.checkout_expires_at is not null and v_d.checkout_expires_at > now(), 'checkout_option_id', v_d.checkout_option_id,
       'proposed_data', v_d.proposed_data,
       'client', jsonb_build_object('prenom', v_d.client_prenom, 'nom', v_d.client_nom, 'email', v_d.client_email, 'tel', v_d.client_tel)),

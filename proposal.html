@@ -105,6 +105,7 @@ async function fetchProposal(){
     }
     STATE.demande=data.demande;
     STATE.salon=data.salon||{};
+    if(data.version===2){ STATE.v2=data; renderV2(); return; } // 2026-10-30 : proposition à plusieurs options
     if(data.demande.status==="confirmed"){ renderConfirmed(); return; }
     if(data.demande.status==="refused"){ renderRefused(); return; }
     if(data.demande.status==="expired"||data.demande.status==="cancelled_by_salon"){ renderError("Proposition cloturee", "Cette proposition n\u0027est plus active."); return; }
@@ -309,6 +310,8 @@ async function finalizeCheckoutReturn(token, sessionId){
       lxAttendreConfirmation(token, sessionId);
       return;
     }
+    // 2026-10-30 (v2) : paiement en trop (autre option déjà retenue / proposition retirée) -> remboursé automatiquement
+    if(r.ok && data && data.ok===false && (data.rembourse!==undefined)){ window.history.replaceState({},"","/proposal.html?t="+encodeURIComponent(token)); renderV2Rembourse(data.error); return; }
     if(!r.ok){
       renderError("Erreur lors de la confirmation", data.error||"Le paiement a réussi mais la confirmation a échoué. Contactez l\u0027établissement avec la référence : "+sessionId);
       return;
@@ -361,10 +364,11 @@ function lxAttendreConfirmation(token, sessionId){
       var d=await r.json().catch(function(){ return {}; });
       if(r.ok && d && d.demande){
         STATE.demande=d.demande; STATE.salon=d.salon||STATE.salon||{};
+        if(d.version===2) STATE.v2=d; // 2026-10-30
         st=d.demande.status;
       }
     }catch(_){}
-    if(st==="confirmed"){ _lxAttente=null; renderConfirmed(); return; }
+    if(st==="confirmed"){ _lxAttente=null; if(STATE.v2) renderV2Confirme(); else renderConfirmed(); return; }
     if(Date.now()-debut>=DUREE){
       // Dernière tentative de finalisation (le verrou d'une confirmation interrompue a expiré)
       if(!relanceFaite && sessionId){
@@ -486,6 +490,178 @@ async function doPayment(){
     errEl.textContent="Erreur: "+e.message;
     btn.disabled=false; btn.textContent="🔒 Payer "+acompte.toFixed(2)+" €";
   }
+}
+
+
+// ============================================================================
+// 2026-10-30 — RDV sur mesure v2 : proposition à PLUSIEURS OPTIONS (maquettes 3 et 4 validées). Le client choisit UNE
+// option : sans acompte -> confirmation immédiate (action « choose ») ; avec acompte -> paiement Stripe sur le compte de
+// l'établissement (worker /api/rdv-demande/connect-pay { token, option_id }), le créneau est revérifié avant le paiement.
+// Ancien format (une seule proposition) : code d'origine ci-dessus, inchangé.
+// ============================================================================
+var V2={sel:null,detail:{},envoi:false};
+var _J=["dimanche","lundi","mardi","mercredi","jeudi","vendredi","samedi"], _M=["janvier","février","mars","avril","mai","juin","juillet","août","septembre","octobre","novembre","décembre"], _Mc=["janv.","févr.","mars","avr.","mai","juin","juil.","août","sept.","oct.","nov.","déc."];
+function v2Jour(ymd,court){ var m=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(ymd||"")); if(!m) return ""; var d=new Date(+m[1],+m[2]-1,+m[3]);
+  if(court){ var t=_J[d.getDay()].slice(0,3)+". "+(+m[3])+" "+_Mc[+m[2]-1]; return t.charAt(0).toUpperCase()+t.slice(1); }
+  var t2=_J[d.getDay()]+" "+(+m[3])+" "+_M[+m[2]-1]; return t2.charAt(0).toUpperCase()+t2.slice(1); }
+function v2Duree(min){ min=Number(min)||0; var h=Math.floor(min/60), m=min%60; return h?(h+" h"+(m?" "+String(m).padStart(2,"0"):"")):(m+" min"); }
+function v2Eur(n){ return (Number(n)||0).toFixed(2).replace(".",",")+" €"; }
+function v2Echeance(ts){ var d=new Date(ts); if(isNaN(d)) return ""; return d.toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long"})+" à "+d.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"}); }
+function v2Lettre(r){ return String.fromCharCode(64+(Number(r)||1)); }
+function v2Initiales(n){ return String(n||"").split(/\s+/).filter(Boolean).slice(0,2).map(function(x){return x.charAt(0).toUpperCase();}).join("")||"✦"; }
+function v2Options(){ return (STATE.v2&&STATE.v2.options)||[]; }
+function v2Opt(id){ var o=v2Options(); for(var i=0;i<o.length;i++) if(o[i].id===id) return o[i]; return null; }
+function v2Choisissables(){ return v2Options().filter(function(o){ return o.statut==="proposee" && !o.passee; }); }
+
+function v2Css(){ if(document.getElementById("v2css")) return; var st=document.createElement("style"); st.id="v2css"; st.textContent=''
+  +'.wrap.v2{max-width:1080px}.v2top{display:flex;justify-content:space-between;align-items:center;padding:6px 0 18px;border-bottom:1px solid rgba(255,255,255,.08);margin-bottom:18px}'
+  +'.v2top .lg{font-family:var(--f1);color:var(--gold);font-size:22px;font-weight:700;text-decoration:none}.v2top a.me{color:var(--text2);font-weight:700;font-size:14px;text-decoration:none}'
+  +'.v2av{width:84px;height:84px;border-radius:50%;border:2px solid var(--gold);background:#2a2416;color:var(--gold);display:flex;align-items:center;justify-content:center;font-family:var(--f1);font-size:28px;margin:0 auto 12px;overflow:hidden}.v2av img{width:100%;height:100%;object-fit:cover}'
+  +'.v2h1{font-family:var(--f1);font-size:38px;text-align:center;margin:4px 0}.v2lead{text-align:center;color:var(--text2);font-size:16px}'
+  +'.v2dem{display:table;margin:12px auto 22px;border:1px solid rgba(255,255,255,.12);border-radius:20px;padding:6px 16px;font-size:14px;color:var(--text2)}'
+  +'.v2grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px}'
+  +'.v2opt{background:var(--bg3);border:1.5px solid rgba(255,255,255,.1);border-radius:18px;padding:20px 22px;cursor:pointer;position:relative;transition:border-color .2s}.v2opt.on{border-color:var(--gold);background:#1b1913}.v2opt.off{opacity:.55;cursor:not-allowed}'
+  +'.v2radio{width:24px;height:24px;border-radius:50%;border:2px solid rgba(255,255,255,.35);display:inline-flex;align-items:center;justify-content:center;flex:none}.v2opt.on .v2radio{border-color:var(--gold)}.v2opt.on .v2radio:after{content:"";width:12px;height:12px;border-radius:50%;background:var(--gold)}'
+  +'.v2ol{color:var(--gold);font-weight:800;font-size:14px}.v2ot{font-family:var(--f1);font-size:24px;margin:2px 0 12px}'
+  +'.v2r{display:flex;justify-content:space-between;padding:5px 0;font-size:15px}.v2r span:first-child{color:var(--text3)}.v2r b{font-weight:700}'
+  +'.v2it{display:flex;justify-content:space-between;border-top:1px solid rgba(255,255,255,.08);padding-top:10px;margin-top:8px;font-size:15px}.v2it small{display:block;color:var(--text3);font-size:13px}'
+  +'.v2tot{display:flex;justify-content:space-between;align-items:center;margin:12px 0}.v2tot b{font-size:26px;color:var(--gold)}'
+  +'.v2ac{border-radius:12px;padding:12px 14px;font-size:14px;line-height:1.5}.v2ac.g{background:rgba(74,222,128,.07);border:1px solid rgba(74,222,128,.35)}.v2ac.g b{color:#4ade80}.v2ac.b{background:rgba(96,165,250,.07);border:1px solid rgba(96,165,250,.35)}.v2ac.b b{color:#93c5fd}'
+  +'.v2note{border-left:3px solid var(--gold);padding:4px 12px;margin-top:14px;color:var(--text2);font-size:14px}'
+  +'.v2tag{display:inline-block;border-radius:14px;padding:3px 10px;font-size:12px;font-weight:800;margin-top:8px}.v2tag.ko{background:rgba(248,113,113,.15);color:#f87171}'
+  +'.v2bar{display:flex;justify-content:space-between;align-items:center;gap:18px;flex-wrap:wrap;background:var(--bg3);border:1px solid rgba(255,255,255,.1);border-radius:18px;padding:20px 24px;margin:22px 0}'
+  +'.v2bar .k{color:var(--gold);font-weight:800}.v2bar .t{font-size:19px;font-weight:800;margin:4px 0}.v2bar .s{color:var(--text3);font-size:13px}.v2bar .btn{width:auto;min-width:280px;margin:0}'
+  +'.v2foot{text-align:center;color:var(--text3);font-size:13px;line-height:2}.v2foot a{color:#f8a3a3;font-weight:800;text-decoration:none;cursor:pointer}'
+  +'.v2m{display:none}.v2d{display:block}'
+  +'@media (max-width:700px){.v2d{display:none}.v2m{display:block}.v2h1{font-size:28px}.v2av{width:64px;height:64px;font-size:22px}.v2grid{grid-template-columns:1fr;gap:14px}.v2opt{padding:16px}.v2bar{position:sticky;bottom:0;border-radius:14px 14px 0 0;margin:14px -16px 0;padding:14px 16px}.v2bar .btn{width:100%;min-width:0}.v2bar .txt{display:none}}'
+  +'.v2c .rec{background:var(--bg3);border:1px solid rgba(255,255,255,.1);border-radius:16px;padding:14px 18px;text-align:left;max-width:460px;margin:18px auto}'
+  +'.v2c .ok{width:96px;height:96px;border-radius:50%;border:3px solid #4ade80;color:#4ade80;display:flex;align-items:center;justify-content:center;font-size:48px;margin:10px auto 18px;background:rgba(74,222,128,.06)}'
+  +'.v2btns{display:grid;grid-template-columns:1fr 1fr;gap:10px;max-width:460px;margin:0 auto}.v2btns .btn{margin:0}'+'.v2c a.btn{text-decoration:none;display:flex;align-items:center;justify-content:center}';
+  document.head.appendChild(st); }
+
+function v2Entete(s,sous){
+  var h='<div class="v2top"><a class="lg" href="https://luxyra.fr/">Luxyra</a><a class="me" href="https://luxyra.fr/compte">Mon espace</a></div>';
+  h+='<div class="v2av">'+(s.logo&&/^(https:|data:image)/.test(s.logo)?'<img src="'+escapeHtml(s.logo)+'" alt="">':escapeHtml(v2Initiales(s.nom)))+'</div>';
+  h+='<div class="v2h1">'+escapeHtml(s.nom||"Votre établissement")+'</div>';
+  if(sous) h+='<div class="v2lead">'+sous+'</div>';
+  return h;
+}
+function renderV2(){
+  v2Css();
+  var d=STATE.v2.demande, s=STATE.salon||{}, root=document.getElementById("root"); root.className="wrap v2";
+  if(d.status==="confirmed") return renderV2Confirme();
+  if(d.status==="refused") return renderRefused();
+  if(d.status==="expired"){ root.innerHTML=v2Entete(s,"")+'<div class="card" style="text-align:center;margin-top:20px"><div style="font-size:44px">⌛</div><h2 style="font-family:var(--f1)">Proposition expirée</h2><p style="color:var(--text2)">Cette proposition n\'est plus valable : aucun créneau n\'est réservé et rien ne vous a été débité.</p>'+(s.telephone?'<p><a class="btn btn-outline" style="display:inline-block;width:auto;padding:12px 22px" href="tel:'+escapeHtml(String(s.telephone).replace(/\s/g,""))+'">📞 Appeler l\'établissement</a></p>':'')+'</div>'; return; }
+  if(d.status==="cancelled_by_salon"){ root.innerHTML=v2Entete(s,"")+'<div class="card" style="text-align:center;margin-top:20px"><h2 style="font-family:var(--f1)">Proposition retirée</h2><p style="color:var(--text2)">L\'établissement a retiré cette proposition. Rien ne vous a été débité.</p></div>'; return; }
+  if(d.status==="pending"){ root.innerHTML=v2Entete(s,"")+'<div class="card" style="text-align:center;margin-top:20px"><div style="font-size:40px">🕒</div><h2 style="font-family:var(--f1)">Nouvelle proposition en préparation</h2><p style="color:var(--text2)">L\'établissement prépare une autre proposition : vous allez la recevoir. Aucun paiement n\'a été effectué.</p></div>'; return; }
+  var opts=v2Options(), ch=v2Choisissables();
+  if(!V2.sel||!v2Opt(V2.sel)||v2Opt(V2.sel).statut!=="proposee"){ var mem=null; try{ mem=sessionStorage.getItem("lxv2sel_"+STATE.token); }catch(_){} V2.sel=(mem&&v2Opt(mem)&&v2Opt(mem).statut==="proposee")?mem:(ch.length===1?ch[0].id:(d.checkout_option_id&&v2Opt(d.checkout_option_id)?d.checkout_option_id:null)); }
+  var n=opts.length;
+  var h=v2Entete(s,n>1?'vous propose '+n+' rendez-vous : choisissez celui qui vous convient':'vous propose un rendez-vous');
+  if(d.demande_text) h+='<div class="v2dem">Votre demande : « '+escapeHtml(String(d.demande_text).slice(0,120))+(String(d.demande_text).length>120?'…':'')+' »</div>';
+  h+='<div class="v2grid">';
+  opts.forEach(function(o){ h+=v2Carte(o); });
+  h+='</div>';
+  h+='<div id="errBox" class="err"></div>';
+  h+=v2Barre();
+  h+='<div class="v2foot">'+(opts.some(function(o){return Number(o.acompte_montant)>0;})?'Paiement sécurisé par Stripe, encaissé directement par l\'établissement<br>':'')+'<a onclick="openRefuseModal()">Aucune option ne vous convient ? Refuser et écrire au salon</a><br>Proposition valable jusqu\'au '+escapeHtml(v2Echeance(d.expires_at))+'</div>';
+  root.innerHTML=h;
+}
+function v2Carte(o){
+  var on=V2.sel===o.id, dispo=o.statut==="proposee"&&!o.passee, ac=Number(o.acompte_montant)||0;
+  var h='<div class="v2opt'+(on?' on':'')+(dispo?'':' off')+'" onclick="'+(dispo?'v2Choisir(\''+o.id+'\')':'')+'">';
+  // ordinateur (maquette 3)
+  h+='<div class="v2d"><div style="display:flex;gap:12px;align-items:flex-start"><span class="v2radio"></span><div style="flex:1;min-width:0"><div class="v2ol">Option '+v2Lettre(o.rang)+'</div><div class="v2ot">'+escapeHtml(o.libelle)+'</div></div></div>';
+  h+='<div class="v2r"><span>Date</span><b>'+escapeHtml(v2Jour(o.date))+'</b></div><div class="v2r"><span>Heure</span><b>'+escapeHtml(o.heure)+' – '+escapeHtml(o.heure_fin)+'</b></div>';
+  if(o.collaborateur_nom) h+='<div class="v2r"><span>Avec</span><b>'+escapeHtml(o.collaborateur_nom)+'</b></div>';
+  (o.items||[]).forEach(function(it){ h+='<div class="v2it"><div><b>'+escapeHtml(v2Joli(it.nom))+'</b><small>'+v2Duree(it.duree)+'</small></div><b style="color:var(--gold)">'+(it.a_partir_de?'à partir de ':'')+v2Eur(it.prix)+'</b></div>'; });
+  h+='<div class="v2tot"><b style="font-size:17px;color:#fff">Total</b><b>'+v2Eur(o.prix_total)+'</b></div>';
+  h+=ac>0?'<div class="v2ac b"><b>Acompte à régler en ligne : '+v2Eur(ac)+'</b><br>Reste à payer au salon : '+v2Eur(o.reste)+'. Validé dès le paiement.</div>':'<div class="v2ac g"><b>Sans acompte</b><br>Confirmé immédiatement. Tout se règle au salon.</div>';
+  if(o.note) h+='<div class="v2note">« '+escapeHtml(o.note)+' »</div>';
+  h+='</div>';
+  // téléphone (maquette 4)
+  h+='<div class="v2m"><div style="display:flex;gap:10px;align-items:center"><span class="v2radio"></span><b style="font-size:16px">Option '+v2Lettre(o.rang)+' · '+escapeHtml(o.libelle)+'</b></div>';
+  h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px"><div><b>'+escapeHtml(v2Jour(o.date,true))+' · '+escapeHtml(o.heure)+' · '+v2Duree(o.duree_minutes)+'</b>'+(o.collaborateur_nom?'<div style="color:var(--text3)">avec '+escapeHtml(o.collaborateur_nom)+'</div>':'')+'</div><b style="color:var(--gold);font-size:20px">'+v2Eur(o.prix_total)+'</b></div>';
+  h+='<div style="display:flex;justify-content:space-between;align-items:center"><span class="v2tag" style="'+(ac>0?'background:rgba(96,165,250,.12);color:#93c5fd':'background:rgba(74,222,128,.1);color:#4ade80')+'">'+(ac>0?'Acompte '+v2Eur(ac):'Sans acompte')+'</span><a style="color:var(--gold);font-weight:800" onclick="event.stopPropagation();v2Detail(\''+o.id+'\')">Détails</a></div>';
+  if(V2.detail[o.id]){ (o.items||[]).forEach(function(it){ h+='<div class="v2it"><div>'+escapeHtml(v2Joli(it.nom))+'<small>'+v2Duree(it.duree)+'</small></div><span>'+v2Eur(it.prix)+'</span></div>'; }); if(ac>0) h+='<div style="font-size:13px;color:var(--text3);margin-top:6px">Reste à payer au salon : '+v2Eur(o.reste)+'</div>'; if(o.note) h+='<div class="v2note">« '+escapeHtml(o.note)+' »</div>'; }
+  h+='</div>';
+  if(o.statut==="creneau_pris") h+='<span class="v2tag ko">Créneau pris entre-temps</span>';
+  else if(o.passee) h+='<span class="v2tag ko">Créneau passé</span>';
+  return h+'</div>';
+}
+function v2Joli(n){ n=String(n||""); return n===n.toUpperCase()?n.charAt(0)+n.slice(1).toLowerCase():n; }
+function v2Barre(){
+  var o=V2.sel?v2Opt(V2.sel):null, d=STATE.v2.demande;
+  var h='<div class="v2bar"><div class="txt">';
+  if(!o) h+='<div class="k">Choisissez une option</div><div class="s">Une seule option peut être retenue. Les autres seront libérées.</div>';
+  else { var ac=Number(o.acompte_montant)||0, paye=ac>0&&STATE.salon&&STATE.salon.stripe_actif;
+    h+='<div class="k">Option '+v2Lettre(o.rang)+' sélectionnée</div><div class="t">'+escapeHtml(v2Jour(o.date))+', '+escapeHtml(o.heure)+(o.collaborateur_nom?' avec '+escapeHtml(o.collaborateur_nom):'')+(paye?' · acompte '+v2Eur(ac):'')+'</div>';
+    h+='<div class="s">'+(paye?'Le créneau est revérifié au moment du paiement. Si vous ne payez pas, rien n\'est réservé.':(ac>0?'Acompte de '+v2Eur(ac)+' à régler au salon. ':'')+'Le créneau est revérifié au moment de la confirmation.')+'</div>'; }
+  h+='</div>';
+  if(d.paiement_en_cours&&!o) h+='<div class="s" style="color:#fbbf24">Un paiement est en cours sur cette proposition.</div>';
+  if(o){ var ac2=Number(o.acompte_montant)||0, paye2=ac2>0&&STATE.salon&&STATE.salon.stripe_actif;
+    h+='<button class="btn btn-gold" id="v2go" onclick="v2Valider()">'+(paye2?'Payer '+v2Eur(ac2)+' et confirmer':'Confirmer ce rendez-vous')+'</button>'; }
+  else h+='<button class="btn btn-gold" disabled>Choisissez une option</button>';
+  h+='<div class="v2m" style="width:100%;text-align:center"><a style="color:#f8a3a3;font-weight:800" onclick="openRefuseModal()">Refuser les propositions</a><div style="font-size:12px;color:var(--text3)">Valable jusqu\'au '+escapeHtml(v2Echeance(d.expires_at))+'</div></div>';
+  return h+'</div>';
+}
+function v2Choisir(id){ V2.sel=id; try{ sessionStorage.setItem("lxv2sel_"+STATE.token,id); }catch(_){} renderV2(); }
+function v2Detail(id){ V2.detail[id]=!V2.detail[id]; renderV2(); }
+function v2Erreur(msg){ var e=document.getElementById("errBox"); if(e){ e.style.display="block"; e.textContent=msg; e.scrollIntoView({block:"center"}); } }
+async function v2Valider(){
+  if(V2.envoi) return; var o=v2Opt(V2.sel); if(!o) return;
+  var ac=Number(o.acompte_montant)||0, paye=ac>0&&STATE.salon&&STATE.salon.stripe_actif;
+  if(!paye && !confirm("Confirmer l'option "+v2Lettre(o.rang)+" : "+v2Jour(o.date)+" à "+o.heure+" ?")) return;
+  V2.envoi=true; var b=document.getElementById("v2go"); if(b){ b.disabled=true; b.textContent=paye?"Redirection vers le paiement…":"Confirmation…"; }
+  try{
+    if(paye){
+      var r=await fetch("/api/rdv-demande/connect-pay",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({token:STATE.token,option_id:o.id})});
+      var j=await r.json().catch(function(){return {};});
+      if(!r.ok||!j.url){ V2.envoi=false; await v2Recharger(); v2Erreur(j.error||"Impossible de créer le paiement"); return; }
+      window.location.href=j.url; return;
+    }
+    var r2=await fetch(SB_URL+"/functions/v1/rdv-demande-proposal-action",{method:"POST",headers:{"Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY},body:JSON.stringify({token:STATE.token,action:"choose",option_id:o.id})});
+    var j2=await r2.json().catch(function(){return {};});
+    V2.envoi=false;
+    if(!r2.ok){ await v2Recharger(); v2Erreur(j2.error||"Confirmation impossible"); return; }
+    await v2Recharger();
+  }catch(e){ V2.envoi=false; if(b){ b.disabled=false; } v2Erreur("Erreur de connexion : "+e.message); }
+}
+async function v2Recharger(){
+  try{
+    var r=await fetch(SB_URL+"/functions/v1/rdv-demande-proposal-action",{method:"POST",headers:{"Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY},body:JSON.stringify({token:STATE.token,action:"get"})});
+    var d=await r.json(); if(r.ok&&d.version===2){ STATE.v2=d; STATE.salon=d.salon||{}; STATE.demande=d.demande; renderV2(); }
+  }catch(_){}
+}
+function renderV2Confirme(){
+  var d=STATE.v2.demande, s=STATE.salon||{}, o=v2Opt(d.option_choisie_id)||{}, ac=Number(o.acompte_montant)||0, paye=Number(d.acompte_paye)||0;
+  var lib=v2Options().filter(function(x){ return x.id!==o.id && x.statut==="liberee"; }).map(function(x){ return v2Lettre(x.rang); });
+  var h='<div class="v2c" style="text-align:center"><div class="v2top" style="text-align:left"><a class="lg" href="https://luxyra.fr/">Luxyra</a><a class="me" href="https://luxyra.fr/compte">Mon espace</a></div><div class="ok">✓</div>';
+  h+='<div class="v2h1">Rendez-vous confirmé</div><div class="v2lead">'+(d.client&&d.client.email?'Un e-mail de confirmation vous a été envoyé.':'Votre rendez-vous est enregistré.')+'</div>';
+  h+='<div class="rec">';
+  var lg=function(k,v,c){ return '<div class="v2r"><span>'+k+'</span><b'+(c?' style="color:var(--gold)"':'')+'>'+v+'</b></div>'; };
+  h+=lg("Quand",escapeHtml(v2Jour(o.date,true))+" "+escapeHtml(o.heure||""))+lg("Durée",v2Duree(o.duree_minutes));
+  if(o.collaborateur_nom) h+=lg("Avec",escapeHtml(o.collaborateur_nom));
+  h+=lg("Prestation",escapeHtml(o.libelle||""))+lg("Total",v2Eur(o.prix_total));
+  if(ac>0){ h+=paye>0?lg("Acompte payé",v2Eur(paye),true)+lg("Reste au salon",v2Eur((Number(o.prix_total)||0)-paye)):lg("Acompte (à régler au salon)",v2Eur(ac)); }
+  h+='</div>';
+  h+='<div style="max-width:460px;margin:0 auto 16px;text-align:left;color:var(--text3);font-size:14px">'+(d.recu_acompte?'Reçu d\'acompte n° '+escapeHtml(String(d.recu_acompte))+' ('+escapeHtml(s.nom||"")+')<br>':'')+(lib.length?'L\'option '+lib.join(", ")+(lib.length>1?' ont':' a')+' été libérée'+(lib.length>1?'s':'')+'.':'')+'</div>';
+  var adr=[s.adresse,s.cp,s.ville].filter(Boolean).join(" ");
+  h+='<div class="v2btns"><button class="btn btn-outline" onclick="v2Calendrier()">Calendrier</button>'+(adr?'<a class="btn btn-outline" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(adr)+'">Itinéraire</a>':'<span></span>')+'</div>';
+  h+='<div style="max-width:460px;margin:12px auto 0"><a class="btn btn-gold" href="https://luxyra.fr/compte">Mon espace Luxyra</a></div></div>';
+  var root=document.getElementById("root"); root.className="wrap v2"; root.innerHTML=h;
+}
+function v2Calendrier(){
+  var d=STATE.v2.demande, s=STATE.salon||{}, o=v2Opt(d.option_choisie_id); if(!o) return;
+  var dt=String(o.date).replace(/-/g,""), hm=String(o.heure).replace(":","")+"00";
+  var fin=new Date(o.date+"T"+o.heure+":00"); fin.setMinutes(fin.getMinutes()+(Number(o.duree_minutes)||30));
+  var p=function(n){return String(n).padStart(2,"0");}, dtf=fin.getFullYear()+p(fin.getMonth()+1)+p(fin.getDate())+"T"+p(fin.getHours())+p(fin.getMinutes())+"00";
+  var ics=["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//Luxyra//RDV//FR","BEGIN:VEVENT","UID:"+d.id+"@luxyra.fr","DTSTAMP:"+new Date().toISOString().replace(/[-:]/g,"").slice(0,15)+"Z","DTSTART;TZID=Europe/Paris:"+dt+"T"+hm,"DTEND;TZID=Europe/Paris:"+dtf,"SUMMARY:"+(o.libelle||"Rendez-vous")+" - "+(s.nom||""),"LOCATION:"+[s.adresse,s.cp,s.ville].filter(Boolean).join(" "),"END:VEVENT","END:VCALENDAR"].join("\r\n");
+  var a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([ics],{type:"text/calendar"})); a.download="rendez-vous.ics"; document.body.appendChild(a); a.click(); a.remove();
+}
+function renderV2Rembourse(msg){
+  var s=STATE.salon||{};
+  document.getElementById("root").innerHTML='<div class="success-page"><div class="ico">↩️</div><h2 style="color:var(--gold)">Paiement non utilisé</h2><p>'+escapeHtml(msg||"Ce paiement n'a pas pu être utilisé : il vous est remboursé automatiquement.")+'</p>'+(s.telephone?'<p style="margin-top:10px"><strong>📞 '+escapeHtml(s.telephone)+'</strong></p>':'')+'</div>';
 }
 
 // Init — FIX 2026-05-12 : intercepte retour Stripe Checkout (Path A) avant fetch normal
