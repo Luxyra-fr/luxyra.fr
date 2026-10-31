@@ -1,3 +1,5 @@
+// lx-brevo-webhook v5 — 2026-10-31 (contre-audit 4) : limite 300/min seulement sans clé (A1), contrôle en échec -> 503 (A2),
+//   la clé n'est jamais enregistrée dans les rapports d'erreur (A3).
 // lx-brevo-webhook v4 — 2026-10-31 (contre-audit 3) : clé secrète dans l'URL (?k=…, coffre Supabase, contrôlée par
 //   lx_brevo_webhook_controle). Tant que la nouvelle URL n'a jamais servi, l'ancienne (sans clé) reste acceptée avec des
 //   limites (50 événements, 5 adresses signalées) et une alerte par jour dans la surveillance ; dès que la clé a servi une
@@ -19,7 +21,7 @@ const sb = createClient(SB_URL, SB_SR, { auth: { persistSession: false } });
 const CORS = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "content-type", "Access-Control-Allow-Methods": "POST, OPTIONS" };
 function json(s:number,b:unknown){return new Response(JSON.stringify(b),{status:s,headers:{...CORS,"Content-Type":"application/json"}});}
 
-{ const _LX_FN="lx-brevo-webhook"; const _LX_URL=Deno.env.get("SB_URL")||Deno.env.get("SUPABASE_URL")||""; const _LX_SR=Deno.env.get("SB_SERVICE_ROLE")||Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")||""; const _lxReport=async(msg:string,sev:"warning"|"error"|"critical",err?:unknown,ctx?:Record<string,unknown>)=>{try{await fetch(_LX_URL+"/rest/v1/rpc/report_server_error",{method:"POST",headers:{"Content-Type":"application/json","apikey":_LX_SR,"Authorization":"Bearer "+_LX_SR},body:JSON.stringify({p_source:"edge_fn:"+_LX_FN,p_message:String(msg||"").slice(0,800),p_severity:sev,p_stack:(err as Error)?.stack?String((err as Error).stack).slice(0,3000):null,p_context:ctx||null})});}catch(_){}}; (globalThis as any).__lxReport=_lxReport; const _orig=Deno.serve; (Deno as any).serve=(handler:any,opts?:any)=>_orig(async(req:Request)=>{try{const res=await handler(req); if(res&&res.status>=500){const body=await res.clone().text().catch(()=>""); await _lxReport("HTTP "+res.status,"error",undefined,{url:req.url,body:body.slice(0,500)});} return res;}catch(e){const err=e as Error; await _lxReport("Exception non gérée: "+(err?.message||String(e)),"critical",err,{url:req.url}); return new Response(JSON.stringify({error:"Internal server error"}),{status:500,headers:{"Content-Type":"application/json"}});}}, opts); }
+{ const _LX_FN="lx-brevo-webhook"; const _LX_URL=Deno.env.get("SB_URL")||Deno.env.get("SUPABASE_URL")||""; const _LX_SR=Deno.env.get("SB_SERVICE_ROLE")||Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")||""; const _lxReport=async(msg:string,sev:"warning"|"error"|"critical",err?:unknown,ctx?:Record<string,unknown>)=>{try{await fetch(_LX_URL+"/rest/v1/rpc/report_server_error",{method:"POST",headers:{"Content-Type":"application/json","apikey":_LX_SR,"Authorization":"Bearer "+_LX_SR},body:JSON.stringify({p_source:"edge_fn:"+_LX_FN,p_message:String(msg||"").slice(0,800),p_severity:sev,p_stack:(err as Error)?.stack?String((err as Error).stack).slice(0,3000):null,p_context:ctx||null})});}catch(_){}}; (globalThis as any).__lxReport=_lxReport; const _orig=Deno.serve; (Deno as any).serve=(handler:any,opts?:any)=>_orig(async(req:Request)=>{try{const res=await handler(req); if(res&&res.status>=500){const body=await res.clone().text().catch(()=>""); await _lxReport("HTTP "+res.status,"error",undefined,{url:req.url.split("?")[0],body:body.slice(0,500)});} return res;}catch(e){const err=e as Error; await _lxReport("Exception non gérée: "+(err?.message||String(e)),"critical",err,{url:req.url.split("?")[0]}); return new Response(JSON.stringify({error:"Internal server error"}),{status:500,headers:{"Content-Type":"application/json"}});}}, opts); }
 
 const SEVERITY_MAP: Record<string, "info"|"warning"|"error"|"critical"> = {
   hard_bounce: "critical",
@@ -44,7 +46,9 @@ Deno.serve(async (req) => {
     // 2026-10-31 : clé secrète (paramètre k de l'URL)
     const cle = new URL(req.url).searchParams.get("k");
     const { data: ctl, error: ctlErr } = await sb.rpc("lx_brevo_webhook_controle", { p_cle: cle && cle.length <= 200 ? cle : null });
-    const etat = ctlErr ? "transition" : String(ctl || "transition");
+    // 31/10 (contre-audit 4, A2) : contrôle impossible -> 503 (Brevo réessaie), jamais d'acceptation par défaut
+    if (ctlErr || !ctl) return json(503, { error: "Contrôle indisponible, réessayez" });
+    const etat = String(ctl);
     if (etat === "refus") return json(401, { error: "Clé invalide" });
     if (etat === "trop") return json(429, { error: "Trop d'événements" });
     const limite = etat === "ok" ? 1000 : 50;

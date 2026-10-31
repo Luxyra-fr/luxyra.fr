@@ -1,3 +1,4 @@
+// lx-password-reset v10 — 2026-10-31 (contre-audit 4, A5) : compte non confirmé repris -> carte enregistrée oubliée.
 // lx-password-reset v9 — 2026-10-31 (contre-audit 3) : adresse ASCII stricte (m4) ; abonnements push supprimés à la réinitialisation (m2).
 // lx-password-reset v8 — 2026-10-30 (contre-audit 2) : e-mail sans prénom ; verification_email effacé à la confirmation.
 // lx-password-reset v7 — 2026-10-30 SECURITE (contre-audit B1) : le jeton garde l'adresse d'envoi ; la confirmation ne
@@ -82,9 +83,12 @@ Deno.serve(async (req) => {
       if (!marque || !marque.length) return json(400, { error: "Lien déjà utilisé. Refaites une demande." });
       // Le lien a été reçu dans la boîte mail : l'adresse est vérifiée — SEULEMENT si c'est toujours l'adresse à laquelle le lien
       // a été envoyé (30/10/2026, contre-audit B1 : sinon un lien demandé avant un changement d'adresse confirmerait l'adresse d'un tiers).
-      const { data: cur } = await sb.from("clients_luxyra").select("email").eq("id", rs.client_id).maybeSingle();
+      const { data: cur } = await sb.from("clients_luxyra").select("email, email_verified").eq("id", rs.client_id).maybeSingle();
       const memeAdresse = !!(rs.email && cur && String(cur.email || "").toLowerCase() === String(rs.email).toLowerCase());
       const patchMdp: Record<string, unknown> = { password_hash: await hashPassword(password), updated_at: new Date().toISOString() };
+      // 31/10/2026 (contre-audit 4, A5) : compte jamais confirmé repris par la titulaire de l'adresse -> la carte enregistrée
+      // par la personne qui l'avait créé est oubliée (jamais réutilisable par la vraie titulaire).
+      if (cur && cur.email_verified !== true) { patchMdp.stripe_pm = null; patchMdp.card_last4 = null; patchMdp.card_exp = null; patchMdp.stripe_customer_id = null; }
       if (memeAdresse) { patchMdp.email_verified = true; patchMdp.verification_code = null; patchMdp.verification_email = null; patchMdp.verification_expires_at = null; }
       let q = sb.from("clients_luxyra").update(patchMdp).eq("id", rs.client_id);
       if (memeAdresse) q = q.eq("email", cur!.email); // course avec un changement d'adresse : rien n'est écrit

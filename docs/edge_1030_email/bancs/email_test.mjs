@@ -23,6 +23,8 @@ await db.exec("set search_path = public, extensions;");
 await db.exec(fs.readFileSync("/sessions/quirky-affectionate-hypatia/wt-comptes/docs/migrations_1030_email/verification_email.sql", "utf8"));
 await db.exec("set search_path = public, extensions;");
 await db.exec(fs.readFileSync("/sessions/quirky-affectionate-hypatia/wt-comptes/docs/migrations_1030_email/verification_email.sql", "utf8")); // rejouable
+// banc : avant l'application de comptes_securite.sql (plus bas), contrôle du webhook minimal (comme la prod d'alors)
+await db.exec("create or replace function public.lx_brevo_webhook_controle(p_cle text) returns text language sql as $$ select 'transition'::text $$;");
 const monde = creerMonde(db);
 monde.worker = (await import("./worker_bundle.mjs?" + Math.random())).default;
 const profil = await chargerEdge("./edge_profile.mjs");
@@ -413,6 +415,42 @@ await garde("SQL-31", async () => {
   ok("Brevo : après usage de la clé, appel sans clé refusé (401)", w.status === 401, w);
   w = await appel("faux" + cle.slice(4));
   ok("Brevo : mauvaise clé refusée (401)", w.status === 401, w);
+});
+await garde("contre-audit-4", async () => {
+  await db.exec("set search_path = public, extensions;");
+  await db.exec(fs.readFileSync("/sessions/quirky-affectionate-hypatia/luxyra.fr/docs/migrations_1031_reserves/brevo_limite.sql", "utf8"));
+  await db.exec("set search_path = public, extensions;");
+  await db.exec(fs.readFileSync("/sessions/quirky-affectionate-hypatia/luxyra.fr/docs/migrations_1031_reserves/brevo_limite.sql", "utf8")); // rejouable
+  const cle = (await db.query(`select secret from vault.secrets where name='brevo_webhook_cle'`)).rows[0].secret;
+  const ev = [{ event: "soft_bounce", email: "x50@exemple.test", subject: "t" }];
+  const appel = async (k) => { const u = "https://edge.test/" + (k !== undefined ? "?k=" + encodeURIComponent(k) : ""); const res = await webhook2(new Request(u, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(ev) })); let b = null; try { b = await res.json(); } catch (_) {} return { status: res.status, body: b }; };
+  await db.query(`insert into server_errors(source,severity,message) select 'brevo_webhook','warning','inondation '||g from generate_series(1,320) g`);
+  let w = await appel(cle);
+  ok("A1 : inondation (>300/min) -> la bonne clé passe toujours (200)", w.status === 200, w);
+  w = await appel();
+  ok("A1 : sans clé après usage de la clé -> 401", w.status === 401, w);
+  await db.query(`update lx_prive.brevo_webhook_etat set cle_vue_le=null where id=1`);
+  w = await appel();
+  ok("A1 : transition sans clé + inondation -> 429", w.status === 429, w);
+  w = await appel(cle);
+  ok("A1 : transition, bonne clé malgré inondation -> 200", w.status === 200, w);
+  await db.query(`delete from server_errors where message like 'inondation %'`);
+  await db.query(`alter function public.lx_brevo_webhook_controle(text) rename to lx_brevo_webhook_controle_x`);
+  w = await appel();
+  await db.query(`alter function public.lx_brevo_webhook_controle_x(text) rename to lx_brevo_webhook_controle`);
+  ok("A2 : contrôle en échec -> 503 (jamais accepté)", w.status === 503, w);
+  // A5
+  const Z = "dddddddd-dddd-4ddd-8ddd-dddddddddd51", V = "dddddddd-dddd-4ddd-8ddd-dddddddddd52";
+  await db.query(`insert into clients_luxyra(id,email,password_hash,nom,prenom,email_verified,session_version,stripe_pm,card_last4,card_exp,stripe_customer_id) values ($1,'z51@exemple.test',$2,'Z','Zoe',false,0,'pm_x','4242','12/30','cus_x'),($3,'v52@exemple.test',$2,'V','Vic',true,0,'pm_v','1111','01/29','cus_v')`, [Z, hash(PASS), V]);
+  for (const [id, em] of [[Z, "z51@exemple.test"], [V, "v52@exemple.test"]]) {
+    const n0 = monde.emails.length;
+    await appelEdge(reset, { action: "request", email: em });
+    const tok = (() => { for (let i = monde.emails.length - 1; i >= n0; i--) { const mm = JSON.stringify(monde.emails[i]).match(/reset=([0-9a-f]{64})/); if (mm) return mm[1]; } return null; })();
+    const rc = await appelEdge(reset, { action: "confirm", token: tok, password: "Nouveau-Mdp-Luxyra-88" });
+    const x = (await db.query(`select stripe_pm,card_last4,card_exp,stripe_customer_id,email_verified from clients_luxyra where id=$1`, [id])).rows[0];
+    if (id === Z) ok("A5 : compte non confirmé repris -> carte et client Stripe effacés", rc.status === 200 && x.stripe_pm === null && x.card_last4 === null && x.card_exp === null && x.stripe_customer_id === null && x.email_verified === true, { rc, x });
+    else ok("A5 : compte déjà confirmé -> carte conservée", rc.status === 200 && x.stripe_pm === "pm_v" && x.card_last4 === "1111" && x.stripe_customer_id === "cus_v", { rc, x });
+  }
 });
 monde.restaurer();
 console.log(`E-mail client mal saisi : ${nOk}/${nOk + nKo} OK`);

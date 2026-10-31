@@ -4,7 +4,7 @@
 // BUILD: 20260426-04 — fix CSS options dropdown lisibles
 window.__LUXYRA_BUILD = "20260426-04";
 // 2026-10-14 : version de la couche donnees, comparee par app.html (evite un melange ancienne/nouvelle version via le cache)
-window.LX_DATA_VERSION = "20261031-3"; // 31/10 (-3) : écran « essai terminé » au style Luxyra. // 2026-10-31 (-2) : retour de paiement d'un établissement suspendu sans abonnement -> attente de l'activation (jamais un 2e paiement). Précédent : // 2026-10-31 : essai terminé sans abonnement -> écran de choix de formule (au lieu du portail). Précédent : "20261030-3" // 2026-10-30 (-3, contre-audit sur mesure v2) : couche données inchangée, garde relevée avec app.html (acompte arrondi comme le serveur, nouvelle proposition après refus, planning sans libellés superposés, offre Pro). // 2026-10-30 (-2) : couche données inchangée, garde relevée avec app.html (RDV sur mesure v2 : fenêtre « Répondre à la demande » à options, suivi des propositions). // 2026-10-29 (-6) : couche données inchangée, garde relevée avec app.html (support : drapeau play des messages envoyés depuis l'appli Play Luxyra Pro). // 2026-10-29 (-4) : couche données inchangée, garde relevée avec app.html (Paramètres › « Installer l'application » : appli Play Luxyra Pro sur Android). // 2026-10-29 (-3) : version affichée en bas de l'accueil. // 2026-10-29 (-9, 6.8.7 complément) : couche données inchangée, garde relevée avec app.html (libellé neutre de la colonne « bon cadeau » du registre CSV des factures, juste en franchise 293 B) ; 2026-10-29 (-9, Luxyra 6.8.7, lot 4b) : aucune modification de la couche données, garde relevée avec app.html (factures : lignes v2, bon à usage unique, remise de ligne) ; 2026-10-29 (-8 révisé, contre-audit : mentions légales rcs_ville / capital_social) ; 2026-10-28 (-8, Luxyra 6.8.6, lot 4) : saveTicketToDb enregistre toujours « paid » (annulation = contre-ticket), cancelTicketDb retirée, montants de la Z arrondis au centime à l'écriture. // 2026-10-28 (Luxyra 6.8.5, règle TVA unique : saveTicketToDb reprend la ventilation TVA figée par l'application (lxTvaFiger -> raw_data.lxTva, total_ht / total_tva / taux_tva), copie dans appointments.meta.lxTva ; Z ancienne sans taux mémorisé : taux déduit de ses montants scellés, jamais le taux actuel ; refus LX_Z_ECART_TVA traité comme un refus de Z). 2026-10-28 (-6, Luxyra 6.8.4 : couche de données inchangée hormis ce n° — accompagne app.html 6.8.4 ; vente reportée : la base exige en plus une journée de vente clôturée, une heure valide et la marque sur la 1re ligne, ce que _lxTicketReporter produit déjà). 2026-10-28 (-5, Luxyra 6.8.3 : date réelle d'une vente reportée scellée dans le ticket — items[0].lxRep —, clôture Z refusée par la base si des ventes du jour manquent au journal ou si une journée antérieure est retenue : refus permanent, journée rouverte, cause affichée) // 2026-10-28 (-4, Luxyra 6.8.2 : un ticket encaissé n'est JAMAIS abandonné par la file de secours — refus « journée déjà clôturée » = enregistrement de REPORT sur la journée ouverte (date réelle de vente en mention, raw_data.dateVente) ; clôture forcée = ticket consigné ET gardé en file ; Z de l'appareil : tickets reportés comptés le jour de leur enregistrement)
+window.LX_DATA_VERSION = "20261031-4"; // 31/10 (-4, contre-audit 4) : fin d'essai = passage en caisse réelle + SIRET sur place. // 31/10 (-3) : écran « essai terminé » au style Luxyra. // 2026-10-31 (-2) : retour de paiement d'un établissement suspendu sans abonnement -> attente de l'activation (jamais un 2e paiement). Précédent : // 2026-10-31 : essai terminé sans abonnement -> écran de choix de formule (au lieu du portail). Précédent : "20261030-3" // 2026-10-30 (-3, contre-audit sur mesure v2) : couche données inchangée, garde relevée avec app.html (acompte arrondi comme le serveur, nouvelle proposition après refus, planning sans libellés superposés, offre Pro). // 2026-10-30 (-2) : couche données inchangée, garde relevée avec app.html (RDV sur mesure v2 : fenêtre « Répondre à la demande » à options, suivi des propositions). // 2026-10-29 (-6) : couche données inchangée, garde relevée avec app.html (support : drapeau play des messages envoyés depuis l'appli Play Luxyra Pro). // 2026-10-29 (-4) : couche données inchangée, garde relevée avec app.html (Paramètres › « Installer l'application » : appli Play Luxyra Pro sur Android). // 2026-10-29 (-3) : version affichée en bas de l'accueil. // 2026-10-29 (-9, 6.8.7 complément) : couche données inchangée, garde relevée avec app.html (libellé neutre de la colonne « bon cadeau » du registre CSV des factures, juste en franchise 293 B) ; 2026-10-29 (-9, Luxyra 6.8.7, lot 4b) : aucune modification de la couche données, garde relevée avec app.html (factures : lignes v2, bon à usage unique, remise de ligne) ; 2026-10-29 (-8 révisé, contre-audit : mentions légales rcs_ville / capital_social) ; 2026-10-28 (-8, Luxyra 6.8.6, lot 4) : saveTicketToDb enregistre toujours « paid » (annulation = contre-ticket), cancelTicketDb retirée, montants de la Z arrondis au centime à l'écriture. // 2026-10-28 (Luxyra 6.8.5, règle TVA unique : saveTicketToDb reprend la ventilation TVA figée par l'application (lxTvaFiger -> raw_data.lxTva, total_ht / total_tva / taux_tva), copie dans appointments.meta.lxTva ; Z ancienne sans taux mémorisé : taux déduit de ses montants scellés, jamais le taux actuel ; refus LX_Z_ECART_TVA traité comme un refus de Z). 2026-10-28 (-6, Luxyra 6.8.4 : couche de données inchangée hormis ce n° — accompagne app.html 6.8.4 ; vente reportée : la base exige en plus une journée de vente clôturée, une heure valide et la marque sur la 1re ligne, ce que _lxTicketReporter produit déjà). 2026-10-28 (-5, Luxyra 6.8.3 : date réelle d'une vente reportée scellée dans le ticket — items[0].lxRep —, clôture Z refusée par la base si des ventes du jour manquent au journal ou si une journée antérieure est retenue : refus permanent, journée rouverte, cause affichée) // 2026-10-28 (-4, Luxyra 6.8.2 : un ticket encaissé n'est JAMAIS abandonné par la file de secours — refus « journée déjà clôturée » = enregistrement de REPORT sur la journée ouverte (date réelle de vente en mention, raw_data.dateVente) ; clôture forcée = ticket consigné ET gardé en file ; Z de l'appareil : tickets reportés comptés le jour de leur enregistrement)
 // (historique) "20261028-3"; // 2026-10-28 (-3, Luxyra 6.8.1 : version de l'application transmise dans chaque ticket (raw_data.lxVersion, contrôlée par le serveur), série de n° imprimés propre au serveur (meta.tkNumServeur), copies serveur jamais réécrites, refus LX_APP_OBSOLETE / LX_TKNUM_SERIE_SERVEUR / LX_CC_DEJA_EN_CAISSE)
 // (historique) "20261028-2"; // 2026-10-28 (-2, Luxyra 6.8.0 : recettes en ligne enregistrées en caisse par le serveur — champs meta serveur / recetteKey…, refus définitif LX_CC_DEJA_EN_CAISSE)
 // (historique) "20261028-1"; // 2026-10-28 (-1 : bons cadeaux à usage unique / multiple — qualification TVA du bon (usage_tva, qualif_tva, repli historique), ticket v2 HT/TVA par ventilation de l'app, taux_tva 0 pour une vente de BUM seule, bonsUtil conservé dans appointments.meta) ; 2026-10-27 (-3 : rapport du mois en vrai PDF + correctifs d’exports comptables, app.html seulement ; -2 : envoi au comptable — FEC + pack Excel + rapport par défaut, ZIP en option, app.html seulement ; -1 : envoi automatique au comptable — changement dans app.html seulement, couche données inchangée) ; 2026-10-17 (-2 : audit réglages — taux TVA produits brut (tvaProduitsColonne), familles produit sans produit (pcats), ancien saveSalonConfig renommé ; -1 : retour / remboursement partiel — champs du ticket de retour conservés dans appointments.meta, refus définitif LX_RETOUR_REFUSE jamais rejoué, ticket de retour refusé au rejeu écarté de la caisse) ; 2026-10-16 (-1 : incident Z n°128 — 1 réservation en ligne = 1 entrée, Z refusée par la base si différente du journal, annotations correctives) ; 2026-10-15 (-3 : multi-appareils, champs modifiés seulement + lignes supprimées ailleurs jamais recréées ; -2 : plus aucun enregistrement muet, lxEcritureVerifiee ; -1 : « Prix à partir de » + sur devis sur les forfaits) ; 2026-10-14 (-8 : correctifs revue d intégration) intégration des audits (données, sécurité, planning, clients, caisse, site, réglages)
@@ -2026,6 +2026,7 @@ async function loadSalonData() {
   }
 
   // Vérifier statut abonnement
+  if (salon.status !== "suspended") { try { sessionStorage.removeItem("lx_attente_abo"); } catch(_e){} } // 31/10 (B5) : compteur d'attente remis à zéro après activation
   window._lxSalonSuspendu = (salon.status === "suspended" || salon.status === "cancelled"); // 2026-10-14 audit : écritures et rejeux bloqués
   // 2026-10-31 : essai terminé SANS jamais avoir souscrit (pas d'abonnement Stripe) -> choix de la formule et paiement,
   // pas l'écran « défaut de paiement » dont le bouton ouvre le portail Stripe (« Pas d'abonnement trouvé »).
@@ -2041,6 +2042,10 @@ async function loadSalonData() {
       return;
     }
     try { sessionStorage.removeItem("lx_attente_abo"); } catch(_e){}
+    // 31/10 (contre-audit 4, B2) : le mode de caisse est connu dès cet écran -> un salon resté en caisse « test » passe
+    // OBLIGATOIREMENT par « Passer en caisse réelle » (procédure NF525 existante, RPC nf525_passer_en_reel) avant tout paiement.
+    window.LX_MODE_CAISSE = (salon.mode_caisse === "test") ? "test" : "reel";
+    SALON_CONFIG.siret = salon.siret || "";
     showTrialExpiredScreen(salon);
     return;
   }
@@ -2842,6 +2847,47 @@ function exitArchiveMode(){
 window.enterArchiveMode = enterArchiveMode;
 window.exitArchiveMode = exitArchiveMode;
 
+// 31/10 (contre-audit 4, B1/B2) : sur l'écran de fin d'essai, les deux préalables au paiement sont faits SUR PLACE
+// (l'app n'est pas chargée, Paramètres inaccessibles) : 1) caisse « test » -> passage en caisse réelle (procédure existante
+// lxPasserEnReel / nf525_passer_en_reel), 2) SIRET manquant -> saisie contrôlée (14 chiffres, clé de Luhn) enregistrée par
+// lxSaveSalonColumns (même chemin que Paramètres → Infos établissement).
+function _lxFinEssaiBlocs(salon) {
+  var h = "";
+  var test = window.LX_MODE_CAISSE === "test";
+  var sansSiret = !String((salon && salon.siret) || (typeof SALON_CONFIG!=="undefined" && SALON_CONFIG && SALON_CONFIG.siret) || "").trim();
+  if (test) {
+    h += '<div id="lxFinTest" style="text-align:left;background:rgba(124,58,237,.12);border:1px solid rgba(124,58,237,.5);border-radius:14px;padding:14px 16px;margin:0 0 16px;font-size:13px;line-height:1.55;color:#e2e8f0">'
+      + '<b style="color:#fff">🧪 Étape 1 : passer votre caisse en caisse réelle</b><br>Votre caisse est encore en <b>mode test</b>. Avant de vous abonner, elle passe en caisse réelle : vos encaissements de test sont archivés (copie scellée, 6 ans) puis retirés, ils ne comptent pas dans votre chiffre d’affaires. Vos clients, prestations, équipe et rendez-vous sont conservés.'
+      + '<button onclick="lxFinEssaiPasserReel()" style="display:block;width:100%;margin-top:10px;padding:11px;border-radius:10px;border:none;background:#7c3aed;color:#fff;font-weight:800;cursor:pointer;font-size:14px">Passer en caisse réelle</button></div>';
+  }
+  if (sansSiret) {
+    h += '<div id="lxFinSiret" style="text-align:left;background:rgba(212,168,67,.07);border:1px solid rgba(212,168,67,.35);border-radius:14px;padding:14px 16px;margin:0 0 16px;font-size:13px;line-height:1.55;color:#e2e8f0">'
+      + '<b style="color:#fff">' + (test ? 'Étape 2' : 'Avant de payer') + ' : votre numéro SIRET</b><br>Il est obligatoire pour activer l’abonnement (il figure sur vos tickets et factures).'
+      + '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><input id="lxFinSiretInp" inputmode="numeric" autocomplete="off" maxlength="17" placeholder="14 chiffres" style="flex:1 1 180px;min-width:0;padding:11px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.18);background:rgba(0,0,0,.35);color:#fff;font-size:15px;letter-spacing:1px">'
+      + '<button onclick="lxFinEssaiSiret()" style="padding:11px 16px;border-radius:10px;border:1.5px solid rgba(212,168,67,.6);background:transparent;color:#d4a843;font-weight:800;cursor:pointer">Enregistrer</button></div>'
+      + '<div id="lxFinSiretMsg" style="font-size:12px;margin-top:6px;color:#94a3b8"></div></div>';
+  }
+  return h;
+}
+function lxFinEssaiPasserReel() {
+  if (window._lxVueAdmin) { if (typeof showAlert === "function") showAlert("Vue admin : rien ne peut être modifié ici.", "info"); return; }
+  if (typeof lxPasserEnReel === "function") lxPasserEnReel(""); // procédure NF525 existante (confirmation « REEL », archive scellée, JET 105) puis rechargement
+}
+function lxFinEssaiSiret() {
+  var inp = document.getElementById("lxFinSiretInp"), msg = document.getElementById("lxFinSiretMsg");
+  var dire = function(t, ok){ if (msg) { msg.textContent = t; msg.style.color = ok ? "#4ade80" : "#fca5a5"; } };
+  if (window._lxVueAdmin) { dire("Vue admin : rien ne peut être modifié ici.", false); return; }
+  var brut = String((inp && inp.value) || "").replace(/[\s.\-]/g, "");
+  var v = (typeof lxValidateSiret === "function") ? lxValidateSiret(brut) : { ok: /^\d{14}$/.test(brut), msg: "Doit contenir 14 chiffres" };
+  if (!v.ok) { dire(v.msg, false); return; }
+  if (typeof lxSaveSalonColumns !== "function") { dire("Enregistrement impossible ici : écrivez à contact@luxyra.fr.", false); return; }
+  dire("Enregistrement…", true);
+  lxSaveSalonColumns({ siret: brut, __silencieux: true }).then(function(r){
+    if (r && r.ok) { try { SALON_CONFIG.siret = brut; } catch(_e){} var b = document.getElementById("lxFinSiret"); if (b) b.innerHTML = '<b style="color:#4ade80">✓ SIRET enregistré</b> : ' + brut.replace(/(\d{3})(\d{3})(\d{3})(\d{5})/, "$1 $2 $3 $4") + '. Vous pouvez choisir votre formule.'; }
+    else dire("Non enregistré : " + String((r && r.error && r.error.message) || "erreur").replace(/^.*?:\s*/, "") + ". Réessayez ou écrivez à contact@luxyra.fr.", false);
+  });
+}
+window.lxFinEssaiPasserReel = lxFinEssaiPasserReel; window.lxFinEssaiSiret = lxFinEssaiSiret;
 function showTrialExpiredScreen(salon) {
   // 2026-10-31 : refonte au style Luxyra (noir et or, comme l'écran « abonnement suspendu ») — l'ancien écran
   // s'affichait sur fond clair, prix illisibles, case CGV mal alignée.
@@ -2867,6 +2913,7 @@ function showTrialExpiredScreen(salon) {
     +     '<h2 style="color:#fff;font-family:Georgia,\'Times New Roman\',serif;font-weight:600;font-size:25px;margin:0 0 8px">Votre essai gratuit est terminé</h2>'
     +     '<p style="color:#94a3b8;font-size:14.5px;line-height:1.6;margin:0 auto 6px;max-width:470px">'+(nom?'Merci d’avoir testé Luxyra avec <b style="color:#fff">'+esc(nom)+'</b>. ':'Merci d’avoir testé Luxyra. ')+'Choisissez votre formule pour retrouver votre planning, vos clients et votre caisse <b style="color:#fff">exactement comme vous les avez laissés</b>.</p>'
     +     '<p style="color:#d4a843;font-size:12.5px;margin:0 0 24px">Sans engagement · résiliable à tout moment · vos données sont conservées</p>'
+    +     _lxFinEssaiBlocs(salon)
     +     '<div style="display:flex;gap:16px;flex-wrap:wrap;justify-content:center;margin-bottom:20px">'
     +       carte("essential","ESSENTIEL","plan_essential","14,99",["Planning et rendez-vous","Caisse conforme loi anti-fraude","Fichier clients et fidélité"],false)
     +       carte("pro","PRO","plan_pro","24,99",["Tout Essentiel","Site et réservation en ligne 24h/24","SMS et marketing, acomptes en ligne"],true)
