@@ -2277,3 +2277,4 @@ Audit approuvé : `docs/admin-audit-1015.md` (P1 + P2, sauf le chat support fait
 - Solution définitive possible (non faite, demande une action Cloudflare) : servir l'admin sur admin.luxyra.fr (hors assetlinks) pour que Chrome garde ses notifications.
 
 - 31/10/2026 : l administration est servie UNIQUEMENT sur https://admin.luxyra.fr (hors assetlinks des applis Play, notifications admin dans Chrome). luxyra.fr/admin et /admin.html -> 301 vers admin.luxyra.fr. Le DNS/route wildcard *.luxyra.fr existait déjà (sites établissements) ; le worker exclut admin des sous-domaines établissement et ne sert jamais /.well-known sur admin.
+- 31/10/2026 : conflit Luxyra Pro / appli client (les deux TWA revendiquent tout luxyra.fr) CONNU et LAISSÉ volontairement (décision d Alexandre) : ne gêne que si les deux applis sont sur le même téléphone. Solution future si besoin : Luxyra Pro sur pro.luxyra.fr (nouvelle version Play + migration prudente du WAL caisse NF525).
