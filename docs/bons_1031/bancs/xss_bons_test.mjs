@@ -1,0 +1,43 @@
+import fs from 'fs'; import chromium from '@sparticuz/chromium'; import puppeteer from 'puppeteer-core';
+const ROOT='/sessions/quirky-affectionate-hypatia/wt-bonsxss', PORT=process.argv[2]||'8791';
+const b=await puppeteer.launch({executablePath:await chromium.executablePath(),args:chromium.args,headless:true});
+const pg=await b.newPage(); await pg.setViewport({width:1200,height:900});
+await pg.setRequestInterception(true);
+pg.on('request',r=>{const u=r.url(); if(u.startsWith('http://localhost')||u.startsWith('data:')||u.startsWith('blob:')) return r.continue();
+ if(u.startsWith('https://luxyra.fr/')){const p=ROOT+new URL(u).pathname; if(fs.existsSync(p)&&fs.statSync(p).isFile()) return r.respond({status:200,contentType:p.endsWith('.js')?'application/javascript':'text/plain',body:fs.readFileSync(p)});} r.abort();});
+const errs=[]; pg.on('pageerror',e=>errs.push(e.message)); pg.on('dialog',d=>d.accept());
+await pg.goto(`http://localhost:${PORT}/app.html?demo=coiffure`,{waitUntil:'domcontentloaded'});
+await pg.waitForFunction(()=>window.CURRENT_OPERATOR&&typeof chooseGiftThemeAncien==='function'&&window.GC,{timeout:40000});
+await new Promise(r=>setTimeout(r,1500));
+const res=await pg.evaluate(async()=>{
+ const P='<img src=x onerror="window.__x=(window.__x||0)+1">';
+ const out={};
+ const written=[]; window.open=function(){ const w={document:{open(){},write(s){written.push(String(s));},close(){},title:''},focus(){},print(){},close(){},addEventListener(){},onload:null}; return w; };
+ const g={id:'xss1',code:'BC-'+P,val:50,from:'A'+P,to:'B'+P,msg:'M'+P,exp:new Date(Date.now()+864e5*300).toISOString(),scope:'tout',payMethod:'CB',status:'active',isOffert:false,cr:new Date().toISOString(),rest:50,themeId:'classique'};
+ GC.push(g);
+ const g2=Object.assign({},g,{id:'xss2',isOffert:true,payMethod:'Offert'}); GC.push(g2);
+ const step=async(n,f)=>{ try{ f(); }catch(e){ out[n]='ERR '+e.message; } await new Promise(r=>setTimeout(r,400)); };
+ await step('liste',()=>{ go('gifts'); });
+ await step('ancien',()=>chooseGiftThemeAncien('xss1'));
+ out.modalAncienRaw=/<img src="?x/.test(document.getElementById('modal').innerHTML);
+ await step('edit',()=>editGift('xss1'));
+ out.editVal=(document.getElementById('egFrom')||{}).value;
+ const th=(getGiftThemes()[0]||{}).id;
+ await step('print',()=>printGiftThemed('xss1',th));
+ if(typeof printGiftTexteSeul==='function') await step('texteseul',()=>printGiftTexteSeul('xss1'));
+ // nouveaux modèles
+ SALON_CONFIG.bonModele='maison';
+ await step('choix',()=>chooseGiftTheme('xss1'));
+ out.modalNouveauRaw=/<img src="?x/.test(document.getElementById('modal').innerHTML);
+ await step('imprMaison',()=>lxBonImprimerModele('xss1','carte'));
+ SALON_CONFIG.bonModele='ecrin';
+ await step('imprEcrin',()=>lxBonImprimerModele('xss1','a6'));
+ await step('imprOffert',()=>lxBonImprimerModele('xss2','carte'));
+ out.writtenRaw=written.map(s=>/<img src="?x/.test(s)); out.ctx=written.filter(s=>/<img src="?x/.test(s)).map(s=>{const i=s.search(/<img src="?x/);return s.slice(Math.max(0,i-200),i+60);});
+ out.offertMention=written.some(s=>/titre gracieux/.test(s));
+ out.x=window.__x||0;
+ out.bum=(function(){ try{ return _lxBonMentionTva(Object.assign({},g,{usageTva:'BUM'})); }catch(e){return 'err'} })();
+ return out;});
+// injecter les documents écrits dans une page réelle pour voir si le JS s'exécute
+console.log(JSON.stringify(res,null,1)); console.log('errs',errs.slice(0,5));
+await b.close();

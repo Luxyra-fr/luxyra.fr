@@ -62,9 +62,11 @@ Deno.serve(async (req) => {
     const salon_id = String(body.salon_id || "").trim();
     const salon_slug = String(body.salon_slug || "").trim();
     const amount = Number(body.amount || 0);
-    const de = String(body.de || "").trim().slice(0, 80);
-    const pour = String(body.pour || "").trim().slice(0, 80);
-    const message = String(body.message || "").trim().slice(0, 280);
+    // 2026-10-31 (contre-audit H1) : texte libre de l'acheteur nettoyé (ni balise ni caractère de contrôle)
+    const nettoie = (x: unknown, n: number) => String(x || "").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F<>]/g, "").replace(/\s+\n/g, "\n").trim().slice(0, n);
+    const de = nettoie(body.de, 80);
+    const pour = nettoie(body.pour, 80);
+    const message = nettoie(body.message, 280);
     const buyer_email = String(body.buyer_email || "").trim().toLowerCase();
     const buyer_phone = String(body.buyer_phone || "").trim().slice(0, 20);
     const return_url = String(body.return_url || "").trim();
