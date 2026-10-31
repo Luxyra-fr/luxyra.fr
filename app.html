@@ -414,12 +414,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261031-8"></script>
+<script src="luxyra-supabase.js?v=20261031-9"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261031-8";
+  var attendu="20261031-9";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -38293,6 +38293,29 @@ function unlinkSmsDevice(){
 // appareils qui envoient le meme e-mail en meme temps -> un seul part. Sans cle : le worker deduplique un e-mail
 // identique (destinataire + objet + contenu) sur 10 minutes. Le worker journalise lui-meme (journalise:true) :
 // plus de seconde ligne ecrite ici.
+// 2026-10-31 (contre-audit bons v3, R3) : envois d'e-mails EN SÉRIE (campagnes, anniversaires, relances) — le serveur
+// limite à 20 envois/minute par connexion et 30/minute par compte : sans espacement, au-delà de ~20 e-mails, les suivants
+// recevaient un 429 compté en erreur sans nouvelle tentative. Ici : 1 envoi au plus toutes les 3,1 s (20/min côté serveur) (un envoi isolé ne
+// patiente pas), et sur 429 « Trop de requêtes » : attente puis nouvel essai (3 fois au plus). Le 429 « limite du jour »
+// (code quota_jour) n'est jamais réessayé : il est renvoyé tel quel à l'appelant.
+var _LX_EMAIL_ECART_MS=3100;
+function _lxPause(ms){ return new Promise(function(r){ setTimeout(r,ms); }); }
+async function _lxEmailPost(corps){
+  for(var essai=0; essai<4; essai++){
+    // créneau réservé de façon SYNCHRONE : des envois lancés en parallèle (forEach sans await) sont aussi espacés
+    var _now=Date.now(), _slot=Math.max(_now, window._lxEmailProchain||0);
+    window._lxEmailProchain=_slot+_LX_EMAIL_ECART_MS;
+    if(_slot>_now) await _lxPause(_slot-_now);
+    var resp=await fetch("/api/email/custom",{ method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(corps) });
+    var data={}; try{ data=await resp.json(); }catch(_eJ){ data={}; }
+    if(resp.status===429 && data.code!=="quota_jour" && essai<3){
+      var ra=Number(resp.headers&&resp.headers.get&&resp.headers.get("Retry-After"));
+      await _lxPause((isFinite(ra)&&ra>0?ra:25)*1000);
+      continue;
+    }
+    return {resp:resp,data:data};
+  }
+}
 async function sendEmailViaWorker(to,toName,subject,htmlContent,opts){
   opts=opts||{};
   try{
@@ -38300,12 +38323,7 @@ async function sendEmailViaWorker(to,toName,subject,htmlContent,opts){
     if(typeof _salonId!=="undefined"&&_salonId) corps.salon_id=_salonId;
     if(opts.dedupKey) corps.dedupKey=String(opts.dedupKey);
     if(opts.context) corps.context=String(opts.context);
-    var resp=await fetch("/api/email/custom",{
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify(corps)
-    });
-    var data=await resp.json();
+    var _pr=await _lxEmailPost(corps); var data=_pr.data||{};
     if(data.success){
       if(data.deduplique) return{ok:true,deduplique:true};
       if(!data.journalise && typeof _sb!=="undefined"&&_salonId){
@@ -38315,7 +38333,7 @@ async function sendEmailViaWorker(to,toName,subject,htmlContent,opts){
       }
       return{ok:true,journalise:!!data.journalise};
     }
-    return{ok:false,error:data.error||"Erreur"};
+    return{ok:false,error:data.error||"Erreur",code:data.code||null};
   }catch(e){return{ok:false,error:e.message};}
 }
 // 2026-10-15 : rappels automatiques (veille SMS + e-mail, 2 h avant) envoyes par l'application SEULEMENT si le
@@ -38660,15 +38678,11 @@ async function checkSmsReminders(){
 
 async function sendEmail(to,subject,body,toName,context){ // 2026-10-17 : context « marketing » -> lien de désinscription ajouté par le worker
   try{
-    var resp=await fetch("/api/email/custom",{
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({to:to,toName:toName||to,salonName:SALON_CONFIG.nom,salonEmail:SALON_CONFIG.email||"contact@luxyra.fr",subject:subject,context:context||undefined,salon_id:(typeof _salonId!=="undefined"?_salonId:undefined),htmlContent:lxEmailSalonTexte(body,String(subject||"").replace(/ - [^-]*$/,"")),textContent:body})
-    });
-    var data=await resp.json();
-    console.log("[EMAIL] sendEmail to:",to,"status:",resp.status,"result:",JSON.stringify(data).slice(0,200));
+    var _pr=await _lxEmailPost({to:to,toName:toName||to,salonName:SALON_CONFIG.nom,salonEmail:SALON_CONFIG.email||"contact@luxyra.fr",subject:subject,context:context||undefined,salon_id:(typeof _salonId!=="undefined"?_salonId:undefined),htmlContent:lxEmailSalonTexte(body,String(subject||"").replace(/ - [^-]*$/,"")),textContent:body});
+    var resp=_pr.resp, data=_pr.data||{};
+    console.log("[EMAIL] sendEmail status:",resp.status,"result:",JSON.stringify(data).slice(0,200));
     auditLog("EMAIL_ENVOYE",to.slice(0,3)+"*** - "+(data.success?"OK":"ERREUR"));
-    return{ok:data.success,error:data.error||data.message||data.result?.message||null};
+    return{ok:!!data.success,error:data.error||data.message||(data.result&&data.result.message)||null,code:data.code||null};
   }catch(e){auditLog("EMAIL_ERREUR",e.message);return{ok:false,error:e.message};}
 }
 function testEmail(){
@@ -38941,7 +38955,7 @@ async function _lxCampSmsEnvoyer(liste, titre, ctx){
   }
   return out;
 }
-function _lxCampResultatHtml(titre, sms, emailSent, emailErr){
+function _lxCampResultatHtml(titre, sms, emailSent, emailErr, emailQuota){
   var errs=(sms.erreurs||0)+(emailErr||0);
   var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">';
   h+='<div style="font-size:36px;margin-bottom:8px">'+(errs===0?"\u2705":"\u26a0\ufe0f")+'</div>';
@@ -38950,6 +38964,7 @@ function _lxCampResultatHtml(titre, sms, emailSent, emailErr){
   if(sms.envoyes>0)h+='<div style="font-size:14px">\ud83d\udcf1 <strong>'+sms.envoyes+'</strong> SMS</div>';
   if(sms.ignores>0)h+='<div style="font-size:12px;color:var(--text3)">'+sms.ignores+' d\u00e9j\u00e0 envoy\u00e9'+(sms.ignores>1?'s':'')+' ou sans consentement (ignor\u00e9'+(sms.ignores>1?'s':'')+')</div>';
   if(emailSent>0)h+='<div style="font-size:14px">\u2709\ufe0f <strong>'+emailSent+'</strong> Emails</div>';
+  if(emailQuota>0)h+='<div style="font-size:13px;color:#f59e0b;margin-top:4px">\u23f8 '+emailQuota+' e-mail'+(emailQuota>1?'s':'')+' non envoy\u00e9'+(emailQuota>1?'s':'')+' : limite du jour atteinte. Relancez demain pour ces clients.</div>';
   if(errs>0)h+='<div style="font-size:14px;color:#ef5350">\u274c '+errs+' erreur'+(errs>1?'s':'')+(sms.message?' ('+escapeHtml(sms.message)+')':'')+'</div>';
   h+='<button class="btn bg bk" style="margin-top:14px" onclick="cM()">Fermer</button>';
   return h+'</div></div>';
@@ -39030,15 +39045,29 @@ function sendCampaignV2(p){
     if(doSms&&cl.smsOk&&cl.ph) smsListe.push({cl:cl,txt:txt});
   });
   var chain=Promise.resolve();
-  if(doEmail){
-    clients.forEach(function(cl){
-      if(!(cl.emOk&&cl.em)) return;
-      chain=chain.then(function(){
-        var txt=msg.replace(/\{prenom\}/g,cl.pre||"").replace(/\{nom\}/g,cl.nom||"").replace(/\{salon\}/g,SALON_CONFIG.nom);
-        return sendEmail(cl.em,subject,txt,cName(cl),"marketing").then(function(r){if(r.ok)emailSent++;else emailErr++;},function(){emailErr++;});
-      });
-    });
+  // 2026-10-31 : e-mails espacés (3,1 s) avec nouvelle tentative sur « trop de requêtes » (voir _lxEmailPost) + progression ;
+  // limite du jour atteinte (quota_jour) : on s'arrête et les e-mails restants sont comptés « non envoyés » (pas « erreurs »).
+  var emailQuota=0, emailListe=doEmail?clients.filter(function(cl){ return cl.emOk&&cl.em; }):[], emailFait=0, quotaAtteint=false;
+  function _campProgres(){
+    try{ var m=document.getElementById("modal"); if(!m) return;
+      m.innerHTML='<div class="mbg"><div class="mbox" style="text-align:center;max-width:420px"><div style="font-size:32px;margin-bottom:6px">\u2709\ufe0f</div><h2 style="margin-bottom:6px">Envoi des e-mails\u2026</h2>'
+        +'<div style="font-size:14px;margin-bottom:10px">'+emailFait+' / '+emailListe.length+'</div>'
+        +'<div style="height:8px;border-radius:6px;background:rgba(255,255,255,.08);overflow:hidden"><div style="height:100%;width:'+(emailListe.length?Math.round(emailFait*100/emailListe.length):100)+'%;background:linear-gradient(90deg,#d4a843,#b8960f)"></div></div>'
+        +'<div style="font-size:12px;color:var(--text3);margin-top:10px">Un e-mail toutes les 3 secondes environ. Gardez cette page ouverte jusqu\u2019\u00e0 la fin.</div></div></div>';
+    }catch(_eP){}
   }
+  if(emailListe.length) _campProgres();
+  emailListe.forEach(function(cl){
+    chain=chain.then(function(){
+      if(quotaAtteint){ emailQuota++; return; }
+      var txt=msg.replace(/\{prenom\}/g,cl.pre||"").replace(/\{nom\}/g,cl.nom||"").replace(/\{salon\}/g,SALON_CONFIG.nom);
+      return sendEmail(cl.em,subject,txt,cName(cl),"marketing").then(function(r){
+        if(r.ok) emailSent++;
+        else if(r.code==="quota_jour"){ quotaAtteint=true; emailQuota++; }
+        else emailErr++;
+      },function(){emailErr++;}).then(function(){ emailFait++; _campProgres(); });
+    });
+  });
   var smsRes={envoyes:0,enFile:0,ignores:0,erreurs:0};
   chain.then(function(){ return _lxCampSmsEnvoyer(smsListe, p.title, (p.type==="custom"&&p.nature==="info")?"libre_info":"marketing").then(function(r){ smsRes=r; }); }).then(function(){
     // 2026-10-11 : mémorise la relance sur la fiche (anti-harcèlement)
@@ -39052,9 +39081,9 @@ function sendCampaignV2(p){
     var smsTot=smsRes.envoyes+smsRes.enFile;
     // 2026-10-14 : historique enregistre aussi en base (configuration du salon)
     lxSmsHistAjouter({type:p.title||"",title:p.title||"",date:TD,nbSent:smsTot+emailSent,nbSms:smsTot,nbEmail:emailSent,nbErrors:smsRes.erreurs+emailErr,channel:(doSms?"SMS":"")+(doSms&&doEmail?" + ":"")+(doEmail?"Email":"")});
-    auditLog("CAMPAGNE_MARKETING",p.title+" - "+smsRes.envoyes+" SMS envoy\u00e9s, "+smsRes.enFile+" SMS en file + "+emailSent+" Emails ("+(smsRes.erreurs+emailErr)+" erreurs)");
+    auditLog("CAMPAGNE_MARKETING",p.title+" - "+smsRes.envoyes+" SMS envoy\u00e9s, "+smsRes.enFile+" SMS en file + "+emailSent+" Emails ("+(smsRes.erreurs+emailErr)+" erreurs"+(emailQuota?", "+emailQuota+" non envoyés : limite du jour":"")+")");
     cM();
-    document.getElementById("modal").innerHTML=_lxCampResultatHtml(p.title, smsRes, emailSent, emailErr);
+    document.getElementById("modal").innerHTML=_lxCampResultatHtml(p.title, smsRes, emailSent, emailErr, emailQuota);
   }).catch(function(e){
     console.error("[campagne]",e);
     if(typeof showAlert==="function") showAlert("Campagne interrompue : "+((e&&e.message)||e),"error");
