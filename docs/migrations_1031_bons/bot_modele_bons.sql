@@ -1,0 +1,11 @@
+-- 31/10/2026 : bot — modèles des bons cadeaux « Maison » / « Écrin ». Idempotent. Aucune autre table touchée.
+insert into public.support_bot_kb (cle, titre, ordre, contenu, actif, maj_le) values ('bons_modele_1031', 'Modèle des bons cadeaux (Maison ou Écrin)', 46,
+'Chaque établissement choisit le modèle de ses bons cadeaux : tuile « Bons cadeaux » › cadre « Modèle des bons » › « Découvrir Maison et Écrin » (ou « Changer »), ou Paramètres › « Site en ligne » › sous « Bons cadeaux en ligne », bouton « Choisir ». Puis « Enregistrer ce modèle ».
+- « Maison » : papier ivoire, double liseré à la couleur de l''établissement ; idéal sur une imprimante de bureau.
+- « Écrin » : aplat foncé de la couleur de l''établissement, grande initiale, montant en grand ; idéal à l''écran et chez un imprimeur.
+- « Modèle actuel » : rien ne change (10 thèmes au choix à l''impression).
+La couleur est la couleur principale de l''établissement, le logo celui des informations de l''établissement. L''aperçu montre le recto et le verso.
+Impression (« 🖨 Imprimer » sur un bon) : « Carte 85 × 55 mm » (recto et verso côte à côte sur une feuille A4, à découper puis plier au milieu) ou « Carte A6 » (avec le message, pour une enveloppe). Dans la fenêtre d''impression : échelle 100 %, marges « aucune », cocher « Graphiques d''arrière-plan ». Papier conseillé 250 à 350 g. Les anciens thèmes restent disponibles (« Anciens thèmes »).
+Avec un modèle choisi : la page de vente en ligne prend la couleur de l''établissement, l''occasion (Anniversaire, Noël, Fête des mères, Saint-Valentin, Merci) remplace les 10 styles, la page de confirmation affiche la carte avec « Imprimer la carte » et « Carte A6 avec message », et l''e-mail de l''acheteur reprend la carte. Dans l''e-mail, un logo enregistré directement dans l''application n''apparaît pas (les messageries le bloquent) : le nom de l''établissement le remplace.
+Le modèle ne change que la présentation : montant, code, validité, ticket de vente et mention de TVA ne changent pas. Les bons déjà vendus s''impriment simplement au nouveau modèle.', true, now())
+on conflict (cle) do update set titre = excluded.titre, contenu = excluded.contenu, actif = true, maj_le = now();

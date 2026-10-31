@@ -33,18 +33,39 @@ footer a{color:var(--text2);text-decoration:none}
 footer a:hover{color:var(--gold)}
 </style>
 <script src="/lx-monitoring.js" defer></script>
+<script src="/lx-qrcode.js"></script>
+<script src="/lx-bon-cadeau.js?v=20261031-1"></script>
+<style>
+/* 2026-10-31 : confirmation au modèle de l'établissement (« Maison » / « Écrin ») */
+body.lxm{background:#F6F1E6;color:#1C1A17}
+body.lxm .box{background:#fff;border:1px solid #E2D9C6;box-shadow:none;max-width:640px}
+body.lxm .icon{display:none}
+body.lxm h1{font-family:'Cormorant Garamond',Georgia,serif;font-weight:400;font-size:38px;color:#1C1A17;letter-spacing:0}
+body.lxm .subtitle{color:#4A453E}
+body.lxm .code-box{display:none!important}
+body.lxm .email-line{background:transparent;border:1px solid #E2D9C6;color:#4A453E}
+body.lxm .btn-primary{background:var(--lxInk);color:#fff}
+body.lxm .btn-primary:hover{transform:none;box-shadow:none;opacity:.92}
+body.lxm .btn-secondary{background:#fff;border:1px solid #CFC6B4;color:#1C1A17}
+body.lxm footer{color:#6A645B}body.lxm footer a{color:#4A453E}
+.lxm-carte{display:none;background:var(--lxTint);padding:20px 10px;margin:20px 0;flex-direction:column;align-items:center;gap:12px;border-radius:4px}
+body.lxm .lxm-carte{display:flex}
+.lxm-row{display:flex;gap:10px;width:100%;flex-wrap:wrap}.lxm-row .btn{flex:1 1 200px}
+</style>
 </head>
 <body>
 <div class="box">
   <div class="icon">🎁</div>
   <h1>Merci pour votre achat !</h1>
-  <p class="subtitle">Votre bon cadeau est confirmé. Il est valable 1 an dans le salon.</p>
+  <p class="subtitle">Votre bon cadeau est confirmé. Il est valable 1 an dans l’établissement.</p>
 
   <div id="codeBox" class="code-box">
     <div class="code-label">Code du bon cadeau</div>
     <div class="code-val" id="bcCode">— — — —</div>
     <div class="amount-line">Valeur : <strong id="bcVal">—</strong></div>
   </div>
+
+  <div class="lxm-carte" id="lxmCarte"></div>
 
   <div class="email-line" id="emailMsg">
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
@@ -62,7 +83,7 @@ footer a:hover{color:var(--gold)}
 
   <footer>
     Bon cadeau propulsé par <a href="https://luxyra.fr" target="_blank">Luxyra</a><br>
-    Le code peut être présenté en salon ou utilisé en boutique en ligne pour une réservation.
+    Le code peut être présenté sur place ou utilisé en ligne pour une réservation.
   </footer>
 </div>
 
@@ -103,6 +124,7 @@ async function loadBon(){
         et.textContent = "";
         et.appendChild(document.createTextNode("✓ Bon envoyé à "));
         var st = document.createElement("strong"); st.textContent = d.email || "votre adresse e-mail"; et.appendChild(st);
+        try { if (d.carte && window.LXBon) afficherCarte(d); } catch(_eC) { console.warn(_eC); }
         return;
       }
     } catch(e){ console.warn(e); }
@@ -111,6 +133,37 @@ async function loadBon(){
   }
   document.getElementById("emailTxt").textContent = "Paiement confirmé. Le bon vous arrivera par email d'ici quelques minutes.";
 }
+// 2026-10-31 : carte affichée au modèle choisi par l'établissement, avec impression (carte 85 x 55 à plier ou A6)
+var CARTE = null;
+function afficherCarte(d){
+  var c = d.carte, S = c.salon || {};
+  var m = LXBon.modeleValide(c.modele); if (!m) return;
+  var p = LXBon.palette(S.couleur_primaire);
+  document.body.classList.add("lxm");
+  document.body.style.setProperty("--lxInk", p.ink); document.body.style.setProperty("--lxTint", p.tint);
+  LXBon.poserCss();
+  var tx = (c.tva_rate != null && !isNaN(Number(c.tva_rate))) ? Number(c.tva_rate) * 100 : Number(S.taux_tva);
+  var tva = (!(tx > 0)) ? "TVA non applicable, art. 293 B du CGI" : ("TVA " + (Math.round(tx * 10) / 10).toString().replace(".", ",") + " % incluse");
+  if (c.usage_tva === "BUM") tva = "Bon à usage multiple, TVA due à l’utilisation";
+  var exp = d.date_expiration ? new Date(d.date_expiration).toLocaleDateString("fr-FR") : "";
+  var bon = { code: d.code || "", val: Number(d.valeur) || 0, de: c.de, pour: c.pour, msg: c.message, exp: exp,
+    scope: (!c.scope || c.scope === "tout") ? "Prestations et produits" : (c.scope === "prestations" ? "Prestations uniquement" : "Produits uniquement"),
+    tva: tva, tk: "", occasion: LXBon.occasionDepuisTheme(c.theme_id) };
+  var etab = { nom: S.nom, sous: S.sous_titre, adresse: S.adresse, cpv: [S.cp, S.ville].filter(Boolean).join(" "), tel: S.tel, logo: S.logo, couleur: S.couleur_primaire };
+  CARTE = { m: m, bon: bon, etab: etab };
+  var box = document.getElementById("lxmCarte");
+  var larg = Math.min(box.getBoundingClientRect().width || 340, 560);
+  var mm = Math.max(2.4, Math.min(4.6, (larg - 24) / 87));
+  box.innerHTML = LXBon.carte(m, "recto", bon, etab, { mm: mm }) + LXBon.carte(m, "verso", bon, etab, { mm: mm });
+  var h1 = document.querySelector("h1"); if (h1) h1.textContent = c.de ? ("Merci, " + c.de + ".") : "Merci.";
+  var pb = document.getElementById("printBtn");
+  if (pb) {
+    var row = document.createElement("div"); row.className = "lxm-row";
+    row.innerHTML = '<a class="btn btn-primary" href="#" onclick="imprimerCarte(\'carte\');return false">Imprimer la carte</a><a class="btn btn-primary" href="#" onclick="imprimerCarte(\'a6\');return false">Carte A6 avec message</a>';
+    pb.parentNode.replaceChild(row, pb);
+  }
+}
+function imprimerCarte(f){ if (!CARTE) return; if (!LXBon.imprimer(CARTE.m, CARTE.bon, CARTE.etab, f)) alert("Autorisez les fenêtres pop-up pour imprimer la carte."); }
 loadBon();
 </script>
 </body>
