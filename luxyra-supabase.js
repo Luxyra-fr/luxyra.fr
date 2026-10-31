@@ -4,7 +4,7 @@
 // BUILD: 20260426-04 — fix CSS options dropdown lisibles
 window.__LUXYRA_BUILD = "20260426-04";
 // 2026-10-14 : version de la couche donnees, comparee par app.html (evite un melange ancienne/nouvelle version via le cache)
-window.LX_DATA_VERSION = "20261031-6"; // 31/10 (-6) : bons cadeaux, échappement des champs acheteur (H1) + réserves R1-R7. // 2026-10-31 (-5) : modele des bons cadeaux (config_json.bonModele) lu au chargement. Precedent : "20261031-4"
+window.LX_DATA_VERSION = "20261031-7"; // 31/10 (-7) : tarif Fondateur sur l écran fin d essai. // 31/10 (-6) : bons cadeaux, échappement des champs acheteur (H1) + réserves R1-R7. // 2026-10-31 (-5) : modele des bons cadeaux (config_json.bonModele) lu au chargement. Precedent : "20261031-4"
 // (historique) "20261028-3"; // 2026-10-28 (-3, Luxyra 6.8.1 : version de l'application transmise dans chaque ticket (raw_data.lxVersion, contrôlée par le serveur), série de n° imprimés propre au serveur (meta.tkNumServeur), copies serveur jamais réécrites, refus LX_APP_OBSOLETE / LX_TKNUM_SERIE_SERVEUR / LX_CC_DEJA_EN_CAISSE)
 // (historique) "20261028-2"; // 2026-10-28 (-2, Luxyra 6.8.0 : recettes en ligne enregistrées en caisse par le serveur — champs meta serveur / recetteKey…, refus définitif LX_CC_DEJA_EN_CAISSE)
 // (historique) "20261028-1"; // 2026-10-28 (-1 : bons cadeaux à usage unique / multiple — qualification TVA du bon (usage_tva, qualif_tva, repli historique), ticket v2 HT/TVA par ventilation de l'app, taux_tva 0 pour une vente de BUM seule, bonsUtil conservé dans appointments.meta) ; 2026-10-27 (-3 : rapport du mois en vrai PDF + correctifs d’exports comptables, app.html seulement ; -2 : envoi au comptable — FEC + pack Excel + rapport par défaut, ZIP en option, app.html seulement ; -1 : envoi automatique au comptable — changement dans app.html seulement, couche données inchangée) ; 2026-10-17 (-2 : audit réglages — taux TVA produits brut (tvaProduitsColonne), familles produit sans produit (pcats), ancien saveSalonConfig renommé ; -1 : retour / remboursement partiel — champs du ticket de retour conservés dans appointments.meta, refus définitif LX_RETOUR_REFUSE jamais rejoué, ticket de retour refusé au rejeu écarté de la caisse) ; 2026-10-16 (-1 : incident Z n°128 — 1 réservation en ligne = 1 entrée, Z refusée par la base si différente du journal, annotations correctives) ; 2026-10-15 (-3 : multi-appareils, champs modifiés seulement + lignes supprimées ailleurs jamais recréées ; -2 : plus aucun enregistrement muet, lxEcritureVerifiee ; -1 : « Prix à partir de » + sur devis sur les forfaits) ; 2026-10-14 (-8 : correctifs revue d intégration) intégration des audits (données, sécurité, planning, clients, caisse, site, réglages)
@@ -2901,7 +2901,8 @@ function showTrialExpiredScreen(salon) {
     return '<div style="flex:1 1 210px;min-width:200px;position:relative;background:'+(reco?'linear-gradient(180deg,rgba(212,168,67,.12),rgba(212,168,67,.03))':'rgba(255,255,255,.03)')+';border:'+(reco?'1.5px solid rgba(212,168,67,.55)':'1px solid rgba(255,255,255,.1)')+';border-radius:16px;padding:22px 18px 18px;display:flex;flex-direction:column">'
       + (reco ? '<div style="position:absolute;top:-11px;left:50%;transform:translateX(-50%);background:linear-gradient(135deg,#d4a843,#b8960f);color:#0a0a0a;font-size:10px;font-weight:800;padding:4px 12px;border-radius:50px;letter-spacing:1px;white-space:nowrap">RECOMMANDÉ</div>' : '')
       + '<div style="font-size:12px;color:#d4a843;font-weight:800;letter-spacing:2px">'+titre+'</div>'
-      + '<div style="margin:8px 0 12px;color:#fff;font-family:Georgia,\'Times New Roman\',serif"><span style="font-size:34px;font-weight:600" data-lxconfig="'+prixKey+'">'+prix+'</span><span style="font-size:20px">€</span><span style="font-size:13px;color:#94a3b8;font-family:inherit"> / mois</span></div>'
+      + (plan==="pro" ? '<div id="lxFondTrial" style="display:none;margin:6px auto 0;font-size:11px;font-weight:800;letter-spacing:.5px;color:#0a0a0a;background:linear-gradient(135deg,#d4a843,#b8960f);border-radius:50px;padding:4px 10px;width:max-content;max-width:100%"></div><div id="lxFondOld" style="display:none;text-decoration:line-through;color:#64748b;font-size:15px;margin-top:6px"></div>' : '')
+      + '<div style="margin:8px 0 12px;color:#fff;font-family:Georgia,\'Times New Roman\',serif"><span style="font-size:34px;font-weight:600" '+(plan==="pro"?'id="lxProPrix" ':'')+'data-lxconfig="'+prixKey+'">'+prix+'</span><span style="font-size:20px">€</span><span style="font-size:13px;color:#94a3b8;font-family:inherit"> / mois</span></div>'
       + '<div style="flex:1">'+points.map(li).join("")+'</div>'
       + '<button onclick="checkCgvAndPay(\''+plan+'\')" style="margin-top:14px;width:100%;padding:13px;border-radius:12px;cursor:pointer;font-weight:800;font-size:14px;letter-spacing:.3px;'+(reco?'background:linear-gradient(135deg,#d4a843,#b8960f);color:#0a0a0a;border:none;box-shadow:0 6px 20px rgba(212,168,67,.25)':'background:transparent;color:#d4a843;border:1.5px solid rgba(212,168,67,.5)')+'">Choisir '+(plan==="pro"?"Pro":"Essentiel")+'</button>'
       + '</div>';
@@ -2925,6 +2926,20 @@ function showTrialExpiredScreen(salon) {
     +   '</div>'
     + '</div>';
   if (typeof lxRefreshPriceElements === "function") { setTimeout(function(){ lxRefreshPriceElements(); }, 100); }
+  // 2026-10-31 : tarif Fondateur (Pro à 14,99 €/mois à vie pour les 100 premiers) affiché comme sur luxyra.fr/pro —
+  // le paiement l'applique déjà automatiquement (worker create-checkout) tant qu'il reste des places.
+  try { if (typeof _sb !== "undefined" && _sb) _sb.rpc("founders_stats").then(function(r){
+    var row = r && r.data ? (Array.isArray(r.data) ? r.data[0] : r.data) : null; var rest = row ? Number(row.remaining || 0) : 0;
+    if (rest <= 0) return;
+    setTimeout(function(){
+      var b = document.getElementById("lxFondTrial"), o = document.getElementById("lxFondOld"), p = document.getElementById("lxProPrix");
+      if (!b || !o || !p) return;
+      b.textContent = "TARIF FONDATEUR · à vie · " + rest + " place" + (rest > 1 ? "s" : "") + " restante" + (rest > 1 ? "s" : "");
+      o.textContent = p.textContent + " €"; p.removeAttribute("data-lxconfig");
+      var ess = document.querySelector('[data-lxconfig="plan_essential"]'); p.textContent = ess ? ess.textContent : "14,99";
+      b.style.display = "block"; o.style.display = "block";
+    }, 250);
+  }, function(){}); } catch(_eF) {}
 }
 
 // Mode hors ligne (pas de Supabase configuré)
