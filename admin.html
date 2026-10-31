@@ -487,8 +487,13 @@ async function saVerifAdmin(){
     var r=await _sb.rpc("is_admin");
     if(r && r.data===true) return true;
     if(window._lxMfaActive===false){ (await lxAlert("Double authentification non activée : les droits administrateur sont inactifs tant qu'elle n'est pas configurée (bandeau en haut du tableau de bord).")); return true; }
-    showErr("Droits administrateur inactifs : validez la double authentification puis reconnectez-vous.");
-    try{ await _sb.auth.signOut(); }catch(_e){}
+    // 2026-10-31 audit final F5 : session de plus de 12 h refusée par le serveur -> message clair, ce navigateur seulement
+    var _rs=null; try{ _rs=(await _sb.rpc("admin_session_restante")).data; }catch(_e){}
+    try{ localStorage.removeItem("lx_admin_derniere_act"); }catch(_e){}
+    try{ await _sb.auth.signOut({scope:"local"}); }catch(_e){}
+    showLogin();
+    if(_rs && Number(_rs.secondes)===0) showErr("Session de plus de 12 heures fermée par le serveur : reconnectez-vous (mot de passe + code).");
+    else showErr("Droits administrateur inactifs : validez la double authentification puis reconnectez-vous.");
     return false;
   }catch(e){
     // 2026-10-14 audit : échec de vérification = accès refusé (plus d'ouverture de l'admin « par défaut »)
@@ -707,6 +712,15 @@ async function doAdminLogoutPartout(){
   async function verif(){ try{ var _ls=0; try{ _ls=Number(localStorage.getItem("lx_admin_derniere_act"))||0; }catch(_e){} if(_ls>derniere) derniere=_ls; // activité d'un autre onglet
     if(_online && Date.now()-derniere>DELAI){ await doAdminLogout(); showErr("Déconnexion automatique après 30 minutes sans activité."); } }catch(_e){} }
   setInterval(verif,60*1000);
+  // 2026-10-31 audit final F5 : durée maximale de session (12 h) contrôlée par le serveur ; prévenir 10 min avant, puis fermer
+  var _prev12=false;
+  async function verif12(){ try{ if(!_online||!_sb) return; var r=await _sb.rpc("admin_session_restante"); var d=r&&r.data; if(!d) return;
+    var sec=Number(d.secondes);
+    if(sec<=0){ await doAdminLogout(); showErr("Session de plus de 12 heures fermée par le serveur : reconnectez-vous (mot de passe + code)."); return; }
+    if(sec<=600 && !_prev12){ _prev12=true; try{ toast("⏳ Votre session admin se termine dans "+Math.max(1,Math.round(sec/60))+" min (durée maximale 12 h) : enregistrez ce que vous faites."); }catch(_e){} }
+  }catch(_e){} }
+  setInterval(verif12,5*60*1000);
+  document.addEventListener("visibilitychange",function(){ if(document.visibilityState==="visible") verif12(); });
 })();
 // 2026-10-31 (audit sécurité M3) : connexion réussie (mot de passe + double authentification) -> journal + alerte
 async function lxSignalerConnexionAdmin(){
