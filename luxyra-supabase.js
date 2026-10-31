@@ -4,7 +4,7 @@
 // BUILD: 20260426-04 — fix CSS options dropdown lisibles
 window.__LUXYRA_BUILD = "20260426-04";
 // 2026-10-14 : version de la couche donnees, comparee par app.html (evite un melange ancienne/nouvelle version via le cache)
-window.LX_DATA_VERSION = "20261031-12"; // 31/10 (-12) : vue établissement sur vue.luxyra.fr (jeton de lecture 15 min, relais /sb, plus jamais la session admin). // 31/10 (-11) : vue admin, /api/stripe/fees retiré de la liste de lecture (refusé par le serveur). // 31/10 (-10) : factures Luxyra rendues par le serveur (FR complet). // 31/10 (-9) : e-mails en série espacés + nouvelle tentative, limite du jour affichée (couche données inchangée). Précédent -8 : // 31/10 (-8) : bons cadeaux, palettes + e-carte en caisse + formats A4. // 31/10 (-7) : tarif Fondateur sur l écran fin d essai. // 31/10 (-6) : bons cadeaux, échappement des champs acheteur (H1) + réserves R1-R7. // 2026-10-31 (-5) : modele des bons cadeaux (config_json.bonModele) lu au chargement. Precedent : "20261031-4"
+window.LX_DATA_VERSION = "20261031-13"; // 31/10 (-13) : vue établissement, secrets jamais lus (vues lxv_*), opérateurs non chargés, ancienne vue luxyra.fr supprimée. // 31/10 (-12) : vue établissement sur vue.luxyra.fr (jeton de lecture 15 min, relais /sb, plus jamais la session admin). // 31/10 (-11) : vue admin, /api/stripe/fees retiré de la liste de lecture (refusé par le serveur). // 31/10 (-10) : factures Luxyra rendues par le serveur (FR complet). // 31/10 (-9) : e-mails en série espacés + nouvelle tentative, limite du jour affichée (couche données inchangée). Précédent -8 : // 31/10 (-8) : bons cadeaux, palettes + e-carte en caisse + formats A4. // 31/10 (-7) : tarif Fondateur sur l écran fin d essai. // 31/10 (-6) : bons cadeaux, échappement des champs acheteur (H1) + réserves R1-R7. // 2026-10-31 (-5) : modele des bons cadeaux (config_json.bonModele) lu au chargement. Precedent : "20261031-4"
 // (historique) "20261028-3"; // 2026-10-28 (-3, Luxyra 6.8.1 : version de l'application transmise dans chaque ticket (raw_data.lxVersion, contrôlée par le serveur), série de n° imprimés propre au serveur (meta.tkNumServeur), copies serveur jamais réécrites, refus LX_APP_OBSOLETE / LX_TKNUM_SERIE_SERVEUR / LX_CC_DEJA_EN_CAISSE)
 // (historique) "20261028-2"; // 2026-10-28 (-2, Luxyra 6.8.0 : recettes en ligne enregistrées en caisse par le serveur — champs meta serveur / recetteKey…, refus définitif LX_CC_DEJA_EN_CAISSE)
 // (historique) "20261028-1"; // 2026-10-28 (-1 : bons cadeaux à usage unique / multiple — qualification TVA du bon (usage_tva, qualif_tva, repli historique), ticket v2 HT/TVA par ventilation de l'app, taux_tva 0 pour une vente de BUM seule, bonsUtil conservé dans appointments.meta) ; 2026-10-27 (-3 : rapport du mois en vrai PDF + correctifs d’exports comptables, app.html seulement ; -2 : envoi au comptable — FEC + pack Excel + rapport par défaut, ZIP en option, app.html seulement ; -1 : envoi automatique au comptable — changement dans app.html seulement, couche données inchangée) ; 2026-10-17 (-2 : audit réglages — taux TVA produits brut (tvaProduitsColonne), familles produit sans produit (pcats), ancien saveSalonConfig renommé ; -1 : retour / remboursement partiel — champs du ticket de retour conservés dans appointments.meta, refus définitif LX_RETOUR_REFUSE jamais rejoué, ticket de retour refusé au rejeu écarté de la caisse) ; 2026-10-16 (-1 : incident Z n°128 — 1 réservation en ligne = 1 entrée, Z refusée par la base si différente du journal, annotations correctives) ; 2026-10-15 (-3 : multi-appareils, champs modifiés seulement + lignes supprimées ailleurs jamais recréées ; -2 : plus aucun enregistrement muet, lxEcritureVerifiee ; -1 : « Prix à partir de » + sur devis sur les forfaits) ; 2026-10-14 (-8 : correctifs revue d intégration) intégration des audits (données, sécurité, planning, clients, caisse, site, réglages)
@@ -50,18 +50,10 @@ if (typeof supabase !== "undefined" && supabase.createClient) {
         global: { headers: { "x-lx-vue": window._lxVueJeton }, fetch: function(u, o){ return window.fetch(u, o); } }
       });
     }
-  } else if (/[?&]vue_admin=/.test(location.search) && window._lxVraiLS) {
-    // Vue admin : on utilise la session du PANNEAU ADMIN (support@luxyra.fr), jamais celle du salon
-    // connecté sur ce navigateur. Seule la clé de session admin est lue/écrite dans le vrai stockage.
-    var _lxCleAdmin = "sb-luxyra-admin-auth";
-    var _lxStockAdmin = {
-      getItem: function(k){ return String(k).indexOf(_lxCleAdmin) === 0 ? window._lxVraiLS.getItem(k) : null; },
-      setItem: function(k, x){ if (String(k).indexOf(_lxCleAdmin) === 0) window._lxVraiLS.setItem(k, x); },
-      removeItem: function(){ /* jamais : ne déconnecte pas le panneau admin */ }
-    };
-    // global.fetch renvoie vers window.fetch AU MOMENT de l'appel : supabase-js (base, RPC, fonctions serveur,
-    // stockage) passe donc aussi par le filtre lecture seule posé plus bas (sinon il garde le fetch d'origine).
-    _sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { storageKey: _lxCleAdmin, storage: _lxStockAdmin, detectSessionInUrl: false }, global: { fetch: function(u, o){ return window.fetch(u, o); } } });
+  } else if (/[?&]vue_admin=/.test(location.search)) {
+    // 31/10 (contre-audit lot C, M6) : l'ancienne vue sur luxyra.fr (qui réutilisait la session admin) est supprimée ;
+    // la vue n'existe plus que sur vue.luxyra.fr. Ici : aucun client, page arrêtée (le worker redirige déjà).
+    _sb = null;
   } else {
     _sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   }
@@ -77,6 +69,7 @@ function _lxVueAdminStop(msg){
   document.body.innerHTML = '<div style="padding:40px;font-family:sans-serif;color:#fff;background:#111;min-height:100vh"><h2>👁 Vue admin</h2><p>'+String(msg).replace(/</g,"&lt;")+'</p></div>';
 }
 var _LX_VUE_EXPIREE = "Vue expirée (15 minutes) ou incomplète : rouvrez-la depuis la fiche de l'établissement dans l'administration.";
+if (window._lxVueAdmin && !window._lxVueHote) { _lxVueAdminStop("La vue d'un établissement s'ouvre depuis l'administration (vue.luxyra.fr)."); }
 if (window._lxVueHote) {
   if (!window._lxVueAdmin || !_sb) { _lxVueAdminStop(_LX_VUE_EXPIREE); }
   else {
@@ -5480,6 +5473,7 @@ var LX_OP_COLONNES = "id,salon_id,prenom,nom,email,avatar_color,avatar_initials,
 // Charger tous les opérateurs du salon
 async function loadOperateurs() {
   if (!_isOnline || !_salonId) return [];
+  if (window._lxVueHote) return null; // 31/10 (lot C, M4) : opérateurs jamais lisibles dans la vue établissement (pas d'appel, pas de faux bandeau)
   try {
     // 2026-10-14 SECURITE : colonnes explicites (pin_hash n'est plus lisible depuis l'application)
     var r = await _sb.from("salon_operateurs").select(LX_OP_COLONNES).eq("salon_id", _salonId).order("created_at");

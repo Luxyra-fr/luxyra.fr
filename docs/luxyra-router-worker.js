@@ -340,6 +340,22 @@ const LX_VUE_TABLES = new Set(["salons","app_config","nf525_cles","salon_slug_al
   "packs_clients","produits","produits_prix_historique","rdv_demande_options","rdv_demande_paiements","rdv_demandes","rdv_online",
   "recettes_en_ligne","services","site_config","sms_differes","sms_queue","stripe_versements","tickets","tickets_attente"]);
 const LX_VUE_RPC = new Set(["founders_stats"]);
+// 31/10 (contre-audit lot C, I1) : tables contenant des secrets (jetons, identifiants d'appareil ou de paiement) -> lues via
+// la vue SQL public.lxv_<table> (mêmes colonnes, colonnes sensibles = NULL). La base ne laisse plus la vue lire ces tables
+// directement (politique lx_vue_lecture retirée) : même un appel direct à Supabase avec le jeton n'y lit rien.
+const LX_VUE_MASQUEES = new Set(["salons","rdv_online","rdv_demandes","rdv_demande_paiements","sms_queue","commandes_online",
+  "recettes_en_ligne","cartes_cadeaux","cartes_abo_clients","factures_luxyra"]);
+// (M4) tables jamais lisibles par la vue : réponse vide (pas d'erreur, pas de faux bandeau)
+const LX_VUE_VIDES = new Set(["salon_operateurs","support_conversations","support_messages"]);
+// (M2) limitation de débit par IP (mémoire de l'instance) : 600 lectures / min, 30 jetons refusés / 10 min
+const _lxVueIp = new Map();
+function lxVueDebit(ip, refus) {
+  const now = Date.now(); let e = _lxVueIp.get(ip);
+  if (!e || now - e.t > 60000) { e = { t: now, n: 0, k: e && now - e.tk < 600000 ? e.k : 0, tk: e && now - e.tk < 600000 ? e.tk : now }; }
+  if (refus) { e.k++; } else { e.n++; }
+  _lxVueIp.set(ip, e); if (_lxVueIp.size > 5000) _lxVueIp.clear();
+  return e.n <= 600 && e.k <= 30;
+}
 const _lxVueCache = new Map();
 async function lxVueJetonValide(env, jeton) {
   if (!/^[0-9a-f]{64}$/.test(jeton || "")) return false;
@@ -380,16 +396,23 @@ async function lxVueRequete(request, env, worker) {
   if (p.startsWith("/sb/")) {
     const sous = p.slice(3); // /rest/v1/...
     const mt = /^\/rest\/v1\/([a-z0-9_]+)$/.exec(sous), mr = /^\/rest\/v1\/rpc\/([a-z0-9_]+)$/.exec(sous);
-    const lecture = (m === "GET" || m === "HEAD") && mt && LX_VUE_TABLES.has(mt[1]);
+    const ip = request.headers.get("cf-connecting-ip") || "?";
+    const jeton = request.headers.get("x-lx-vue") || "";
+    // (M2) refus tôt : jeton absent ou mal formé = aucune requête vers la base
+    if (!/^[0-9a-f]{64}$/.test(jeton)) { lxVueDebit(ip, true); return lxVueJson(401, { error: "Vue expirée : rouvrez-la depuis l'administration", code: "LX_VUE_EXPIREE" }, { "x-lx-vue-expiree": "1" }); }
+    if (!lxVueDebit(ip, false)) return lxVueJson(429, { error: "Trop de requêtes, réessayez dans une minute" });
+    const lecture = (m === "GET" || m === "HEAD") && mt && (LX_VUE_TABLES.has(mt[1]) || LX_VUE_VIDES.has(mt[1]));
     const rpc = m === "POST" && mr && LX_VUE_RPC.has(mr[1]);
     if (!lecture && !rpc) return lxVueJson(403, { error: "Lecture seule (vue établissement)", code: "LX_LECTURE_SEULE" });
-    const jeton = request.headers.get("x-lx-vue") || "";
-    if (!(await lxVueJetonValide(env, jeton))) return lxVueJson(401, { error: "Vue expirée : rouvrez-la depuis l'administration", code: "LX_VUE_EXPIREE" }, { "x-lx-vue-expiree": "1" });
+    if (!(await lxVueJetonValide(env, jeton))) { lxVueDebit(ip, true); return lxVueJson(401, { error: "Vue expirée : rouvrez-la depuis l'administration", code: "LX_VUE_EXPIREE" }, { "x-lx-vue-expiree": "1" }); }
+    if (lecture && LX_VUE_VIDES.has(mt[1])) return lxVueJson(200, [], { "Content-Range": "*/0" });
     const h = new Headers();
-    for (const k of ["accept", "accept-profile", "range", "range-unit", "content-type"]) { const v = request.headers.get(k); if (v) h.set(k, v); }
+    // (M1) jamais accept-profile / content-profile : la vue ne lit que le schéma public
+    for (const k of ["accept", "range", "range-unit"]) { const v = request.headers.get(k); if (v) h.set(k, v); }
     const pref = request.headers.get("prefer"); if (pref && /^count=(exact|planned|estimated)$/.test(pref.trim())) h.set("Prefer", pref.trim());
     h.set("apikey", env.SUPABASE_ANON_KEY); h.set("Authorization", `Bearer ${env.SUPABASE_ANON_KEY}`); h.set("x-lx-vue", jeton);
-    const cible = `${CONFIG.SUPABASE_URL}${sous}${url.search}`;
+    const chemin = (lecture && LX_VUE_MASQUEES.has(mt[1])) ? `/rest/v1/lxv_${mt[1]}` : sous;
+    const cible = `${CONFIG.SUPABASE_URL}${chemin}${url.search}`;
     let corps;
     if (rpc) { const t = await request.text(); if (t.length > 4096) return lxVueJson(413, { error: "Requête trop grande" }); corps = t || "{}"; h.set("Content-Type", "application/json"); }
     const r = await fetch(cible, { method: m, headers: h, body: corps });
