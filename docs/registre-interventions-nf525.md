@@ -946,3 +946,33 @@ Aucune table, fonction ni déclencheur fiscal modifié ; lecture seule de `carte
 - Aucune politique RLS d'écriture sur les tables de caisse ne contenait is_admin() (vérifié dans pg_policies).
 - Tests (transaction annulée) : compte admin (aal2, session valide) refusé sur les 9 fonctions ; propriétaire accepté au contrôle d'accès (arrêt sur contrôle métier, aucune écriture). Tests de nuit des protections et autocontrôle : indépendants de ce droit.
 - Fichiers : docs/migrations_1031_audit_final/nf525_admin_sans_ecriture_caisse.sql (rejouable), nf525_admin_avant.sql (retour arrière exact + empreintes md5 d'avant), docs/edge_1031_audit_final/rdv-empreinte-capture/index.ts.
+
+### 31/10/2026 — Droits de l'éditeur, lot 2 : contre-audit NF525 du commit 696ecd2 (validé par Alexandre) — révision serveur 6.8.7-s1
+- Nature : contrôle d'accès et traçabilité uniquement (version mineure, BOI-TVA-DECLA-30-10-30 § 340). Aucun calcul, format
+  d'empreinte, chaînage, signature, numérotation ni ligne JET existante modifié. Application inchangée (LX_VERSION 6.8.7).
+- Empreintes md5 APRÈS du lot 1 (commit 696ecd2) : cloturer_mois 82659288e757624c5175fefb2068ed5e ; cloturer_annee
+  eb7fb55826ae3d52cd97925905c6bced ; nf525_generer_archive_annuelle 893c1397ba197018db4318e1abe525fe ; cloturer_exercice
+  4a641804819aa67bc37f40c6cdcb6872 ; creer_ticket_avoir 1f73b57d8d0c971ff35986d0243283d1 ; consommer_bon_cadeau
+  de38d8147f4ec46cb918beee91a7e952 ; lx_pack_consommer f80fc95730810daffd31472383bce6b9 ; recrediter_bon_cadeau
+  74d0ce18140f4961e722d601a3084b48 ; lx_facture_emettre 82847fe947a1ec944d86c5fcd63e48ff.
+- I1 : `OR public.is_caller_admin()` (alias de is_admin) retiré de factory_reset_salon et reset_ventes_test_salon. md5 avant
+  0a440c07506617601a9cd883e95424c5 / 04d5b5279d61429c4e36c4fe65d6473a ; après f8a7df037a4c30e64d33b5fa2c6a67d3 /
+  6e5a2046f092147d9388c0f7b7734a63 ; le remplacement inverse redonne exactement les md5 avant (vérifié). Inventaire des autres
+  alias (is_caller_admin, e-mail support@luxyra.fr, admin_users) : aucun autre dans une fonction qui écrit en caisse (les
+  occurrences restantes sont des textes de message ou des fonctions de supervision admin_*).
+- I2 : déclencheur `trg_salons_identite_trace` (lx_prive.salons_identite_trace, md5 c87d2f71808c0bd2b7fbfd64dd62333b) : tout
+  changement de nom, adresse, CP, ville, SIRET, SIREN, TVA, n° TVA intracommunautaire, forme juridique, RCS ou capital fait par un
+  autre que le propriétaire (éditeur, rôle serveur, traitement automatique) est inscrit au JET (410 CONFIG_IDENTITE, ancienne →
+  nouvelle valeur, auteur, mention « éditeur Luxyra ») par le mécanisme existant audit_log → trg_audit_vers_jet ; si la trace
+  échoue, la modification est refusée. Les changements du propriétaire restent tracés par l'application (pas de doublon).
+- M1 : salon_a_historique_fiscal (md5 avant e4abb6b69dd406bcf842694270a76339, après e47fb8efa6c703bb97de9b02e358cd1d) couvre
+  aussi : passage en réel daté, clôtures d'exercice, forçages et annotations de Z, corrections de règlement, mouvements de bons,
+  archives signées, duplicatas, JET d'opérations fiscales (20, 30, 50, 60, 155, 190, 420, 901). Un essai jamais encaissé reste
+  supprimable (vérifié en transaction annulée : historique = faux). purge_salon_6ans n'est pas concernée (chemin propre).
+- M2 : politique salons.salon_delete supprimée (aucun appel direct ; seule voie : admin_delete_salon_cascade, SECURITY DEFINER).
+- M3 : repère consultable `luxyra_versions` = « 6.8.7-s1 » (is_current = faux) ; dossier docs/dossier-attestation-version-mineure-6.8.7-s1.md
+  (pourquoi pas 6.8.8, actions éditeur restantes, authentification des fonctions edge, procédure clé service) ;
+  banc rejouable docs/migrations_1031_audit_final/tests_acces_admin_caisse.sql : 11 / 11 refus pour l'éditeur, propriétaire accepté,
+  trace JET 410 pour l'éditeur et aucune en double pour le propriétaire.
+- Fichiers : docs/migrations_1031_audit_final/nf525_admin_sans_ecriture_caisse_2.sql (aller, rejouable),
+  nf525_admin_sans_ecriture_caisse_avant_2.sql (retour exact).
