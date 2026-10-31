@@ -268,8 +268,8 @@ async function __wrappedApiHandler(request, url, env) {
 // HSTS avec includeSubDomains (posé sur admin.luxyra.fr : ne couvre que *.admin.luxyra.fr, inexistants).
 // 2026-10-31 (lot B) : admin.html n'exécute plus AUCUN code inline (scripts dans /admin/admin-garde.js et /admin/admin.js,
 // gestionnaires remplacés par un répartiteur unique) -> CSP stricte script-src 'self' sur les pages de l'administration.
-// La CSP historique (avec 'unsafe-inline') ne reste que pour /app.html (vue établissement, ~2 000 gestionnaires inline,
-// déplacée sur son origine séparée au lot C) et /admin-twa.html (page de renvoi des applis Play).
+// (lot D) Plus aucune page avec 'unsafe-inline' sur admin.luxyra.fr : /app.html est sur vue.luxyra.fr (lot C),
+// /admin-twa.html charge admin/admin-twa.js.
 const LX_ADMIN_CSP_STRICTE = [
   "default-src 'self'",
   "script-src 'self'", "script-src-attr 'none'",
@@ -281,26 +281,17 @@ const LX_ADMIN_CSP_STRICTE = [
   "object-src 'none'", "base-uri 'none'", "form-action 'self'", "frame-ancestors 'self'",
   "report-uri /api/admin/csp-rapport", "report-to lx-csp"
 ].join("; ");
-const LX_ADMIN_CSP = [
-  "default-src 'self'",
-  "script-src 'self' https://luxyra.fr 'unsafe-inline'",
-  "style-src 'self' https://luxyra.fr 'unsafe-inline'",
-  "img-src 'self' data: blob: https://luxyra.fr https://kxdgjtvrkwugbifgppai.supabase.co https://images.unsplash.com https://*.tile.openstreetmap.fr",
-  "font-src 'self' https://luxyra.fr data:",
-  "connect-src 'self' https://luxyra.fr https://kxdgjtvrkwugbifgppai.supabase.co wss://kxdgjtvrkwugbifgppai.supabase.co https://api.github.com https://geo.api.gouv.fr https://api-adresse.data.gouv.fr",
-  "worker-src 'self'", "manifest-src 'self'", "frame-src 'self' blob: data:", "child-src 'self' blob:",
-  "object-src 'none'", "base-uri 'none'", "form-action 'self'", "frame-ancestors 'self'"
-].join("; ");
+// (lot D) l'ancienne CSP avec 'unsafe-inline' (LX_ADMIN_CSP) est supprimée : plus aucune page inline sur admin.luxyra.fr.
 function lxEntetesAdmin(resp, chemin) {
   try {
     const h = new Headers(resp.headers);
     // 2026-10-31 (lot A, S5) : une réponse /api qui n'est pas du JSON (HTML, texte…) ne peut rien exécuter sur l'origine admin
     const _ct = String(h.get("Content-Type") || "").toLowerCase();
     const _ch = String(chemin || "");
-    const _legacy = _ch === "/admin-twa.html"; // lot C : /app.html n'est plus servie sur admin.luxyra.fr
+    // lot D : /admin-twa.html n'a plus de script inline (admin/admin-twa.js) -> CSP stricte partout sur l'origine admin
     h.set("Content-Security-Policy", (_ch.startsWith("/api/") && _ct.indexOf("application/json") < 0)
-      ? "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data: https:" : (_legacy ? LX_ADMIN_CSP : LX_ADMIN_CSP_STRICTE));
-    if (!_legacy) h.set("Reporting-Endpoints", 'lx-csp="/api/admin/csp-rapport"');
+      ? "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data: https:" : LX_ADMIN_CSP_STRICTE);
+    h.set("Reporting-Endpoints", 'lx-csp="/api/admin/csp-rapport"');
     h.set("X-Frame-Options", "SAMEORIGIN"); // (contre-audit lot B, M3) aucun iframe dans l'administration : frame-src 'none' (aligné sur la balise meta)
     h.set("X-Content-Type-Options", "nosniff");
     h.set("Referrer-Policy", "no-referrer");
@@ -330,7 +321,10 @@ const LX_VUE_CSP = [
   "font-src 'self' data: https://luxyra.fr",
   "connect-src 'self'",
   "worker-src 'none'", "manifest-src 'none'", "frame-src 'self' blob: data:", "child-src 'self' blob:",
-  "object-src 'none'", "base-uri 'none'", "form-action 'none'", "frame-ancestors 'none'"
+  "object-src 'none'", "base-uri 'none'", "form-action 'none'", "frame-ancestors 'none'",
+  // (lot D) reste à faire pour une CSP stricte ici : app.html sans script inline (~2 000 gestionnaires). En attendant :
+  // garde-fou de navigation dans luxyra-supabase.js (window.open, liens et formulaires externes bloqués) + jeton 15 min.
+  "upgrade-insecure-requests"
 ].join("; ");
 const LX_VUE_TABLES = new Set(["salons","app_config","nf525_cles","salon_slug_aliases",
   "appointments","audit_log","avis_salon","cartes_abo_clients","cartes_cadeaux","clients","clotures","clotures_annotations",
@@ -344,7 +338,8 @@ const LX_VUE_RPC = new Set(["founders_stats"]);
 // la vue SQL public.lxv_<table> (mêmes colonnes, colonnes sensibles = NULL). La base ne laisse plus la vue lire ces tables
 // directement (politique lx_vue_lecture retirée) : même un appel direct à Supabase avec le jeton n'y lit rien.
 const LX_VUE_MASQUEES = new Set(["salons","rdv_online","rdv_demandes","rdv_demande_paiements","sms_queue","commandes_online",
-  "recettes_en_ligne","cartes_cadeaux","cartes_abo_clients","factures_luxyra"]);
+  "recettes_en_ligne","cartes_cadeaux","cartes_abo_clients","factures_luxyra",
+  "produits"]); // 31/10 lot D : produits lus via lxv_produits (la table n'est plus lisible par le rôle public)
 // (M4) tables jamais lisibles par la vue : réponse vide (pas d'erreur, pas de faux bandeau)
 const LX_VUE_VIDES = new Set(["salon_operateurs","support_conversations","support_messages"]);
 // (M2) limitation de débit par IP (mémoire de l'instance) : 600 lectures / min, 30 jetons refusés / 10 min

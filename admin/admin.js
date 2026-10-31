@@ -1,5 +1,22 @@
 // Panneau d'administration Luxyra — code déplacé depuis admin.html le 31/10/2026 (lot B, CSP script-src 'self').
 
+// ===== DATES À L'HEURE DE PARIS (31/10/2026, lot D) =====
+// Formateur UNIQUE : toutes les dates / heures affichées par l'administration sont à l'heure de Paris, quel que soit
+// le fuseau de l'appareil (ordinateur en voyage, téléphone mal réglé). Les appels toLocale…String('fr-FR', …) sans
+// fuseau reçoivent automatiquement timeZone 'Europe/Paris' (les nombres ne sont pas concernés).
+var LX_FUSEAU = "Europe/Paris";
+(function(){
+  ["toLocaleString","toLocaleDateString","toLocaleTimeString"].forEach(function(m){
+    var orig = Date.prototype[m];
+    Date.prototype[m] = function(loc, opt){
+      var o = Object.assign({}, opt || {});
+      if (!o.timeZone) o.timeZone = LX_FUSEAU;
+      try { return orig.call(this, loc || "fr-FR", o); } catch (e) { return orig.call(this, loc, opt); }
+    };
+  });
+})();
+function lxFmtParis(d, avecHeure){ if(!d) return "—"; try{ var x=new Date(d); if(isNaN(x)) return String(d); return avecHeure ? x.toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"}) : x.toLocaleDateString("fr-FR"); }catch(e){ return String(d); } }
+
 var SUPABASE_URL="https://kxdgjtvrkwugbifgppai.supabase.co";
 var SUPABASE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt4ZGdqdHZya3d1Z2JpZmdwcGFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwNDE2NTgsImV4cCI6MjA4ODYxNzY1OH0.J3jVuoHSWA0wXyaWxiRzILEWVNr8hbbgVYg73UEDTuI";
 var _sb=null,_uid=null,_online=false;
@@ -665,7 +682,7 @@ function nav(tab, sub, _fromPop){
   if(!_fromPop){
     try{ history.pushState({tab:tab,sub:sub}, '', '?tab='+encodeURIComponent(tab)+(sub?'&sub='+encodeURIComponent(sub):'')); }catch(e){}
   }
-  if(window.innerWidth<900){var sb=document.querySelector('.sidebar');if(sb)sb.classList.remove('open');}
+  if(window.innerWidth<=900){ lxSidebarEtat(false); }
   // 01/11 (audit B2/I9) : changer de page ferme la fiche et les fenêtres, et remonte en haut
   try{ if(document.getElementById("detailOverlay").classList.contains("open")) closeDetail(true); closeMod(); }catch(_){}
   render();
@@ -3373,28 +3390,29 @@ async function asGroupe(action){
     var sujet=(await lxSaisie("Objet de l'email ("+L.length+" établissement(s)) :",mod?mod.sujet:"")); if(!sujet) return;
     var corps=mod?((await lxConfirm("Envoyer le modèle « "+mod.nom+" » tel quel ?\n\n"+mod.corps.slice(0,400)))?mod.corps:null):(await lxSaisie("Message (texte simple, {nom} = nom de l’établissement, {prenom} = prénom du gérant) :","")); if(!corps) return;
     if(!(await lxConfirm("Envoyer cet email à "+L.length+" établissement(s) ?"))) return;
-    var tok=await lxAdminJeton(), ok=0, ko=0;
-    for(var i=0;i<L.length;i++){ var s=L[i]; if(!s.email){ko++;continue;}
+    var tok=await lxAdminJeton(), ok=0, ko=0, koN=[];
+    for(var i=0;i<L.length;i++){ var s=L[i]; if(!s.email){ko++;koN.push((s.nom||s.id)+" (pas d'e-mail)");continue;}
       var txt=corps.replace(/\{nom\}/g,s.nom).replace(/\{prenom\}/g,s.gerantPrenom||"");
-      try{ var r=await fetch("/api/email/custom",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+tok},body:JSON.stringify({to:s.email,toName:s.nom,salonName:"Luxyra",salonEmail:"support@luxyra.fr",subject:sujet,htmlContent:"<div style='font-family:sans-serif;font-size:15px;line-height:1.6'>"+saEsc(txt).replace(/\n/g,"<br>")+"<br><br>— L'équipe Luxyra</div>",textContent:txt})}); if(r.ok) ok++; else ko++; }catch(e){ko++;}
+      try{ var r=await fetch("/api/email/custom",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+tok},body:JSON.stringify({to:s.email,toName:s.nom,salonName:"Luxyra",salonEmail:"support@luxyra.fr",subject:sujet,htmlContent:"<div style='font-family:sans-serif;font-size:15px;line-height:1.6'>"+saEsc(txt).replace(/\n/g,"<br>")+"<br><br>— L'équipe Luxyra</div>",textContent:txt})}); if(r.ok) ok++; else { ko++; koN.push(s.nom||s.id); } }catch(e){ko++; koN.push(s.nom||s.id);}
       if(i<L.length-1) await new Promise(function(r){setTimeout(r,2100);});
       try{ await _sb.from("admin_notes_salons").insert({salon_id:s.id,type:"email",note:"Email groupé : "+sujet,auteur:"admin"}); }catch(e){}
     }
     await lxJournal("EMAIL_GROUPE",{cible:"salons:"+L.length,details:{sujet:sujet,envoyes:ok,echecs:ko,salons:L.map(function(x){return x.nom;}).slice(0,50)}});
-    (await lxAlert("✉️ "+ok+" envoyé(s)"+(ko?", "+ko+" échec(s)":""))); return;
+    (await lxAlert("✉️ "+ok+" envoyé(s)"+(ko?", "+ko+" échec(s)\n\n❌ "+koN.slice(0,30).join(", "):""))); return;
   }
   if(action==="sms"){
     var n=await lxChoix("Combien de SMS ajouter à chacun des "+L.length+" établissement(s) ?",[[20,"20 SMS"],[50,"50 SMS"],[100,"100 SMS"],[250,"250 SMS"],[500,"500 SMS"]],{titre:"Offrir des SMS"}); if(!(n>0&&n<=5000)) return;
     var motif=(await lxSaisie("Motif (gardé dans l'historique) :","Geste commercial")); if(motif===null) return;
-    for(var k=0;k<L.length;k++){ await smsMouvement(L[k].id,n,motif,true); }
-    (await lxAlert("📱 +"+n+" SMS ajoutés à "+L.length+" établissement(s)")); if(typeof loadData==="function") loadData(); return;
+    // 31/10 (lot D) : les échecs ne sont plus passés sous silence
+    var okS=0, koS=[]; for(var k=0;k<L.length;k++){ var _v=null; try{ _v=await smsMouvement(L[k].id,n,motif,true); }catch(_e){ _v=null; } if(_v===null||_v===undefined||_v===false) koS.push(L[k].nom||L[k].id); else okS++; }
+    (await lxAlert("📱 +"+n+" SMS ajoutés à "+okS+" établissement(s)"+(koS.length?"\n\n❌ Non ajoutés ("+koS.length+") : "+koS.slice(0,30).join(", ")+(koS.length>30?"…":""):""))); if(typeof loadData==="function") loadData(); return;
   }
   if(action==="essai"){
     var jours=await lxChoix("Prolonger l'essai de combien de jours ? (établissements en essai uniquement)",[[3,"3 jours"],[7,"7 jours"],[14,"14 jours"],[30,"30 jours"]],{titre:"Prolonger l’essai"}); if(!(jours>0&&jours<=90)) return;
-    var nb=0; for(var m=0;m<L.length;m++){ var x=L[m]; if(x.status!=="trial") continue; var d=new Date(Math.max(Date.now(), new Date(x.trialEnd||Date.now()).getTime())); d.setDate(d.getDate()+jours);
-      var _rg=await _sb.rpc("admin_salon_maj",{p_id:x.id,p_patch:{trial_end:d.toISOString()},p_action:"TRIAL_EXTEND",p_details:"+"+jours+" j (action groupée)"}); if(_rg.error||!_rg.data) continue; nb++;
+    var nb=0, koE=[], horsEssai=0; for(var m=0;m<L.length;m++){ var x=L[m]; if(x.status!=="trial"){ horsEssai++; continue; } var d=new Date(Math.max(Date.now(), new Date(x.trialEnd||Date.now()).getTime())); d.setDate(d.getDate()+jours);
+      var _rg=await _sb.rpc("admin_salon_maj",{p_id:x.id,p_patch:{trial_end:d.toISOString()},p_action:"TRIAL_EXTEND",p_details:"+"+jours+" j (action groupée)"}); if(_rg.error||!_rg.data){ koE.push((x.nom||x.id)+(_rg.error?" ("+String(_rg.error.message||"").slice(0,60)+")":"")); continue; } nb++;
       try{ await _sb.from("admin_notes_salons").insert({salon_id:x.id,type:"autre",note:"Essai prolongé de "+jours+" j (jusqu'au "+d.toLocaleDateString("fr-FR")+")",auteur:"admin"}); }catch(e){} }
-    (await lxAlert("⏰ Essai prolongé pour "+nb+" établissement(s)")); if(typeof loadData==="function") loadData(); return;
+    (await lxAlert("⏰ Essai prolongé pour "+nb+" établissement(s)"+(horsEssai?"\n("+horsEssai+" hors essai, ignoré(s))":"")+(koE.length?"\n\n❌ Échec ("+koE.length+") : "+koE.slice(0,20).join(" ; "):""))); if(typeof loadData==="function") loadData(); return;
   }
   if(action==="etape"){
     var e=await lxChoix("Nouvelle étape pour "+L.length+" établissement(s) :",Object.keys(ETAPES).map(function(k){return [k,ETAPES[k]];}),{titre:"Étape de suivi"}); if(!e) return;
@@ -5283,13 +5301,14 @@ function rJournal(){
     '<label style="font-size:12px;display:flex;gap:4px;align-items:center"><input type="checkbox"'+(F.auto==='1'?' checked':'')+' data-lx-change="lxJF(\'auto\',this.checked)"> traces automatiques (avant / après)</label></div>';
   return h+'<div id="journalZone"><div class="card" style="color:var(--text3)">Chargement…</div></div>';
 }
+function lxJournalPlus(){ window._JLim=(window._JLim||500)+500; return lxJournalCharger(); }
 async function lxJournalCharger(){
   var el=document.getElementById('journalZone'); if(!el) return;
   var F=window._JF, depuis=new Date(Date.now()-Number(F.jours||30)*864e5).toISOString();
   // 2026-10-31 : avec un texte, recherche serveur dans détails, cible, auteur, action ET valeurs avant / après (RPC lecture seule)
   var _t=(F.q||'').replace(/[%_,()*\\"]/g,' ').trim();
-  var q=(_t?_sb.rpc('admin_journal_recherche',{p_q:_t,p_depuis:depuis,p_limite:2000}).select('*'):_sb.from('admin_log').select('*').gte('timestamp_action',depuis))
-    .order('timestamp_action',{ascending:false}).limit(500);
+  var q=(_t?_sb.rpc('admin_journal_recherche',{p_q:_t,p_depuis:depuis,p_limite:Math.max(2000,window._JLim||500)}).select('*'):_sb.from('admin_log').select('*').gte('timestamp_action',depuis))
+    .order('timestamp_action',{ascending:false}).limit(window._JLim||500); // 31/10 lot D : « plus anciens » (+500)
   if(F.salon) q=q.eq('salon_id',F.salon);
   if(F.action) q=q.ilike('action','%'+F.action.replace(/[%_,()]/g,'')+'%');
   if(F.auto!=='1') q=q.not('action','like','AUTO_%');
@@ -5313,7 +5332,8 @@ async function lxJournalCharger(){
       (diff?'<details style="margin-top:4px"><summary style="cursor:pointer;color:var(--text3);font-size:11px">Avant / après</summary>'+lxJournalDiff(x.avant,x.apres)+'</details>':'')+
       '</div>';
   });
-  el.innerHTML=h+'</div><div style="font-size:11px;color:var(--text3);margin-top:6px">'+L.length+' action(s) (500 au plus). Le journal ne peut être ni modifié ni effacé depuis le panneau.</div>';
+  var _lim=window._JLim||500, _plein=L.length>=_lim;
+  el.innerHTML=h+'</div><div style="font-size:11px;color:var(--text3);margin-top:6px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">'+L.length+' action(s) affichée(s)'+(_plein?' — il y en a peut-être d’autres plus anciennes':'')+'. Le journal ne peut être ni modifié ni effacé depuis le panneau.'+(_plein?' <button class="tb-btn" type="button" data-lx-click="lxJournalPlus()">⬇ Plus anciens</button>':'')+'</div>';
 }
 function lxJournalDiff(av,ap){
   var A=(av&&typeof av==='object')?av:{}, P=(ap&&typeof ap==='object')?ap:{}, keys={};
@@ -5537,7 +5557,7 @@ function asMenuActions(s){
   if(s.status==="trial"){ o.push(["essai7","⏰ Prolonger l'essai de 7 jours"],["essai14","⏰ Prolonger l'essai de 14 jours"],["essai30","⏰ Prolonger l'essai de 30 jours"]); }
   if(s.status==="active"||s.status==="trial") o.push(["plan","📦 Changer de forfait ("+(s.plan==="pro"?"→ Essentiel":"→ Pro")+")"]);
   if(s.stripeSub) o.push(["mois","🎁 Offrir des mois d'abonnement"]);
-  o.push(["vue","👁 Voir l'app de l’établissement (lecture seule)"],["support","💬 Ouvrir le support"]);
+  o.push(["vue","👁 Voir l'app de l’établissement (lecture seule)"],["vue_revoquer","🚫 Fermer les vues ouvertes de cet établissement"],["vue_revoquer_tout","🚫 Fermer toutes les vues ouvertes (tous les établissements)"],["support","💬 Ouvrir le support"]);
   o.push(["sms","📱 Ajouter des SMS"],["email","✉️ Envoyer un email"],["note","📝 Noter un échange"],["rappel","📞 Programmer un rappel"]);
   if(s.subdomain) o.push(["site","🌐 Ouvrir son site"]);
   if(!s.fermeLe && s.status==="suspended") o.push(["reactivate","✅ Réactiver le compte"]);
@@ -5560,6 +5580,7 @@ async function asAction(id,v){
   if(v==="note"||v==="rappel"){ window._asOngletCourant="suivi"; openD(id); setTimeout(function(){ var el=document.getElementById(v==="note"?"asNote-"+id:"asRappel-"+id); if(el){ el.scrollIntoView({block:"center"}); el.focus(); } },150); return; }
   if(v==="site"){ if(!/^[a-z0-9-]{1,63}$/i.test(String(s.subdomain||""))) return (await lxAlert("Sous-domaine invalide")); return window.open("https://"+s.subdomain+".luxyra.fr","_blank","noopener"); }
   if(v==="vue") return asVoirApp(id);
+  if(v==="vue_revoquer"||v==="vue_revoquer_tout") return asVuesRevoquer(v==="vue_revoquer"?id:null);
   if(v==="support"){ window._asOngletCourant="support"; openD(id); return; }
 }
 
@@ -5615,6 +5636,15 @@ async function asVoirApp(id){
   if(r.error||!r.data||!/^[0-9a-f]{64}$/.test(String(r.data.jeton||""))){ (await lxAlert("❌ Vue impossible : "+((r.error&&r.error.message)||"jeton non reçu"))); return; }
   var exp=Date.parse(r.data.expire_le)||(Date.now()+15*60000);
   window.open("https://vue.luxyra.fr/app.html?vue_admin="+encodeURIComponent(id)+"#t="+r.data.jeton+"&e="+exp,"_blank","noopener");
+}
+
+// 31/10 (lot D) : fermer (révoquer) les vues en lecture seule encore ouvertes — effet sous 30 s (cache du relais)
+async function asVuesRevoquer(id){
+  var s=id?gSalon(id):null;
+  if(!(await lxConfirm(id?("Fermer toutes les vues ouvertes de « "+(s?s.nom:"cet établissement")+" » ?"):"Fermer TOUTES les vues d’établissement encore ouvertes ?",{titre:"Fermer les vues",ok:"Fermer"}))) return;
+  var r=await _sb.rpc("admin_vue_jeton_revoquer",{p_salon:id||null});
+  if(r.error){ (await lxAlert("❌ "+r.error.message)); return; }
+  (await lxAlert("✅ "+(Number(r.data)||0)+" vue(s) fermée(s). Elles s’arrêtent dans les 30 secondes."));
 }
 
 // --- Export des factures Luxyra (Stripe) ---
@@ -6108,12 +6138,26 @@ function lxAsFiltres(ouvert){ window._asFiltresOuverts=ouvert; }
 function lxAsSelVider(){ window._ASEL={}; asRafraichir(); }
 function lxSelectionner(el){ try{ el.select(); }catch(e){} }
 function lxContratHash(el){ var a=[]; try{ a=JSON.parse(el.getAttribute('data-a')||'[]'); }catch(e){} return showContratHash.apply(null,a); }
-function lxJF(k,v){ if(['jours','salon','action','q','auto'].indexOf(k)<0) return; window._JF=window._JF||{}; window._JF[k]=(k==='auto')?(v?'1':''):(typeof v==='string'&&(k==='action'||k==='q')?v.trim():v); lxJournalCharger(); }
+function lxJF(k,v){ if(['jours','salon','action','q','auto'].indexOf(k)<0) return; window._JF=window._JF||{}; window._JF[k]=(k==='auto')?(v?'1':''):(typeof v==='string'&&(k==='action'||k==='q')?v.trim():v); window._JLim=500; lxJournalCharger(); }
 function lxAsActionMenu(id,sel){ var v=sel.value; sel.selectedIndex=0; return asAction(id,v); }
 function lxRechFermer(){ var r=document.getElementById('lxRech'); if(r) r.remove(); }
 function lxRechAller(tab,sub){ lxRechFermer(); if(sub) nav(tab,sub); else nav(tab); }
 function lxRechSalon(id){ lxRechFermer(); nav('salons','liste'); setTimeout(function(){ openD(id); },120); }
-function lxSidebarBascule(){ var sb=document.querySelector('.sidebar'); if(sb) sb.classList.toggle('open'); }
+// 31/10 (lot D) : menu latéral accessible : état annoncé (aria-expanded), menu fermé hors d'atteinte du clavier
+// sous 900 px (inert), Échap le referme et rend le focus au bouton ☰.
+function lxSidebarEtat(ouvert){
+  var sb=document.querySelector('.sidebar'), bt=document.querySelector('.burger'); if(!sb) return;
+  var mobile=window.innerWidth<=900;
+  if(ouvert===undefined) ouvert=sb.classList.contains('open');
+  sb.classList.toggle('open', !!ouvert);
+  if(mobile){ if(ouvert){ sb.removeAttribute('inert'); sb.removeAttribute('aria-hidden'); } else { sb.setAttribute('inert',''); sb.setAttribute('aria-hidden','true'); } }
+  else { sb.removeAttribute('inert'); sb.removeAttribute('aria-hidden'); }
+  if(bt){ bt.setAttribute('aria-expanded', ouvert?'true':'false'); bt.setAttribute('aria-label', ouvert?'Fermer le menu':'Ouvrir le menu'); }
+}
+function lxSidebarBascule(){ var sb=document.querySelector('.sidebar'); if(!sb) return; var o=!sb.classList.contains('open'); lxSidebarEtat(o); if(o){ var f=sb.querySelector('button,a,[tabindex]'); if(f) try{ f.focus(); }catch(_e){} } }
+document.addEventListener('keydown', function(e){ if(e.key!=='Escape') return; var sb=document.querySelector('.sidebar'); if(sb && sb.classList.contains('open') && window.innerWidth<=900 && !document.querySelector('[role="dialog"][aria-modal="true"]:not([hidden])')){ lxSidebarEtat(false); var bt=document.querySelector('.burger'); if(bt) try{ bt.focus(); }catch(_e){} } });
+window.addEventListener('resize', function(){ lxSidebarEtat(); });
+document.addEventListener('DOMContentLoaded', function(){ lxSidebarEtat(); });
 function lxRaccourci(i){ var x=(window.ADMIN_SHORTCUTS||[])[Number(i)]; if(x) return shortcutClick(x.action_url); }
 function lxChatRecharger(){ return loadChatConvs().then(render); }
 function lxRetirerId(id){ var x=document.getElementById(id); if(x) x.remove(); }
@@ -6129,7 +6173,7 @@ function lxOuvrirLien(u){ if(/^(mailto|tel):/i.test(String(u||''))) window.open(
 // event.stopPropagation() et return false. Tout le reste est refusé (et signalé en console).
 var LX_ACTIONS=Object.create(null);
 // liste blanche générée à partir des attributs data-lx-* du panneau (lot B) ; toute nouvelle action doit y être ajoutée
-['addModal','addSmsCredits','addSmsCreditsCustom','annAction','asAction','asAjouterEtiquette','asAjouterNote','asChargerSupport','asExport','asGroupe','asOnglet','asRepondreSupport','asRetirerEtiquette','asSauverRappel','asSel','asSelTout','asSet','asVoirApp','brevoCharger','brevoSauverReglages','chatAcChoisir','chatChangerStatut','chatColler','chatMode','chatOuvrirPiece','chatRTypesEditer','chatRTypesSupprimer','chatReactiverBot','chatRevueAjouterKb','chatRevueCharger','chatSurSaisie','chatTouchesSaisie','chatVue','closeDetail','closeMod','createFromDem','delDem','delMig','doAdminLogout','doAdminLogoutPartout','doLogin','doSaveLegal','editLegal','editUserId','emBasculer','emEditer','emSauver','emSupprimer','kbEditer','loadAppConfigEditor','loadSystemHealth','lxARCharger','lxARDetail','lxARTraiter','lxAlerteOuvrir','lxAnaCacheClear','lxAppliquerSiret','lxAsActionMenu','lxAsFiltres','lxAsRech','lxAsSelVider','lxAttEdOuvrir','lxAttEdVoir','lxAttRelanceBasculer','lxAutoFixPgrst','lxBandeauReplier','lxBasculerSuivant','lxBonsCharger','lxCdAccord','lxCdAnnuler','lxCdEnvoyer','lxCdOuvrir','lxCdPlus','lxChatCtx','lxChatFermer','lxChatFichiers','lxChatFiltre','lxChatOuvrirBoite','lxChatPlus','lxChatRechEffacer','lxChatRechEntree','lxChatRecharger','lxChatRetirerFichier','lxChatSalonRech','lxCloseErrorDetail','lxClotJour','lxClotPlus','lxClotSalon','lxContratHash','lxCopier','lxDesinsCharger','lxEmailStatsCharger','lxExportNf525','lxFermerSiFond','lxJF','lxJournalCharger','lxLienCopier','lxLienMail','lxLienMaj','lxMarkResolvedManual','lxMfaActiver','lxMfaBandeauReplier','lxMfaFermer','lxModeAvanceBasculer','lxOfferMonths','lxOuvrirDoc','lxOuvrirLien','lxPoserRendre','lxPushDisable','lxPushEnable','lxPushPlusTard','lxPushTest','lxPushToggleEtRendre','lxRaccourci','lxRechAller','lxRechSalon','lxRechercheOuvrir','lxRequestClaudeFix','lxRetentionLancer','lxRetirerId','lxRetirerProche','lxRgpdCharger','lxSaAction','lxSauvCharger','lxScDrag','lxScDragEnd','lxScDrop','lxScMove','lxScSurvol','lxSelectionner','lxSetGroupedPeriod','lxShowErrorDetail','lxSidebarBascule','lxSmsSimul','lxSnoozeSignature','lxSuiviEtape','lxSuiviRappelEffacer','lxTdbCharger','lxTdbPlusMemo','lxTdbRessayer','lxTestMigrationPush','lxToggle1000','lxVerifierSiret','nav','openChatConv','openD','rMonitoringRefresh','resetDocs','resetSmsCredits','resolveChatConv','saChargerOverview','saChargerSalon','saExportFactures','saForfait','saLienInscription','saRelancer','saRembourser','saRemise','saveAppConfig','saveFreePlan','saveNotes','sendChatMsg','showMigrationMessage','showSalonContrat','smsAjuster','smsBloquer','smsHistorique','smsSauverReglages','toggleDocLock','toggleDrawerFull','updDem','updMig','verifSalon','lxAller'].forEach(function(k){ LX_ACTIONS[k]=1; });
+['addModal','addSmsCredits','addSmsCreditsCustom','annAction','asAction','asAjouterEtiquette','asAjouterNote','asChargerSupport','asExport','asGroupe','asOnglet','asRepondreSupport','asRetirerEtiquette','asSauverRappel','asSel','asSelTout','asSet','asVoirApp','brevoCharger','brevoSauverReglages','chatAcChoisir','chatChangerStatut','chatColler','chatMode','chatOuvrirPiece','chatRTypesEditer','chatRTypesSupprimer','chatReactiverBot','chatRevueAjouterKb','chatRevueCharger','chatSurSaisie','chatTouchesSaisie','chatVue','closeDetail','closeMod','createFromDem','delDem','delMig','doAdminLogout','doAdminLogoutPartout','doLogin','doSaveLegal','editLegal','editUserId','emBasculer','emEditer','emSauver','emSupprimer','kbEditer','loadAppConfigEditor','loadSystemHealth','lxARCharger','lxARDetail','lxARTraiter','lxAlerteOuvrir','lxAnaCacheClear','lxAppliquerSiret','lxAsActionMenu','lxAsFiltres','lxAsRech','lxAsSelVider','lxAttEdOuvrir','lxAttEdVoir','lxAttRelanceBasculer','lxAutoFixPgrst','lxBandeauReplier','lxBasculerSuivant','lxBonsCharger','lxCdAccord','lxCdAnnuler','lxCdEnvoyer','lxCdOuvrir','lxCdPlus','lxChatCtx','lxChatFermer','lxChatFichiers','lxChatFiltre','lxChatOuvrirBoite','lxChatPlus','lxChatRechEffacer','lxChatRechEntree','lxChatRecharger','lxChatRetirerFichier','lxChatSalonRech','lxCloseErrorDetail','lxClotJour','lxClotPlus','lxClotSalon','lxContratHash','lxCopier','lxDesinsCharger','lxEmailStatsCharger','lxExportNf525','lxFermerSiFond','lxJF','lxJournalCharger','lxJournalPlus','lxLienCopier','lxLienMail','lxLienMaj','lxMarkResolvedManual','lxMfaActiver','lxMfaBandeauReplier','lxMfaFermer','lxModeAvanceBasculer','lxOfferMonths','lxOuvrirDoc','lxOuvrirLien','lxPoserRendre','lxPushDisable','lxPushEnable','lxPushPlusTard','lxPushTest','lxPushToggleEtRendre','lxRaccourci','lxRechAller','lxRechSalon','lxRechercheOuvrir','lxRequestClaudeFix','lxRetentionLancer','lxRetirerId','lxRetirerProche','lxRgpdCharger','lxSaAction','lxSauvCharger','lxScDrag','lxScDragEnd','lxScDrop','lxScMove','lxScSurvol','lxSelectionner','lxSetGroupedPeriod','lxShowErrorDetail','lxSidebarBascule','lxSmsSimul','lxSnoozeSignature','lxSuiviEtape','lxSuiviRappelEffacer','lxTdbCharger','lxTdbPlusMemo','lxTdbRessayer','lxTestMigrationPush','lxToggle1000','lxVerifierSiret','nav','openChatConv','openD','rMonitoringRefresh','resetDocs','resetSmsCredits','resolveChatConv','saChargerOverview','saChargerSalon','saExportFactures','saForfait','saLienInscription','saRelancer','saRembourser','saRemise','saveAppConfig','saveFreePlan','saveNotes','sendChatMsg','showMigrationMessage','showSalonContrat','smsAjuster','smsBloquer','smsHistorique','smsSauverReglages','toggleDocLock','toggleDrawerFull','updDem','updMig','verifSalon','lxAller'].forEach(function(k){ LX_ACTIONS[k]=1; });
 var LX_SEULES=Object.create(null);
 ['asAction','saRembourser','resetSmsCredits','lxSaAction','saveFreePlan','saRemise','saForfait','lxRetentionLancer','emSupprimer','delDem','delMig','lxExportNf525','doAdminLogoutPartout','smsAjuster','smsBloquer','addSmsCredits','addSmsCreditsCustom','lxOfferMonths','verifSalon','toggleDocLock','resetDocs','lxAppliquerSiret','doSaveLegal','editUserId','lxAsActionMenu','asGroupe','saExportFactures','lxMarkResolvedManual','lxARTraiter','chatRTypesSupprimer','kbEditer','saveAppConfig','annAction','updDem','updMig','createFromDem','asVoirApp'].forEach(function(k){ LX_SEULES[k]=1; });
 var _lxGramCache=Object.create(null);
