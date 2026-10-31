@@ -873,3 +873,6 @@ secours, deux appareils), aucune application du SQL, aucune publication.
 - Edge `gc-stripe-webhook` v15 (verify_jwt false) : QR par jeton ; contrôle 405 (GET) et 401 (événement non vérifiable). La ligne d'alerte créée par ce contrôle a été supprimée.
 - App : l'e-carte passe par la nouvelle route ; lx-bon-cadeau.js v20261031-5 (pleine page à 1,85, A4 à 296,5 mm).
 - Bancs : bons_v3_worker_test 33/33, bons_v2_test 51/51, bons_v3_app 26/26 ; site public d'Excellence vérifié en ligne après la liste blanche (accueil, horaires et fermetures exceptionnelles, tarifs par catégories).
+
+### 31/10/2026 — Quotas d'envoi, campagnes e-mail en série, jetons QR (hors périmètre fiscal)
+Aucune table, fonction ni déclencheur fiscal modifié ; lecture seule de `cartes_cadeaux`. SQL `docs/migrations_1031_quota/quota_qr.sql` appliqué (lx_envoi_quota_rendre, lx_qr_resoudre restreint aux bons actifs, lx_qr_jetons_menage + cron quotidien, FK qr_jetons → salons ON DELETE CASCADE). Worker : quota décompté après validation et anti-doublon, rendu si Brevo refuse. App (garde 20261031-9) : e-mails en série espacés (3,1 s) avec nouvelle tentative sur 429, progression et « limite du jour ». Bancs : campagne 8/8, worker bons v3 40/40, app bons 26/26, sur mesure 37/37.

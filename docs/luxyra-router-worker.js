@@ -1521,9 +1521,18 @@ async function handleQrJeton(url, env) {
 }
 
 // 2026-10-31 (-3) — quota quotidien PERSISTANT par établissement (lx_prive.envois_quota, RPC lx_envoi_quota, service_role)
+let _lxQuotaAlerteA = 0;
 async function lxQuotaJour(env, id, type, max) {
-  try { const ok = await lxRpc(env, "lx_envoi_quota", { p_salon: id, p_type: type, p_max: max }); return ok === true ? true : (ok === false ? false : null); }
-  catch (e) { console.warn("[quota]", e && e.message); return null; } // null = quota indisponible (l'appelant décide)
+  try { const ok = await lxRpc(env, "lx_envoi_quota", { p_salon: id, p_type: type, p_max: max }); if (ok === true || ok === false) return ok; throw new Error("réponse inattendue"); }
+  catch (e) {
+    // 2026-10-31 (contre-audit bons v3) : vraie alerte (au plus 1 par heure et par instance), sans donnée nominative
+    if (Date.now() - _lxQuotaAlerteA > 3600 * 1000) { _lxQuotaAlerteA = Date.now(); try { await reportWorkerError(env, "worker:quota-indisponible", e, { type }, "warning"); } catch (_) {} }
+    return null; // null = quota indisponible (l'appelant décide)
+  }
+}
+// 2026-10-31 (contre-audit bons v3, R2a/R3a) : rend une unité quand l'envoi n'a finalement pas eu lieu (échec Brevo)
+async function lxQuotaRendre(env, id, type) {
+  try { await lxRpc(env, "lx_envoi_quota_rendre", { p_salon: id, p_type: type }); } catch (e) {}
 }
 async function lxConfigNombre(env, cle, defaut) {
   try {
@@ -1540,7 +1549,7 @@ async function lxConfigNombre(env, cle, defaut) {
 // plafond quotidien persistant par établissement ; anti-doublon (1 envoi / bon / adresse / jour, clé hachée).
 // Présentation uniquement : aucun montant, code, ticket ni TVA n'est modifié.
 // ============================================================
-function lxBonMentionTvaCaisse(b, tauxSalon) {
+function lxBonMentionTvaCaisse(b) {
   // identique à _lxBonMentionTva (app.html) avec le chargement du bon (luxyra-supabase.js : tvaRate BUM = 0, sinon tva_rate || 0,20)
   const u = (b && (b.usage_tva || (b.qualif_tva && b.qualif_tva.usage))) || null;
   const rate = (u === "BUM") ? 0 : (Number(b && b.tva_rate) || 0.20);
@@ -1582,10 +1591,6 @@ async function handleBonEcarte(request, env) {
     const LXB = globalThis.LXBon;
     const modele = LXB && LXB.modeleValide ? LXB.modeleValide(cfg && cfg.bonModele) : "";
     if (!modele || !LXB.emailDocument) return jsonResponse({ error: "Choisissez d’abord un modèle de bon (Bons cadeaux › Modèle des bons).", code: "sans_modele" }, 409);
-    // plafond quotidien par établissement (persistant)
-    const maxJour = await lxConfigNombre(env, "bon_ecarte_max_jour", 50);
-    const q = await lxQuotaJour(env, salonId, "bon_ecarte", maxJour);
-    if (q !== true) return jsonResponse({ error: q === false ? `Limite atteinte : ${maxJour} e-cartes par jour pour un établissement. Réessayez demain.` : "Envoi momentanément indisponible. Réessayez dans une minute.", code: q === false ? "quota" : "quota_indispo" }, q === false ? 429 : 503);
     const dateExp = bon.date_expiration ? new Date(String(bon.date_expiration).slice(0, 10) + "T12:00:00Z").toLocaleDateString("fr-FR", { timeZone: "Europe/Paris" }) : "";
     const perimetre = bon.scope === "prestations" ? "Prestations" : (bon.scope === "produits" ? "Produits" : "Prestations et produits");
     const qrUrl = await lxQrJetonUrl(env, bon.code, salonId);
@@ -1593,7 +1598,7 @@ async function handleBonEcarte(request, env) {
       nom: sal.nom || "", sous: sal.sous_titre || "", logo: (/^https:\/\/[^\s"'<>]+$/i.test(String(sal.logo || "")) ? sal.logo : ""),
       occasion: (LXB.occasionDepuisTheme && bon.theme_id) ? (LXB.occasionDepuisTheme(bon.theme_id) || "") : "",
       pour: bon.pour || "", de: bon.de || "", msg: (bon.message && bon.message !== "Bon offert") ? bon.message : "", valeur: Number(bon.valeur) || 0, code: bon.code,
-      dateExp, perimetre, mentionTva: lxBonMentionTvaCaisse(bon, sal.taux_tva), tkNum: bon.tk_num || null,
+      dateExp, perimetre, mentionTva: lxBonMentionTvaCaisse(bon), tkNum: bon.tk_num || null,
       couleur: sal.couleur_primaire || "#c8a84e", palette: (LXB.paletteValide ? LXB.paletteValide(cfg && cfg.bonPalette) : ""),
       adresse: [sal.adresse, [sal.cp, sal.ville].filter(Boolean).join(" ")].filter(Boolean).join(" "), tel: sal.tel || "", siret: sal.siret || "",
       intro: "Bonjour,\nvoici votre carte cadeau " + (sal.nom || "") + ". Présentez-la sur place, sur papier ou sur votre téléphone.",
@@ -1607,10 +1612,17 @@ async function handleBonEcarte(request, env) {
     const h = (await lxSha256Hex(String(bon.code) + "|" + to)).slice(0, 40);
     const res = await lxEmailReserver(env, { salonId, to, toName: "", subject, html, context: "bon_ecarte", dedupKey: `${salonId}|ecarte|${h}|${auj}` });
     if (res.doublon) return jsonResponse({ success: true, deduplique: true });
+    // plafond quotidien par établissement (persistant) — 2026-10-31 (R2a) : décompté APRÈS l'anti-doublon, rendu si l'envoi échoue
+    const maxJour = await lxConfigNombre(env, "bon_ecarte_max_jour", 50);
+    const q = await lxQuotaJour(env, salonId, "bon_ecarte", maxJour);
+    if (q !== true) {
+      await lxEmailLiberer(env, res.cle);
+      return jsonResponse({ error: q === false ? `Limite du jour atteinte : ${maxJour} e-cartes par jour pour un établissement. Réessayez demain.` : "Envoi momentanément indisponible. Réessayez dans une minute.", code: q === false ? "quota_jour" : "quota_indispo" }, q === false ? 429 : 503);
+    }
     let result;
     try { result = await brevoSendEmail(env, { to, toName: "", senderName: sal.nom || "Luxyra", senderEmail: "contact@luxyra.fr", replyTo: sal.email || undefined, subject, htmlContent: html, textContent: texte, attachment: null, headers: null }); }
-    catch (e) { await lxEmailLiberer(env, res.cle); throw e; }
-    if (result && (result.code || result.message)) { await lxEmailLiberer(env, res.cle); return jsonResponse({ success: false, error: "Envoi refusé par le service d’e-mail" }, 502); }
+    catch (e) { await lxEmailLiberer(env, res.cle); await lxQuotaRendre(env, salonId, "bon_ecarte"); throw e; }
+    if (result && (result.code || result.message)) { await lxEmailLiberer(env, res.cle); await lxQuotaRendre(env, salonId, "bon_ecarte"); return jsonResponse({ success: false, error: "Envoi refusé par le service d’e-mail" }, 502); }
     return jsonResponse({ success: true, messageId: result && result.messageId });
   } catch (e) {
     await reportWorkerError(env, "worker:bons-ecarte", e, {}, "error");
@@ -4819,20 +4831,6 @@ async function handleEmailCustom(request, env) {
   }
   if (_acces.user && !checkRateLimit("email_custom_u:" + _acces.user.id, 30)) return jsonResponse({ error: "Trop de requêtes. Réessayez dans 1 minute." }, 429);
   const _corps = await request.json();
-  // 2026-10-31 (-3, contre-audit bons v2 R1) : plafond QUOTIDIEN PERSISTANT par établissement (ou par compte sans
-  // établissement) pour les envois depuis le navigateur — protège la réputation de l'expéditeur Brevo. Usage réel
-  // relevé sur 30 jours : 5 e-mails/jour au plus par établissement ; plus grosse base clients avec e-mail : 75.
-  // Valeur réglable : app_config.config.email_custom_max_jour (défaut 500). Quota indisponible : envoi autorisé
-  // (rappels de RDV jamais bloqués par une panne du compteur), alerte journalisée.
-  if (_acces.ok && !_acces.internal && _acces.user && !lxIsAdminUser(_acces.user)) {
-    const _idQuota = (await lxEmailSalonAppelant(env, _acces, _corps.salon_id)) || _acces.user.id;
-    const _maxJ = await lxConfigNombre(env, "email_custom_max_jour", 500);
-    const _q = await lxQuotaJour(env, _idQuota, "email_custom", _maxJ);
-    if (_q === false) {
-      try { await reportWorkerError(env, "worker:email-quota", new Error(`plafond quotidien atteint (${_maxJ})`), { salon: String(_idQuota).slice(0, 8) }, "warning"); } catch (_) {}
-      return jsonResponse({ success: false, error: `Limite quotidienne d'e-mails atteinte (${_maxJ}). Réessayez demain ou contactez Luxyra.`, code: "quota_jour" }, 429);
-    }
-  }
   const { to, toName, salonName, salonEmail, subject, htmlContent, textContent } = _corps;
   if (!to || !subject) return jsonResponse({ error: "to et subject requis" }, 400);
   // 2026-10-15 : anti-doublon multi-appareils (voir lxEmailReserver). Appels serveur : déjà réservés en base.
@@ -4841,6 +4839,23 @@ async function handleEmailCustom(request, env) {
     const _salonRes = await lxEmailSalonAppelant(env, _acces, _corps.salon_id);
     if (_salonRes) _res = await lxEmailReserver(env, { salonId: _salonRes, to, toName, subject, html: htmlContent || textContent || "", context: _corps.context, dedupKey: _corps.dedupKey });
     if (_res.doublon) return jsonResponse({ success: true, deduplique: true, journalise: true });
+  }
+  // 2026-10-31 (-3, contre-audit bons v2 R1 ; bons v3 R3a) : plafond QUOTIDIEN PERSISTANT par établissement (ou par compte
+  // sans établissement) pour les envois depuis le navigateur — protège la réputation de l'expéditeur Brevo. Décompté APRÈS
+  // la validation (to/subject) et APRÈS l'anti-doublon ; rendu si Brevo refuse l'envoi. Usage réel relevé : 5 e-mails/jour au
+  // plus par établissement ; plus grosse base clients avec e-mail : 75. Réglable : app_config.config.email_custom_max_jour
+  // (défaut 500). Compteur indisponible : envoi autorisé (rappels de RDV jamais bloqués), alerte server_errors (1/h).
+  let _quotaId = null;
+  if (_acces.ok && !_acces.internal && _acces.user && !lxIsAdminUser(_acces.user)) {
+    const _idQuota = (await lxEmailSalonAppelant(env, _acces, _corps.salon_id)) || _acces.user.id;
+    const _maxJ = await lxConfigNombre(env, "email_custom_max_jour", 500);
+    const _q = await lxQuotaJour(env, _idQuota, "email_custom", _maxJ);
+    if (_q === false) {
+      await lxEmailLiberer(env, _res.cle);
+      try { await reportWorkerError(env, "worker:email-quota", new Error(`plafond quotidien atteint (${_maxJ})`), { salon: String(_idQuota).slice(0, 8) }, "warning"); } catch (_) {}
+      return jsonResponse({ success: false, error: `Limite du jour atteinte (${_maxJ} e-mails). Réessayez demain ou contactez Luxyra.`, code: "quota_jour" }, 429);
+    }
+    if (_q === true) _quotaId = _idQuota;
   }
   // 2026-10-17 audit réglages (#4) : campagnes / anniversaires / relances -> lien « Se désinscrire » + en-tête List-Unsubscribe.
   // Lien fourni par le serveur (appel interne, déjà présent dans le HTML) ou calculé ici pour la fiche du salon de l'appelant.
@@ -4860,8 +4875,8 @@ async function handleEmailCustom(request, env) {
   let result;
   try {
     result = await brevoSendEmail(env, { to, toName, senderName: salonName || "Luxyra", senderEmail: "contact@luxyra.fr", replyTo: salonEmail, subject, htmlContent: _html, textContent: _texte, attachment: null, headers: _entetes });
-  } catch (e) { await lxEmailLiberer(env, _res.cle); throw e; }
-  if (result.code || result.message) { await lxEmailLiberer(env, _res.cle); return jsonResponse({ success: false, error: result.message || result.code, result }); }
+  } catch (e) { await lxEmailLiberer(env, _res.cle); if (_quotaId) await lxQuotaRendre(env, _quotaId, "email_custom"); throw e; }
+  if (result.code || result.message) { await lxEmailLiberer(env, _res.cle); if (_quotaId) await lxQuotaRendre(env, _quotaId, "email_custom"); return jsonResponse({ success: false, error: result.message || result.code, result }); }
   return jsonResponse({ success: true, messageId: result.messageId, journalise: !!_res.journalise, result });
 }
 

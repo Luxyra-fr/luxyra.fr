@@ -20,6 +20,7 @@ globalThis.fetch = async (u, o = {}) => {
   if (u.includes("/rest/v1/cartes_cadeaux?")) return J(st.bon ? [st.bon] : []);
   if (u.includes("/rest/v1/salons?select=id,nom")) return J(st.salon ? [st.salon] : []);
   if (u.includes("/rest/v1/app_config")) return J([{ config: st.cfg || {} }]);
+  if (u.includes("/rpc/lx_envoi_quota_rendre")) { const a = JSON.parse(body); st.quota = st.quota || {}; const k = a.p_salon + a.p_type; st.rendu = (st.rendu || 0) + 1; if (st.quota[k] > 0) st.quota[k]--; return new Response("", { status: 204 }); }
   if (u.includes("/rpc/lx_envoi_quota")) { if (st.quotaKo) return J({ message: "x" }, 500); const a = JSON.parse(body); st.quota = st.quota || {}; const k = a.p_salon + a.p_type; st.quota[k] = (st.quota[k] || 0); if (st.quota[k] >= a.p_max) return J(false); st.quota[k]++; return J(true); }
   if (u.includes("/rpc/lx_qr_jeton")) return J("AbCdEfGhIjKlMnOpQrStUvWx");
   if (u.includes("/rpc/lx_qr_resoudre")) { const a = JSON.parse(body); return J(a.p_jeton === "AbCdEfGhIjKlMnOpQrStUvWx" ? "BC-7K4Q2M" : null); }
@@ -66,12 +67,17 @@ st = base(); r = await E(B, { "x-lx-internal": "sk" }); T("appel interne refusé
 // 3. quota quotidien
 st = base(); st.cfg = { bon_ecarte_max_jour: 2 }; let n200 = 0;
 for (let i = 0; i < 3; i++) { st.user = { id: "uq" + i }; st.bon = bonOk(); st.brevo = null; const x = await E({ ...B, to: "c" + i + "@ex.fr" }); if (x.s === 200) n200++; else r = x; }
-T("plafond e-cartes/jour (2) -> 3e refusé 429", n200 === 2 && r.s === 429 && r.j.code === "quota", r);
+T("plafond e-cartes/jour (2) -> 3e refusé 429", n200 === 2 && r.s === 429 && r.j.code === "quota_jour", r);
 st = base(); st.quotaKo = true; r = await E(B); T("quota indisponible -> 503 (fail-closed e-carte)", r.s === 503 && !st.brevo, r);
 // 4. doublon
 st = base(); st.dup = true; r = await E(B); T("doublon du jour -> deduplique, pas d'envoi", r.s === 200 && r.j.deduplique === true && !st.brevo, r);
 // 5. Brevo refuse -> 502 et réservation libérée
 st = base(); st.brevoKo = true; r = await E(B); T("Brevo refuse -> 502 + libération", r.s === 502 && st.libere === 1, r);
+// 2026-10-31 (contre-audit bons v3, R2a) : quota décompté APRÈS l'anti-doublon, rendu si Brevo refuse
+st = base(); st.dup = true; r = await E(B); T("R2a : doublon -> aucun décompte de quota", r.j.deduplique === true && !Object.values(st.quota || {}).some(v => v > 0), st.quota);
+st = base(); st.brevoKo = true; r = await E(B); T("R2a : Brevo refuse -> unité rendue (compteur à 0)", r.s === 502 && st.rendu === 1 && !Object.values(st.quota || {}).some(v => v > 0), { q: st.quota, r: st.rendu });
+st = base(); st.cfg = { bon_ecarte_max_jour: 1 }; st.quota = {}; r = await E(B); st.user = { id: "uz" }; st.bon = bonOk(); st.brevo = null; const r2 = await E({ ...B, to: "z@ex.fr" });
+T("R2a : plafond atteint -> réservation anti-doublon libérée", r2.s === 429 && r2.j.code === "quota_jour" && st.libere >= 1, r2);
 // 6. mentions TVA
 T("TVA BUM", /usage multiple/.test(W.__tva({ usage_tva: "BUM", tva_rate: 0 }, 20)), "");
 T("TVA offert", /^Bon offert/.test(W.__tva({ is_offert: true, tva_rate: 0 }, 20)) && /20 % incluse/.test(W.__tva({ is_offert: true, tva_rate: 0 }, 20)), W.__tva({ is_offert: true, tva_rate: 0 }, 20));
@@ -86,6 +92,15 @@ st = base(); st.quotaKo = true; last = await EM({ to: "y@ex.fr", subject: "S", h
 T("email/custom : quota indisponible -> envoi autorisé (rappels jamais bloqués)", last.s === 200 && last.j.success === true, last);
 st = base(); last = await (await W.__emc(new Request("https://luxyra.fr/api/email/custom", { method: "POST", headers: { "x-lx-internal": "sk" }, body: JSON.stringify({ to: "z@ex.fr", subject: "S", htmlContent: "x" }) }), env)).json();
 T("email/custom interne : pas de quota", !(st.calls || []).some((c) => /lx_envoi_quota/.test(c)), st.calls);
+// 2026-10-31 (contre-audit bons v3, R3a) : quota APRÈS validation et anti-doublon, rendu si Brevo refuse
+st = base(); last = await EM({ to: "", subject: "S", htmlContent: "x", salon_id: SAL });
+T("R3a : requête invalide (to vide) -> 400 sans décompte", last.s === 400 && !Object.values(st.quota || {}).some(v => v > 0), { last, q: st.quota });
+st = base(); st.dup = true; last = await EM({ to: "d@ex.fr", subject: "S", htmlContent: "x", salon_id: SAL });
+T("R3a : doublon -> sans décompte", last.j.deduplique === true && !Object.values(st.quota || {}).some(v => v > 0), { last, q: st.quota });
+st = base(); st.brevoKo = true; last = await EM({ to: "k@ex.fr", subject: "S", htmlContent: "x", salon_id: SAL });
+T("R3a : Brevo refuse -> unité rendue", last.j.success === false && st.rendu === 1 && !Object.values(st.quota || {}).some(v => v > 0), { last, q: st.quota, r: st.rendu });
+st = base(); st.cfg = { email_custom_max_jour: 1 }; await EM({ to: "a1@ex.fr", subject: "S", htmlContent: "x", salon_id: SAL }); last = await EM({ to: "a2@ex.fr", subject: "S2", htmlContent: "y", salon_id: SAL });
+T("R3a : plafond atteint -> réservation libérée + code quota_jour", last.s === 429 && last.j.code === "quota_jour" && st.libere >= 1, last);
 
 // 8. QR par jeton
 let q = await W.__qrt(new URL("https://luxyra.fr/api/qr/t/AbCdEfGhIjKlMnOpQrStUvWx"), env);
