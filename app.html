@@ -3117,11 +3117,20 @@ async function startCheckout(plan){
     var data=await res.json();
     if(data.url){
       window.location.href=data.url;
+    }else if(data.reactive){
+      // 31/10 (contre-audit 5, R2) : abonnement programmé pour s'arrêter -> repris, sans nouveau paiement
+      _libere(); try{ sessionStorage.removeItem("luxyra_archive_mode"); }catch(_eR){}
+      showAlert(data.message||"Votre abonnement est repris.","success");
+      setTimeout(function(){ location.reload(); },2500);
+    }else if(data.code==="regulariser"){
+      // 31/10 (R5) : impayé -> portail Stripe pour mettre à jour le moyen de paiement
+      _libere(); if(btn){btn.textContent="Passer en Pro →";btn.disabled=false;}
+      showAlert(data.error,"warning"); setTimeout(function(){ try{ openCustomerPortal(); }catch(_eP){} },1800);
     }else{
       console.error("[startCheckout] Worker error", data);
       // 31/10 (B1) : SIRET manquant sur l'écran de fin d'essai -> le champ SIRET est affiché sur place
       if(data.code==="siret_requis" && window._lxSalonSuspendu && typeof showTrialExpiredScreen==="function"){ try{ SALON_CONFIG.siret=""; showTrialExpiredScreen({id:sid,nom:SALON_CONFIG.nom||""}); var _fs=document.getElementById("lxFinSiretInp"); if(_fs) _fs.focus(); }catch(_eS){} showAlert("Renseignez d\u2019abord votre num\u00e9ro SIRET (obligatoire pour activer l\u2019abonnement).","warning"); }
-      else showAlert((data.code==="abonnement_actif"?"":"Erreur : ") + (data.error || "Impossible de créer la session de paiement"),data.code==="abonnement_actif"?"info":"error");
+      else showAlert((data.code==="abonnement_actif"||data.code==="stripe_indisponible"?"":"Erreur : ") + (data.error || "Impossible de créer la session de paiement"),data.code==="abonnement_actif"?"info":(data.code==="stripe_indisponible"?"warning":"error"));
       if(btn){btn.textContent="Passer en Pro →";btn.disabled=false;}
       _libere();
     }
