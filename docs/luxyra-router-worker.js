@@ -3974,7 +3974,9 @@ function jsonResponse(data, status = 200) {
 async function brevoSendEmail(env, { to, toName, senderEmail, senderName, subject, htmlContent, textContent, replyTo, attachment, headers, cc }) {
   const payload = {
     sender: { name: senderName || "Luxyra", email: senderEmail || "contact@luxyra.fr" },
-    to: [{ email: to, name: toName || "" }], subject,
+    // 31/10/2026 : Brevo REFUSE un nom vide (« name is missing in to ») -> on n'envoie le nom que s'il existe.
+    // (les e-mails sans prénom — code d'inscription, confirmation d'adresse — étaient refusés en silence depuis le 30/10)
+    to: [String(toName || "").trim() ? { email: to, name: String(toName).trim() } : { email: to }], subject,
     htmlContent: htmlContent || "<p>" + (textContent || subject) + "</p>",
     textContent: textContent || subject || "Message de Luxyra",
   };
