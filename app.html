@@ -414,12 +414,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261031-9"></script>
+<script src="luxyra-supabase.js?v=20261031-10"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261031-9";
+  var attendu="20261031-10";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -41993,7 +41993,21 @@ async function loadMesFactures(){
   }catch(e){el.innerHTML='<div style="color:var(--red);font-size:13px">Erreur: '+e.message+'</div>';}
 }
 
+// 2026-10-31 : facture d'abonnement Luxyra rendue par le serveur (rendu unique, complet, en français, identité figée à
+// l'émission) ; ancien rendu local conservé en secours si le serveur ne répond pas.
 function printFactureSalon(id){
+  var w=window.open("","_blank","width=820,height=760");
+  try{ if(w) w.document.write('<p style="font-family:Arial;padding:30px">Chargement de la facture…</p>'); }catch(_e){}
+  fetch(window.location.origin+"/api/factures-luxyra/html",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({facture_id:id})})
+    .then(function(r){ return r.ok?r.json():null; })
+    .then(function(d){
+      if(d&&d.html&&w){ w.document.open(); w.document.write(d.html); w.document.close(); return; }
+      try{ if(w) w.close(); }catch(_e){}
+      printFactureSalonLocal(id);
+    })
+    .catch(function(){ try{ if(w) w.close(); }catch(_e){} printFactureSalonLocal(id); });
+}
+function printFactureSalonLocal(id){
   _sb.from("factures_luxyra").select("*").eq("id",id).limit(1).then(function(r){
     if(!r.data||!r.data[0])return;
     var f=r.data[0];
