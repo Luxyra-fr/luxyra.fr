@@ -84,12 +84,13 @@
   // Annulation : { ok:false, status:499, data:{ error, annule:true } }.
   async function lxSignup(fields){
     var res = await call("lx-signup", fields);
-    if (res.status === 428 && res.data && res.data.code_requis && typeof document !== "undefined") res = await saisirCode(fields, res.data);
+    // 31/10 (B1) : la fenêtre s'ouvre aussi sur 429 + code_requis (trop de demandes : le dernier code reçu reste valable)
+    if ((res.status === 428 || res.status === 429) && res.data && res.data.code_requis && typeof document !== "undefined") res = await saisirCode(fields, res.data, res.status);
     if (res.ok && res.data && res.data.session_token) ouvrirSession(res.data.session_token, res.data.user); // 2026-10-14 audit
     return res;
   }
   function escH(t){ return String(t == null ? "" : t).replace(/[&<>"']/g, function(c){ return { "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]; }); }
-  function saisirCode(fields, info){
+  function saisirCode(fields, info, statut){
     return new Promise(function(resolve){
       var old = document.getElementById("lxCodeBg"); if (old) old.remove();
       var bg = document.createElement("div"); bg.id = "lxCodeBg";
@@ -115,7 +116,8 @@
         bRe.textContent = "Renvoyer le code (" + n + " s)";
         minuteur = setInterval(function(){ n--; if (n <= 0) { clearInterval(minuteur); minuteur = null; bRe.disabled = false; bRe.style.color = "#9a7b2c"; bRe.textContent = "Renvoyer le code"; } else bRe.textContent = "Renvoyer le code (" + n + " s)"; }, 1000);
       }
-      attendre(info && info.renvoi_s || 60);
+      attendre(info && (info.attente_s || info.renvoi_s) || 60);
+      if (statut === 429 && info && info.error) { msg.style.color = "#444"; msg.textContent = info.error; }
       inp.addEventListener("input", function(){ var v = inp.value.replace(/\D/g, "").slice(0, 6); if (v !== inp.value) inp.value = v; msg.textContent = ""; if (v.length === 6) valider(); });
       inp.addEventListener("keydown", function(e){ if (e.key === "Enter") valider(); });
       setTimeout(function(){ try { inp.focus(); } catch(_){} }, 50);
@@ -341,7 +343,7 @@
         box.appendChild(t); box.appendChild(a); box.appendChild(document.createTextNode(" ?"));
       } else if (opts.rappel !== false){
         var r = document.createElement("span"); r.style.color = "rgba(255,255,255,.55)";
-        r.textContent = opts.texte || "Le lien de confirmation sera envoyé à : "; var b = document.createElement("b"); b.style.color = "rgba(255,255,255,.85)"; b.textContent = v;
+        r.textContent = opts.texte || "Le code sera envoyé à : "; /* 31/10 : inscription par code (la correction d'adresse précise « lien ») */ var b = document.createElement("b"); b.style.color = "rgba(255,255,255,.85)"; b.textContent = v;
         r.appendChild(b); box.appendChild(r);
       }
     }
