@@ -1,0 +1,6 @@
+-- 31/10/2026 (appliqué en prod) : lx_prive.demandes_sur_mesure_echeances expire aussi une proposition v2 dès que TOUTES
+-- les options de l'envoi en cours sont passées (avant : attente des 72 h alors que plus rien n'était choisissable ;
+-- le choix d'une option passée était déjà refusé : LX_SM_PASSE). Mêmes garde-fous paiement en cours / confirmation.
+-- Effet : e-mail « expirée » au client + notification « ⌛ Proposition expirée » à l'établissement (chemins existants).
+-- Condition ajoutée dans la boucle 1 :
+--   or (proposal_version = 2 and exists(options de l'envoi) and not exists(option de l'envoi encore à venir, heure de Paris))
