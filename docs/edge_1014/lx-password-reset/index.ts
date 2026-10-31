@@ -1,3 +1,4 @@
+// lx-password-reset v9 — 2026-10-31 (contre-audit 3) : adresse ASCII stricte (m4) ; abonnements push supprimés à la réinitialisation (m2).
 // lx-password-reset v8 — 2026-10-30 (contre-audit 2) : e-mail sans prénom ; verification_email effacé à la confirmation.
 // lx-password-reset v7 — 2026-10-30 SECURITE (contre-audit B1) : le jeton garde l'adresse d'envoi ; la confirmation ne
 //   vérifie l'adresse que si elle est inchangée (sinon : mot de passe changé, adresse non vérifiée).
@@ -54,7 +55,7 @@ Deno.serve(async (req) => {
     if (action === "request") {
       const email = String(body.email || "").toLowerCase().trim().slice(0, 200);
       const neutre = { ok: true, message: "Si un compte existe avec cet email, un lien de réinitialisation vient d'être envoyé." };
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json(400, { error: "Email invalide" });
+      if (!/^[a-z0-9._%+'-]+@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,24}$/.test(email) || /\.\.|^\.|\.@|@-|-\./.test(email)) return json(400, { error: "Email invalide" }); // 31/10 (contre-audit 3, m4)
       const { data: u } = await sb.from("clients_luxyra").select("id, email, prenom").eq("email", email).maybeSingle();
       if (!u) return json(200, neutre);
       const depuis = new Date(Date.now() - 3600 * 1000).toISOString();
@@ -92,6 +93,8 @@ Deno.serve(async (req) => {
       // 2026-10-14 : déconnexion de tous les appareils (les anciens jetons portent l'ancienne version)
       const { error: bumpErr } = await sb.rpc("lx_client_session_bump", { p_id: rs.client_id });
       if (bumpErr) await report("session_version après réinitialisation: " + bumpErr.message);
+      // 31/10/2026 (contre-audit 3, m2) : les notifications push des appareils précédents sont supprimées
+      try { await sb.from("client_push_subscriptions").delete().eq("client_luxyra_id", rs.client_id); } catch {}
       try { await sb.from("login_attempts").delete().eq("email", String(u.email).toLowerCase()).eq("ok", false); } catch {}
       return json(200, { ok: true, email: u.email });
     }

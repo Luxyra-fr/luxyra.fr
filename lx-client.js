@@ -199,8 +199,15 @@
   async function lxConfirmReset(token, password){ return await call("lx-password-reset", { action: "confirm", token: token, password: password }); }
 
   // 2026-10-14 : vérification de l'adresse email du compte (lien reçu par email ; renvoi limité côté serveur)
-  async function lxVerifyEmail(verifToken){
-    var res = await call("lx-profile", { action: "verify_email", token: verifToken });
+  // 2026-10-31 (contre-audit 3, M1) : le serveur exige d'être connecté à CE compte (jeton de session envoyé s'il existe)
+  // ou le mot de passe du compte ; réponse 403 besoin_mot_de_passe sinon. En cas de succès, le serveur renvoie un nouveau
+  // jeton (les autres appareils sont déconnectés) : la session de cet appareil est ouverte sur le compte confirmé.
+  async function lxVerifyEmail(verifToken, password){
+    var body = { action: "verify_email", token: verifToken };
+    var tk = getToken(); if (tk) body.session_token = tk;
+    if (password) body.password = password;
+    var res = await call("lx-profile", body);
+    if (res.ok && res.data && res.data.session_token) { ouvrirSession(res.data.session_token, res.data.user || null); return res; }
     // 2026-10-14 intégration : le compte local n'est marqué vérifié que si l'adresse confirmée est la sienne
     if (res.ok) {
       var u = getUser();

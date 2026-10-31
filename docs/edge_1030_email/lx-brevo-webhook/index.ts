@@ -1,3 +1,7 @@
+// lx-brevo-webhook v4 — 2026-10-31 (contre-audit 3) : clé secrète dans l'URL (?k=…, coffre Supabase, contrôlée par
+//   lx_brevo_webhook_controle). Tant que la nouvelle URL n'a jamais servi, l'ancienne (sans clé) reste acceptée avec des
+//   limites (50 événements, 5 adresses signalées) et une alerte par jour dans la surveillance ; dès que la clé a servi une
+//   fois, tout appel sans la bonne clé est refusé (401). Plus de 300 événements/minute : 429.
 // lx-brevo-webhook v2 — 2026-10-30 : adresse d'un client Luxyra rejetée (hard_bounce / invalid_email / blocked) :
 //   l'adresse est transmise au worker (/api/email/rejet-signale, appel interne). Le worker VÉRIFIE auprès de Brevo
 //   (journal des événements) que le rejet est réel avant de marquer le compte (clients_luxyra.email_rejete_at) :
@@ -37,9 +41,16 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return json(405, { error: "Method not allowed" });
   try {
+    // 2026-10-31 : clé secrète (paramètre k de l'URL)
+    const cle = new URL(req.url).searchParams.get("k");
+    const { data: ctl, error: ctlErr } = await sb.rpc("lx_brevo_webhook_controle", { p_cle: cle && cle.length <= 200 ? cle : null });
+    const etat = ctlErr ? "transition" : String(ctl || "transition");
+    if (etat === "refus") return json(401, { error: "Clé invalide" });
+    if (etat === "trop") return json(429, { error: "Trop d'événements" });
+    const limite = etat === "ok" ? 1000 : 50;
     const body = await req.json().catch(() => null);
     if (!body) return json(400, { error: "Invalid JSON" });
-    const events = Array.isArray(body) ? body : [body];
+    const events = (Array.isArray(body) ? body : [body]).slice(0, limite);
     let processed = 0;
     let skipped = 0;
     const errors: any[] = [];
@@ -62,7 +73,7 @@ Deno.serve(async (req) => {
           salon_id: null,
         });
         processed++;
-        if (REJETS.includes(eventName) && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && rejetees.size < 20) rejetees.add(email.toLowerCase().trim());
+        if (REJETS.includes(eventName) && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && rejetees.size < (etat === "ok" ? 20 : 5)) rejetees.add(email.toLowerCase().trim());
       } catch (eRow) {
         errors.push(String((eRow as Error).message).slice(0, 200));
       }

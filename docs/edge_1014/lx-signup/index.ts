@@ -1,3 +1,4 @@
+// lx-signup v13 — 2026-10-31 (contre-audit 3) : adresse ASCII stricte (m4) ; e-mail : « si vous n'avez pas créé de compte, ne cliquez pas » (M1).
 // lx-signup v12 — 2026-10-30 (contre-audit 2) : lien de confirmation lié à l'adresse (verification_email), écriture conditionnelle, e-mail sans prénom.
 // lx-signup v10 — 2026-10-14 : version FUSIONNÉE des lots « secu » et « site » (intégration integ1014).
 //   site : mot de passe 8 caractères minimum (comme partout ailleurs).
@@ -49,7 +50,7 @@ async function envoyerVerification(userId: string, email: string, prenom: string
   if (error) { await (globalThis as any).__lxReport?.("Jeton de vérification non enregistré: " + error.message, "error"); return false; }
   if (!res || !res.length) return false;
   const lien = `https://luxyra.fr/compte.html?verif=${token}`;
-  const html = lxMailLayout(`<p style="font-size:15px">Bonjour,</p><p style="font-size:15px;line-height:1.6">Bienvenue sur Luxyra ! Confirmez votre adresse email pour retrouver dans votre compte vos rendez-vous, tickets, points de fidélité et cartes enregistrés par vos établissements.</p><p style="text-align:center;margin:22px 0"><a href="${esc(lien)}" style="display:inline-block;background:#c8a84e;color:#111;text-decoration:none;font-weight:700;padding:13px 26px;border-radius:30px">Confirmer mon adresse email</a></p><p style="font-size:12px;color:#8a8a8a">Ce lien est valable 48 heures. Si vous n'avez pas créé de compte Luxyra, ignorez cet email.</p>`, "Confirmez votre adresse email");
+  const html = lxMailLayout(`<p style="font-size:15px">Bonjour,</p><p style="font-size:15px;line-height:1.6">Bienvenue sur Luxyra ! Confirmez votre adresse email pour retrouver dans votre compte vos rendez-vous, tickets, points de fidélité et cartes enregistrés par vos établissements.</p><p style="text-align:center;margin:22px 0"><a href="${esc(lien)}" style="display:inline-block;background:#c8a84e;color:#111;text-decoration:none;font-weight:700;padding:13px 26px;border-radius:30px">Confirmer mon adresse email</a></p><p style="font-size:12px;color:#8a8a8a">Ce lien est valable 48 heures.</p><p style="font-size:14px;line-height:1.6;color:#b3261e"><b>Si vous n'avez pas créé de compte Luxyra, ne cliquez pas</b> : quelqu'un a pu saisir votre adresse par erreur. Rien ne sera relié à votre adresse sans confirmation avec le mot de passe du compte.</p>`, "Confirmez votre adresse email");
   try {
     const r = await fetch(`${WORKER_BASE}/api/email/custom`, { method: "POST", headers: { "Content-Type": "application/json", "x-lx-internal": SB_SR }, body: JSON.stringify({ to: email, toName: "", salonName: "Luxyra", subject: "Confirmez votre adresse email Luxyra", htmlContent: html, textContent: `Bonjour,\n\nConfirmez votre adresse email Luxyra (lien valable 48 heures) :\n${lien}\n\nSi vous n'avez pas créé de compte, ignorez cet email.\n\nLuxyra` }) });
     if (!r.ok) { await (globalThis as any).__lxReport?.("Email de vérification HTTP " + r.status, "warning"); return false; }
@@ -67,7 +68,7 @@ Deno.serve(async (req) => {
     const nom = String(body.nom || "").trim();
     const prenom = String(body.prenom || "").trim();
     const telephone = body.telephone ? String(body.telephone).trim() : null;
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 200) return json(400, { error: "Email invalide" });
+    if (!email || email.length > 200 || !/^[a-z0-9._%+'-]+@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,24}$/.test(email) || /\.\.|^\.|\.@|@-|-\./.test(email)) return json(400, { error: "Email invalide" }); // 31/10 (contre-audit 3, m4) : ASCII strict, comme change_email
     if (password.length < 8) return json(400, { error: "Mot de passe trop court (8 caractères minimum)" }); // 2026-10-14 audit site
     if (!nom || !prenom) return json(400, { error: "Nom et prénom requis" });
     if (await isPasswordPwned(password)) return json(400, { error: "Ce mot de passe a été exposé dans une fuite de données connue. Choisissez-en un autre plus unique." });

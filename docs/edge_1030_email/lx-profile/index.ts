@@ -1,3 +1,7 @@
+// lx-profile v14 — 2026-10-31 (contre-audit 3, M1) : verify_email exige d'être connecté à CE compte OU le mot de passe du compte
+//   (sinon réponse besoin_mot_de_passe : un clic de la victime sur le lien d'un compte créé par un tiers ne confirme plus rien) ;
+//   à la confirmation : nouvelle version de session (autres appareils déconnectés), abonnements push antérieurs supprimés (m2),
+//   nouveau jeton renvoyé à l'appareil qui confirme. Avertissement « si vous n'avez pas créé ce compte » dans le renvoi.
 // lx-profile v13 — 2026-10-30 (contre-audit 2) : lien de confirmation lié à l'adresse (verification_email), écritures conditionnelles atomiques (délai 2 min + limite du jour), e-mails sans prénom, champs de update bornés.
 // lx-profile v12 — 2026-10-30 (contre-audit) : change_email annule les liens « mot de passe oublié » en attente (B1) ;
 //   e-mail de confirmation sans prénom + « si vous n'avez pas créé ce compte, ne cliquez pas » (M1) ; update : nom/prénom
@@ -113,9 +117,24 @@ Deno.serve(async (req) => {
       if (!row || !row.verification_expires_at || new Date(row.verification_expires_at).getTime() < Date.now()) return json(400, { error: "Lien invalide ou expiré. Demandez un nouveau lien depuis votre compte." });
       // 30/10/2026 (contre-audit 2) : le lien ne confirme QUE l'adresse à laquelle il a été envoyé
       if (!row.verification_email || String(row.verification_email).toLowerCase() !== String(row.email || "").toLowerCase()) return json(400, { error: "Lien invalide ou expiré. Demandez un nouveau lien depuis votre compte." });
+      // 31/10/2026 (contre-audit 3, M1) : le lien seul ne suffit plus. Il faut être connecté à CE compte sur cet appareil,
+      // ou saisir le mot de passe du compte. Sinon : besoin_mot_de_passe (la page propose « Ce compte n'est pas à vous ? »
+      // -> définir un mot de passe par « mot de passe oublié », qui déconnecte tous les appareils).
+      let autorise = false;
+      if (body.session_token) { const sess = await verifySession(String(body.session_token)); if (sess && sess.lx_id === String(row.id)) autorise = true; }
+      if (!autorise) {
+        if (!body.password) return json(403, { besoin_mot_de_passe: true, error: "Pour confirmer, saisissez le mot de passe de votre compte Luxyra." });
+        const refus = await controleMotDePasse(String(row.id), String(body.password), ip, "Mot de passe incorrect");
+        if (refus) return refus;
+        autorise = true;
+      }
       const { data: maj, error } = await sb.from("clients_luxyra").update({ email_verified: true, verification_code: null, verification_expires_at: null, email_rejete_at: null, email_rejet_motif: null, verification_email: null, updated_at: new Date().toISOString() }).eq("id", row.id).eq("verification_code", h).eq("email", row.email).eq("email_verified", false).select("id");
       if (error || !maj || !maj.length) return json(400, { error: "Lien déjà utilisé." });
-      return json(200, { ok: true, email: row.email });
+      // autres appareils déconnectés + notifications push des appareils précédents supprimées (m2)
+      const sv = await nouvelleVersion(String(row.id));
+      try { await sb.from("client_push_subscriptions").delete().eq("client_luxyra_id", row.id); } catch {}
+      const { data: user } = await sb.from("clients_luxyra").select(SAFE_COLUMNS).eq("id", row.id).single();
+      return json(200, { ok: true, email: row.email, user, session_token: await signSession(String(row.id), String(row.email || "").toLowerCase(), sv) });
     }
     if (!body.session_token) return json(401, { error: "session_token requis" });
     const session = await verifySession(String(body.session_token));
@@ -142,7 +161,7 @@ Deno.serve(async (req) => {
       if (upErr) return json(500, { error: "Erreur interne" });
       if (!res || !res.length) return json(429, { error: "Un email vient d'être envoyé ou votre compte a changé. Patientez 2 minutes, rechargez la page et réessayez." });
       const lien = `https://luxyra.fr/compte.html?verif=${token}`;
-      const html = lxMailLayout(`<p style="font-size:15px">Bonjour,</p><p style="font-size:15px;line-height:1.6">Confirmez votre adresse email pour retrouver dans votre compte Luxyra vos rendez-vous, tickets, points de fidélité et cartes enregistrés par vos établissements.</p><p style="text-align:center;margin:22px 0"><a href="${esc(lien)}" style="display:inline-block;background:#c8a84e;color:#111;text-decoration:none;font-weight:700;padding:13px 26px;border-radius:30px">Confirmer mon adresse email</a></p><p style="font-size:12px;color:#8a8a8a">Ce lien est valable 48 heures. Si vous n'êtes pas à l'origine de cette demande, ignorez cet email.</p>`, "Confirmez votre adresse email");
+      const html = lxMailLayout(`<p style="font-size:15px">Bonjour,</p><p style="font-size:15px;line-height:1.6">Confirmez votre adresse email pour retrouver dans votre compte Luxyra vos rendez-vous, tickets, points de fidélité et cartes enregistrés par vos établissements.</p><p style="text-align:center;margin:22px 0"><a href="${esc(lien)}" style="display:inline-block;background:#c8a84e;color:#111;text-decoration:none;font-weight:700;padding:13px 26px;border-radius:30px">Confirmer mon adresse email</a></p><p style="font-size:14px;line-height:1.6;color:#b3261e"><b>Si vous n'avez pas créé de compte Luxyra, ne cliquez pas</b> : quelqu'un a pu saisir votre adresse par erreur. Rien ne sera relié à votre adresse sans confirmation avec le mot de passe du compte.</p><p style="font-size:12px;color:#8a8a8a">Ce lien est valable 48 heures. Si vous n'êtes pas à l'origine de cette demande, ignorez cet email.</p>`, "Confirmez votre adresse email");
       const r = await fetch(`${WORKER_BASE}/api/email/custom`, { method: "POST", headers: { "Content-Type": "application/json", "x-lx-internal": SB_SR }, body: JSON.stringify({ to: u.email, toName: "", salonName: "Luxyra", subject: "Confirmez votre adresse email Luxyra", htmlContent: html, textContent: `Bonjour,\n\nConfirmez votre adresse email Luxyra (lien valable 48 heures) :\n${lien}\n\nLuxyra` }) }).catch(() => null);
       if (!r || !r.ok) { await (globalThis as any).__lxReport?.("Renvoi email de vérification HTTP " + (r ? r.status : "réseau"), "warning"); return json(502, { error: "L'email n'a pas pu être envoyé. Réessayez dans quelques minutes." }); }
       return json(200, { ok: true });
@@ -179,7 +198,7 @@ Deno.serve(async (req) => {
       if (!maj || !maj.length) return json(409, { error: "Votre compte a changé entre-temps. Rechargez la page et réessayez." });
       const sv = await nouvelleVersion(lx_id); // les autres appareils sont déconnectés
       const lien = `https://luxyra.fr/compte.html?verif=${token}`;
-      const html = lxMailLayout(`<p style="font-size:15px">Bonjour,</p><p style="font-size:15px;line-height:1.6">Cette adresse vient d'être indiquée comme adresse e-mail d'un compte client Luxyra. Si c'est bien vous, confirmez-la pour retrouver dans votre compte vos rendez-vous, tickets, points de fidélité et cartes enregistrés par vos établissements.</p><p style="font-size:14px;line-height:1.6;color:#b3261e"><b>Si vous n'avez pas créé ce compte, ne cliquez pas</b> : quelqu'un a pu saisir votre adresse par erreur. Rien ne sera relié à votre adresse sans ce clic.</p><p style="text-align:center;margin:22px 0"><a href="${esc(lien)}" style="display:inline-block;background:#c8a84e;color:#111;text-decoration:none;font-weight:700;padding:13px 26px;border-radius:30px">Confirmer mon adresse email</a></p><p style="font-size:12px;color:#8a8a8a">Ce lien est valable 48 heures. Si vous n'êtes pas à l'origine de cette demande, ignorez cet email.</p>`, "Confirmez votre adresse email");
+      const html = lxMailLayout(`<p style="font-size:15px">Bonjour,</p><p style="font-size:15px;line-height:1.6">Cette adresse vient d'être indiquée comme adresse e-mail d'un compte client Luxyra. Si c'est bien vous, confirmez-la pour retrouver dans votre compte vos rendez-vous, tickets, points de fidélité et cartes enregistrés par vos établissements.</p><p style="font-size:14px;line-height:1.6;color:#b3261e"><b>Si vous n'avez pas créé ce compte, ne cliquez pas</b> : quelqu'un a pu saisir votre adresse par erreur. Rien ne sera relié à votre adresse sans confirmation avec le mot de passe du compte.</p><p style="text-align:center;margin:22px 0"><a href="${esc(lien)}" style="display:inline-block;background:#c8a84e;color:#111;text-decoration:none;font-weight:700;padding:13px 26px;border-radius:30px">Confirmer mon adresse email</a></p><p style="font-size:12px;color:#8a8a8a">Ce lien est valable 48 heures. Si vous n'êtes pas à l'origine de cette demande, ignorez cet email.</p>`, "Confirmez votre adresse email");
       const r = await fetch(`${WORKER_BASE}/api/email/custom`, { method: "POST", headers: { "Content-Type": "application/json", "x-lx-internal": SB_SR }, body: JSON.stringify({ to: nouv, toName: "", salonName: "Luxyra", subject: "Confirmez votre adresse email Luxyra", htmlContent: html, textContent: `Bonjour,\n\nConfirmez votre adresse email Luxyra (lien valable 48 heures) :\n${lien}\n\nLuxyra` }) }).catch(() => null);
       const envoye = !!(r && r.ok);
       if (!envoye) await (globalThis as any).__lxReport?.("Email de vérification (correction d'adresse) HTTP " + (r ? r.status : "réseau"), "warning");
