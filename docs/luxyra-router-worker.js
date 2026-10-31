@@ -1618,13 +1618,55 @@ function lxFactClient(s) {
   };
 }
 // Lit (ou fige au premier appel) l'identité client/vendeur de la facture
+// 2026-10-31 : moyen de paiement figé sur la facture (marque + 4 derniers chiffres de la carte, référence du paiement Stripe).
+// Lu chez Stripe UNE fois, à la création de l'identité figée de la facture ; jamais de numéro de carte complet.
+async function lxFactPaiement(env, f) {
+  try {
+    if (!(Number(f.montant_ttc) > 0)) return null;
+    let pi = /^pi_/.test(String(f.stripe_payment_intent || "")) ? String(f.stripe_payment_intent) : "";
+    let ch = /^(ch|py)_/.test(String(f.stripe_payment_intent || "")) ? String(f.stripe_payment_intent) : "";
+    if (!pi && !ch && /^in_/.test(String(f.stripe_invoice_id || ""))) {
+      const inv = await stripeAPI(env, `invoices/${encodeURIComponent(f.stripe_invoice_id)}`, null, "GET");
+      if (inv && !inv.error) { pi = typeof inv.payment_intent === "string" ? inv.payment_intent : (inv.payment_intent && inv.payment_intent.id) || ""; ch = typeof inv.charge === "string" ? inv.charge : (inv.charge && inv.charge.id) || ""; }
+      if (!pi && !ch) { // API Stripe récente : paiements de facture séparés
+        const ip = await stripeAPI(env, `invoice_payments?invoice=${encodeURIComponent(f.stripe_invoice_id)}&limit=3`, null, "GET");
+        const pay = ip && Array.isArray(ip.data) ? (ip.data.find((x) => x && x.status === "paid") || ip.data[0]) : null;
+        const pp = pay && pay.payment ? pay.payment : null;
+        if (pp) { pi = typeof pp.payment_intent === "string" ? pp.payment_intent : (pp.payment_intent && pp.payment_intent.id) || ""; ch = typeof pp.charge === "string" ? pp.charge : (pp.charge && pp.charge.id) || ""; }
+      }
+    }
+    let charge = null;
+    if (pi) { const p = await stripeAPI(env, `payment_intents/${encodeURIComponent(pi)}?expand[]=latest_charge`, null, "GET"); if (p && !p.error && p.latest_charge && typeof p.latest_charge === "object") charge = p.latest_charge; }
+    if (!charge && ch) { const c = await stripeAPI(env, `charges/${encodeURIComponent(ch)}`, null, "GET"); if (c && !c.error) charge = c; }
+    if (!charge) return pi ? { ref: pi } : null;
+    const d = charge.payment_method_details || {};
+    const out = { ref: String(charge.id || pi || "").slice(0, 60) };
+    if (charge.receipt_number) out.recu = String(charge.receipt_number).slice(0, 40);
+    if (d.type === "card" && d.card) { out.type = "carte"; out.marque = String(d.card.brand || "").slice(0, 20); out.last4 = String(d.card.last4 || "").replace(/\D/g, "").slice(0, 4); if (d.card.wallet && d.card.wallet.type) out.wallet = String(d.card.wallet.type).slice(0, 20); }
+    else if (d.type === "sepa_debit" && d.sepa_debit) { out.type = "sepa"; out.last4 = String(d.sepa_debit.last4 || "").replace(/\D/g, "").slice(0, 4); }
+    else if (d.type) out.type = String(d.type).slice(0, 20);
+    return out;
+  } catch (_) { return null; }
+}
 async function lxFactMeta(env, f, salon) {
   let m = await lxFactRpc(env, "lx_facture_luxyra_meta_lire", { p_facture: f.id });
   if (m && m.client) return m;
   const s = salon || await supabaseGet(env, f.salon_id);
   const cfg = await lxFactConfig(env);
-  m = await lxFactRpc(env, "lx_facture_luxyra_meta_poser", { p_facture: f.id, p_client: lxFactClient(s), p_vendeur: lxFactVendeur(cfg) });
-  return m && m.client ? m : { client: lxFactClient(s), vendeur: lxFactVendeur(cfg) };
+  const paiement = await lxFactPaiement(env, f);
+  m = await lxFactRpc(env, "lx_facture_luxyra_meta_poser", { p_facture: f.id, p_client: lxFactClient(s), p_vendeur: lxFactVendeur(cfg), p_paiement: paiement });
+  return m && m.client ? m : { client: lxFactClient(s), vendeur: lxFactVendeur(cfg), paiement: paiement };
+}
+function lxFactPaiementTexte(f, meta) {
+  const p = (meta && meta.paiement) || null;
+  let t = f.mode_paiement === "sepa" ? "prélèvement SEPA" : "carte bancaire";
+  if (!p) return t;
+  const marques = { visa: "Visa", mastercard: "Mastercard", amex: "American Express", cartes_bancaires: "CB", discover: "Discover", jcb: "JCB", unionpay: "UnionPay", diners: "Diners" };
+  const wallets = { apple_pay: "Apple Pay", google_pay: "Google Pay", link: "Link" };
+  if (p.type === "carte") t = "carte bancaire" + (p.marque ? " " + (marques[p.marque] || p.marque) : "") + (p.last4 ? " •••• " + p.last4 : "") + (p.wallet ? " (" + (wallets[p.wallet] || p.wallet) + ")" : "");
+  else if (p.type === "sepa") t = "prélèvement SEPA" + (p.last4 ? " (compte •••• " + p.last4 + ")" : "");
+  const ref = [p.recu ? "reçu n° " + p.recu : "", p.ref ? "réf. paiement " + p.ref : ""].filter(Boolean).join(", ");
+  return t + (ref ? " — " + ref : "");
 }
 function lxFactureLuxyraHtml(f, meta, opts) {
   opts = opts || {};
@@ -1638,7 +1680,7 @@ function lxFactureLuxyraHtml(f, meta, opts) {
   const remHT = assuj ? Math.round(rem / (1 + taux / 100) * 100) / 100 : rem;
   const periode = f.periode_debut ? ("du " + lxFactDate(f.periode_debut) + " au " + lxFactDate(f.periode_fin)) : "—";
   const paye = Number(f.montant_ttc) > 0;
-  const mode = f.mode_paiement === "sepa" ? "prélèvement SEPA" : "carte bancaire";
+  const mode = lxFactPaiementTexte(f, meta);
   const adrC = [c.adresse, [c.cp, c.ville].filter(Boolean).join(" ")].filter(Boolean).join(", ");
   const mentionTva = assuj ? "TVA acquittée sur les encaissements" : "TVA non applicable, art. 293 B du CGI";
   const css = "body{font-family:Arial,Helvetica,sans-serif;color:#1a1a1a;margin:0;background:#f4f1ea;font-size:13px;line-height:1.5}" +
