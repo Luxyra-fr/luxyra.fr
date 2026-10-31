@@ -4,7 +4,7 @@
 // BUILD: 20260426-04 — fix CSS options dropdown lisibles
 window.__LUXYRA_BUILD = "20260426-04";
 // 2026-10-14 : version de la couche donnees, comparee par app.html (evite un melange ancienne/nouvelle version via le cache)
-window.LX_DATA_VERSION = "20261031-11"; // 31/10 (-11) : vue admin, /api/stripe/fees retiré de la liste de lecture (refusé par le serveur). // 31/10 (-10) : factures Luxyra rendues par le serveur (FR complet). // 31/10 (-9) : e-mails en série espacés + nouvelle tentative, limite du jour affichée (couche données inchangée). Précédent -8 : // 31/10 (-8) : bons cadeaux, palettes + e-carte en caisse + formats A4. // 31/10 (-7) : tarif Fondateur sur l écran fin d essai. // 31/10 (-6) : bons cadeaux, échappement des champs acheteur (H1) + réserves R1-R7. // 2026-10-31 (-5) : modele des bons cadeaux (config_json.bonModele) lu au chargement. Precedent : "20261031-4"
+window.LX_DATA_VERSION = "20261031-12"; // 31/10 (-12) : vue établissement sur vue.luxyra.fr (jeton de lecture 15 min, relais /sb, plus jamais la session admin). // 31/10 (-11) : vue admin, /api/stripe/fees retiré de la liste de lecture (refusé par le serveur). // 31/10 (-10) : factures Luxyra rendues par le serveur (FR complet). // 31/10 (-9) : e-mails en série espacés + nouvelle tentative, limite du jour affichée (couche données inchangée). Précédent -8 : // 31/10 (-8) : bons cadeaux, palettes + e-carte en caisse + formats A4. // 31/10 (-7) : tarif Fondateur sur l écran fin d essai. // 31/10 (-6) : bons cadeaux, échappement des champs acheteur (H1) + réserves R1-R7. // 2026-10-31 (-5) : modele des bons cadeaux (config_json.bonModele) lu au chargement. Precedent : "20261031-4"
 // (historique) "20261028-3"; // 2026-10-28 (-3, Luxyra 6.8.1 : version de l'application transmise dans chaque ticket (raw_data.lxVersion, contrôlée par le serveur), série de n° imprimés propre au serveur (meta.tkNumServeur), copies serveur jamais réécrites, refus LX_APP_OBSOLETE / LX_TKNUM_SERIE_SERVEUR / LX_CC_DEJA_EN_CAISSE)
 // (historique) "20261028-2"; // 2026-10-28 (-2, Luxyra 6.8.0 : recettes en ligne enregistrées en caisse par le serveur — champs meta serveur / recetteKey…, refus définitif LX_CC_DEJA_EN_CAISSE)
 // (historique) "20261028-1"; // 2026-10-28 (-1 : bons cadeaux à usage unique / multiple — qualification TVA du bon (usage_tva, qualif_tva, repli historique), ticket v2 HT/TVA par ventilation de l'app, taux_tva 0 pour une vente de BUM seule, bonsUtil conservé dans appointments.meta) ; 2026-10-27 (-3 : rapport du mois en vrai PDF + correctifs d’exports comptables, app.html seulement ; -2 : envoi au comptable — FEC + pack Excel + rapport par défaut, ZIP en option, app.html seulement ; -1 : envoi automatique au comptable — changement dans app.html seulement, couche données inchangée) ; 2026-10-17 (-2 : audit réglages — taux TVA produits brut (tvaProduitsColonne), familles produit sans produit (pcats), ancien saveSalonConfig renommé ; -1 : retour / remboursement partiel — champs du ticket de retour conservés dans appointments.meta, refus définitif LX_RETOUR_REFUSE jamais rejoué, ticket de retour refusé au rejeu écarté de la caisse) ; 2026-10-16 (-1 : incident Z n°128 — 1 réservation en ligne = 1 entrée, Z refusée par la base si différente du journal, annotations correctives) ; 2026-10-15 (-3 : multi-appareils, champs modifiés seulement + lignes supprimées ailleurs jamais recréées ; -2 : plus aucun enregistrement muet, lxEcritureVerifiee ; -1 : « Prix à partir de » + sur devis sur les forfaits) ; 2026-10-14 (-8 : correctifs revue d intégration) intégration des audits (données, sécurité, planning, clients, caisse, site, réglages)
@@ -27,8 +27,30 @@ var SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYm
 
 // ===== INIT SUPABASE CLIENT =====
 var _sb = null;
+// 31/10 (lot C) : vue établissement servie sur son ORIGINE SÉPARÉE vue.luxyra.fr. Le jeton de lecture (15 min, un seul
+// établissement, créé par l'admin) arrive dans le fragment #t=… : lu puis effacé aussitôt de l'adresse, gardé EN MÉMOIRE
+// seulement (jamais stocké, jamais rafraîchi). Toutes les lectures passent par le relais same-origin /sb (GET seulement).
+window._lxVueHote = (location.hostname === "vue.luxyra.fr");
+window._lxVueJeton = null; window._lxVueExpire = 0;
+if (window._lxVueHote) {
+  try {
+    var _lxH = String(location.hash || "");
+    var _lxT = /[#&]t=([0-9a-f]{64})(?:&|$)/.exec(_lxH), _lxE = /[#&]e=(\d{10,15})(?:&|$)/.exec(_lxH);
+    if (_lxT) window._lxVueJeton = _lxT[1];
+    window._lxVueExpire = _lxE ? Number(_lxE[1]) : (Date.now() + 15 * 60000);
+    history.replaceState(null, "", location.pathname + location.search);
+  } catch (_e) {}
+}
 if (typeof supabase !== "undefined" && supabase.createClient) {
-  if (/[?&]vue_admin=/.test(location.search) && window._lxVraiLS) {
+  if (window._lxVueHote) {
+    if (window._lxVueJeton && /[?&]vue_admin=/.test(location.search)) {
+      _sb = supabase.createClient("https://vue.luxyra.fr/sb", SUPABASE_ANON_KEY, {
+        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false, storageKey: "lx-vue-sans-session" },
+        realtime: { params: { eventsPerSecond: 1 } },
+        global: { headers: { "x-lx-vue": window._lxVueJeton }, fetch: function(u, o){ return window.fetch(u, o); } }
+      });
+    }
+  } else if (/[?&]vue_admin=/.test(location.search) && window._lxVraiLS) {
     // Vue admin : on utilise la session du PANNEAU ADMIN (support@luxyra.fr), jamais celle du salon
     // connecté sur ce navigateur. Seule la clé de session admin est lue/écrite dans le vrai stockage.
     var _lxCleAdmin = "sb-luxyra-admin-auth";
@@ -54,6 +76,14 @@ function _lxVueAdminStop(msg){
   window._lxVueAdminArret = true;
   document.body.innerHTML = '<div style="padding:40px;font-family:sans-serif;color:#fff;background:#111;min-height:100vh"><h2>👁 Vue admin</h2><p>'+String(msg).replace(/</g,"&lt;")+'</p></div>';
 }
+var _LX_VUE_EXPIREE = "Vue expirée (15 minutes) ou incomplète : rouvrez-la depuis la fiche de l'établissement dans l'administration.";
+if (window._lxVueHote) {
+  if (!window._lxVueAdmin || !_sb) { _lxVueAdminStop(_LX_VUE_EXPIREE); }
+  else {
+    var _lxReste = Math.max(0, window._lxVueExpire - Date.now());
+    setTimeout(function(){ _lxVueAdminStop(_LX_VUE_EXPIREE); }, Math.min(_lxReste, 15 * 60000));
+  }
+}
 if (window._lxVueAdmin && _sb) {
   (function(){
     // Jamais de déconnexion depuis la vue admin (elle couperait la session du panneau admin)
@@ -74,7 +104,8 @@ if (window._lxVueAdmin && _sb) {
         var sensible = (url.origin === location.origin && url.pathname.indexOf("/api/") === 0 && !lectureApi[url.pathname]) || /\/functions\/v1\//.test(url.pathname) || (/\/rest\/v1\//.test(url.pathname) && !/\/rest\/v1\/rpc\/(founders_stats|admin_find_duplicate_clients)$/.test(url.pathname)) || (/\/storage\/v1\//.test(url.pathname) && !/\/storage\/v1\/object\/(sign|list)\//.test(url.pathname));
         if (ecriture && sensible) { console.warn("[VUE ADMIN] requête bloquée :", m, url.pathname); return Promise.resolve(new Response(JSON.stringify({ error: "Lecture seule (vue admin)" }), { status: 403, headers: { "Content-Type": "application/json" } })); }
       } catch (_e) {}
-      return fetchOrig(u, o);
+      if (!window._lxVueHote) return fetchOrig(u, o);
+      return fetchOrig(u, o).then(function(r){ if (r && r.status === 401 && r.headers && r.headers.get("x-lx-vue-expiree") === "1") _lxVueAdminStop(_LX_VUE_EXPIREE); return r; });
     };
     document.addEventListener("DOMContentLoaded", function(){
       var b = document.createElement("div");
@@ -1188,6 +1219,7 @@ async function checkSession() {
   if (window._lxDemoKO) return; // 2026-10-14 audit : démo sans son module -> échec fermé (rien ne démarre)
   if (!_sb) { startOffline(); return; }
   try{
+  if (window._lxVueHote) { if (!window._lxVueAdmin || !window._lxVueJeton) { _lxVueAdminStop(_LX_VUE_EXPIREE); return; } _userId = "vue"; await loadSalonData(); return; }
   var result = await _sb.auth.getSession();
   if (result.data && result.data.session) {
     // Check inactivité salon avant de restaurer
@@ -1955,8 +1987,8 @@ async function loadSalonData() {
   // 1. Charger le salon
   var sRes;
   if (window._lxVueAdmin) {
-    var _u = null; try { _u = (await _sb.auth.getUser()).data.user; } catch(_e) {}
-    if (!_u || String(_u.email||"").toLowerCase() !== "support@luxyra.fr") { _lxVueAdminStop("Connecte-toi d'abord au panneau admin (support@luxyra.fr) dans ce navigateur, puis rouvre la vue depuis la fiche du salon."); return; }
+    var _u = null; if (!window._lxVueHote) { try { _u = (await _sb.auth.getUser()).data.user; } catch(_e) {} }
+    if (!window._lxVueHote && (!_u || String(_u.email||"").toLowerCase() !== "support@luxyra.fr")) { _lxVueAdminStop("Connecte-toi d'abord au panneau admin (support@luxyra.fr) dans ce navigateur, puis rouvre la vue depuis la fiche du salon."); return; }
     sRes = await _sb.from("salons").select("*").eq("id", window._lxVueAdmin).limit(1);
     if (sRes.error || !sRes.data || !sRes.data.length) { _lxVueAdminStop("Salon introuvable."); return; }
   } else {

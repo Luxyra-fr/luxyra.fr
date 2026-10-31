@@ -297,7 +297,7 @@ function lxEntetesAdmin(resp, chemin) {
     // 2026-10-31 (lot A, S5) : une réponse /api qui n'est pas du JSON (HTML, texte…) ne peut rien exécuter sur l'origine admin
     const _ct = String(h.get("Content-Type") || "").toLowerCase();
     const _ch = String(chemin || "");
-    const _legacy = _ch === "/app.html" || _ch === "/admin-twa.html";
+    const _legacy = _ch === "/admin-twa.html"; // lot C : /app.html n'est plus servie sur admin.luxyra.fr
     h.set("Content-Security-Policy", (_ch.startsWith("/api/") && _ct.indexOf("application/json") < 0)
       ? "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data: https:" : (_legacy ? LX_ADMIN_CSP : LX_ADMIN_CSP_STRICTE));
     if (!_legacy) h.set("Reporting-Endpoints", 'lx-csp="/api/admin/csp-rapport"');
@@ -312,9 +312,116 @@ function lxEntetesAdmin(resp, chemin) {
     return new Response(resp.body, { status: resp.status, statusText: resp.statusText, headers: h });
   } catch (_) { return resp; }
 }
+// ============================================================================================
+// 2026-10-31 LOT C : vue établissement en LECTURE SEULE sur son origine séparée vue.luxyra.fr
+// ============================================================================================
+// - Jamais la session admin ici : la vue reçoit un jeton opaque de 15 min pour UN établissement (créé par
+//   admin_vue_jeton_creer, tracé), passé dans le fragment de l'adresse puis gardé en mémoire.
+// - Seules pages servies : /app.html (+ ses fichiers statiques). Aucune route /api, aucun service worker, aucun manifeste.
+// - Les lectures passent par le relais same-origin /sb/rest/v1/* en GET (et la seule RPC publique founders_stats) :
+//   jeton vérifié (lx_vue_jeton_etat, clé service, cache 30 s), puis appel Supabase avec la clé PUBLIQUE + x-lx-vue ;
+//   la base ne renvoie que les lignes de l'établissement du jeton (politiques lx_vue_lecture, FOR SELECT).
+// - CSP : connect-src 'self' (le relais) : même une faille de script ne peut rien envoyer ailleurs que vers ce relais.
+const LX_VUE_CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline' https://luxyra.fr",
+  "style-src 'self' 'unsafe-inline' https://luxyra.fr",
+  "img-src 'self' data: blob: https://luxyra.fr https://kxdgjtvrkwugbifgppai.supabase.co",
+  "font-src 'self' data: https://luxyra.fr",
+  "connect-src 'self'",
+  "worker-src 'none'", "manifest-src 'none'", "frame-src 'self' blob: data:", "child-src 'self' blob:",
+  "object-src 'none'", "base-uri 'none'", "form-action 'none'", "frame-ancestors 'none'"
+].join("; ");
+const LX_VUE_TABLES = new Set(["salons","app_config","nf525_cles","salon_slug_aliases",
+  "appointments","audit_log","avis_salon","cartes_abo_clients","cartes_cadeaux","clients","clotures","clotures_annotations",
+  "clotures_annuelles","clotures_exercices","clotures_mensuelles","collaborateurs","commandes_online","corrections_reglement",
+  "devis","factures_clients","factures_luxyra","fidelite_client","forfaits","fournisseurs","inventaires","messaging_log",
+  "migrated_invoices","mouvements_stock","nf525_attestations","nf525_duplicatas","nf525_jet","nf525_signatures","notifications",
+  "packs_clients","produits","produits_prix_historique","rdv_demande_options","rdv_demande_paiements","rdv_demandes","rdv_online",
+  "recettes_en_ligne","services","site_config","sms_differes","sms_queue","stripe_versements","tickets","tickets_attente"]);
+const LX_VUE_RPC = new Set(["founders_stats"]);
+const _lxVueCache = new Map();
+async function lxVueJetonValide(env, jeton) {
+  if (!/^[0-9a-f]{64}$/.test(jeton || "")) return false;
+  const c = _lxVueCache.get(jeton);
+  if (c && c.t > Date.now() - 30000) return c.ok && c.exp > Date.now();
+  let ok = false, exp = 0;
+  try {
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/lx_vue_jeton_etat`, { method: "POST",
+      headers: { "Content-Type": "application/json", apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` },
+      body: JSON.stringify({ p_jeton: jeton }) });
+    if (r.ok) { const j = await r.json(); ok = !!(j && j.ok); exp = ok ? Date.parse(j.expire_le) || 0 : 0; }
+  } catch (_) { ok = false; }
+  if (_lxVueCache.size > 500) _lxVueCache.clear();
+  _lxVueCache.set(jeton, { ok, exp, t: Date.now() });
+  return ok && exp > Date.now();
+}
+function lxVueEntetes(resp, html) {
+  const h = new Headers(resp.headers);
+  h.set("Content-Security-Policy", LX_VUE_CSP);
+  h.set("X-Frame-Options", "DENY");
+  h.set("X-Content-Type-Options", "nosniff");
+  h.set("Referrer-Policy", "no-referrer");
+  h.set("X-Robots-Tag", "noindex, nofollow");
+  h.set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()");
+  h.set("Strict-Transport-Security", "max-age=31536000");
+  h.set("Cross-Origin-Opener-Policy", "same-origin");
+  h.delete("Access-Control-Allow-Origin");
+  if (html) h.set("Cache-Control", "no-store");
+  return new Response(resp.body, { status: resp.status, statusText: resp.statusText, headers: h });
+}
+function lxVueJson(status, obj, extra) {
+  return lxVueEntetes(new Response(JSON.stringify(obj), { status, headers: Object.assign({ "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" }, extra || {}) }), false);
+}
+async function lxVueRequete(request, env, worker) {
+  const url = new URL(request.url);
+  const m = request.method;
+  const p = url.pathname;
+  if (p.startsWith("/sb/")) {
+    const sous = p.slice(3); // /rest/v1/...
+    const mt = /^\/rest\/v1\/([a-z0-9_]+)$/.exec(sous), mr = /^\/rest\/v1\/rpc\/([a-z0-9_]+)$/.exec(sous);
+    const lecture = (m === "GET" || m === "HEAD") && mt && LX_VUE_TABLES.has(mt[1]);
+    const rpc = m === "POST" && mr && LX_VUE_RPC.has(mr[1]);
+    if (!lecture && !rpc) return lxVueJson(403, { error: "Lecture seule (vue établissement)", code: "LX_LECTURE_SEULE" });
+    const jeton = request.headers.get("x-lx-vue") || "";
+    if (!(await lxVueJetonValide(env, jeton))) return lxVueJson(401, { error: "Vue expirée : rouvrez-la depuis l'administration", code: "LX_VUE_EXPIREE" }, { "x-lx-vue-expiree": "1" });
+    const h = new Headers();
+    for (const k of ["accept", "accept-profile", "range", "range-unit", "content-type"]) { const v = request.headers.get(k); if (v) h.set(k, v); }
+    const pref = request.headers.get("prefer"); if (pref && /^count=(exact|planned|estimated)$/.test(pref.trim())) h.set("Prefer", pref.trim());
+    h.set("apikey", env.SUPABASE_ANON_KEY); h.set("Authorization", `Bearer ${env.SUPABASE_ANON_KEY}`); h.set("x-lx-vue", jeton);
+    const cible = `${CONFIG.SUPABASE_URL}${sous}${url.search}`;
+    let corps;
+    if (rpc) { const t = await request.text(); if (t.length > 4096) return lxVueJson(413, { error: "Requête trop grande" }); corps = t || "{}"; h.set("Content-Type", "application/json"); }
+    const r = await fetch(cible, { method: m, headers: h, body: corps });
+    const rh = new Headers();
+    for (const k of ["content-type", "content-range", "range-unit", "preference-applied"]) { const v = r.headers.get(k); if (v) rh.set(k, v); }
+    rh.set("Cache-Control", "no-store");
+    return lxVueEntetes(new Response(r.body, { status: r.status, headers: rh }), false);
+  }
+  if (m !== "GET" && m !== "HEAD") return lxVueJson(405, { error: "Méthode non autorisée" });
+  if (p === "/robots.txt") return lxVueEntetes(new Response("User-agent: *\nDisallow: /\n", { headers: { "Content-Type": "text/plain; charset=utf-8" } }), false);
+  if (p.startsWith("/api/") || p.startsWith("/.well-known/") || p.startsWith("/admin") || p === "/sw.js" || /^\/manifest.*\.json$/i.test(p) || /^\/sw[-_].*\.js$/i.test(p)) {
+    return lxVueEntetes(new Response("Not found", { status: 404, headers: { "Cache-Control": "no-store" } }), false);
+  }
+  const estPage = /\.html?$/i.test(p) || !/\.[a-z0-9]{1,8}$/i.test(p);
+  if (estPage && p !== "/app.html") return Response.redirect("https://luxyra.fr/", 302);
+  if (p === "/app.html" && !/^[0-9a-f-]{36}$/i.test(url.searchParams.get("vue_admin") || "")) return Response.redirect("https://luxyra.fr/", 302);
+  // Fichier servi exactement comme sur luxyra.fr (mêmes routes statiques), sans aucun cookie ni en-tête du visiteur.
+  if (p.indexOf("..") >= 0 || p.indexOf("//") >= 0) return lxVueEntetes(new Response("Not found", { status: 404 }), false);
+  const o = await fetch(`https://luxyra-fr.github.io/luxyra.fr${p}`, { method: m, headers: { "Accept": request.headers.get("accept") || "*/*", "Cache-Control": "no-cache" }, cf: { cacheTtl: 0, cacheEverything: false } });
+  const oh = new Headers();
+  for (const k of ["content-type", "etag", "last-modified"]) { const v = o.headers.get(k); if (v) oh.set(k, v); }
+  oh.set("Cache-Control", (estPage || /\.js$/i.test(p)) ? "no-store" : "public, max-age=300");
+  return lxVueEntetes(new Response(o.body, { status: o.status, headers: oh }), estPage);
+}
+
 export default {
   async fetch(request, env) {
     const _uA = new URL(request.url);
+    if (_uA.hostname === "vue.luxyra.fr") {
+      try { return await lxVueRequete(request, env, this); }
+      catch (e) { console.error("vue.luxyra.fr", e); return new Response(JSON.stringify({ error: "Erreur interne" }), { status: 500, headers: { "Content-Type": "application/json" } }); }
+    }
     if (_uA.hostname === "admin.luxyra.fr") return lxEntetesAdmin(await this._fetchPrincipal(request, env), _uA.pathname);
     return this._fetchPrincipal(request, env);
   },
@@ -347,10 +454,8 @@ export default {
             const _u = new URL(url); _u.pathname = "/admin.html";
             return await handleExistingRoutes(new Request(_u.toString(), request), _u, env);
           }
-          // 31/10 (audit I3) : la vue admin d'un établissement est servie ICI (la session admin ne quitte plus admin.luxyra.fr)
-          if (_p === "/app.html" && /^[0-9a-f-]{36}$/i.test(url.searchParams.get("vue_admin") || "")) {
-            return await handleExistingRoutes(request, url, env);
-          }
+          // 31/10 (lot C) : l'origine admin n'exécute PLUS JAMAIS app.html (la vue est sur vue.luxyra.fr, avec un jeton de lecture)
+          if (_p === "/app.html") return Response.redirect("https://admin.luxyra.fr/", 302);
           // jamais le service worker de l'appli ni ses manifestes ici (ils prendraient le contrôle de l'admin)
           if (_p === "/sw.js" || (/^\/manifest.*\.json$/i.test(_p) && _p !== "/manifest-admin.json")) return new Response("Not found", { status: 404, headers: { "Cache-Control": "no-store" } });
           const _estPage = /\.html?$/i.test(_p) || !/\.[a-z0-9]{1,8}$/i.test(_p);
@@ -368,7 +473,7 @@ export default {
       // 31/10 (audit I3) : la vue admin n'est plus servie sur luxyra.fr (elle y exposait la session admin) -> admin.luxyra.fr
       if ((url.hostname === "luxyra.fr" || url.hostname === "www.luxyra.fr") && (request.method === "GET" || request.method === "HEAD")
           && url.pathname === "/app.html" && url.searchParams.has("vue_admin")) {
-        return Response.redirect("https://admin.luxyra.fr/app.html" + url.search, 302);
+        return Response.redirect("https://admin.luxyra.fr/", 302); // lot C : la vue s'ouvre depuis la fiche (jeton), jamais par lien direct
       }
       // admin.luxyra.fr : jamais indexé
       if (url.hostname === "admin.luxyra.fr" && url.pathname === "/robots.txt") {
@@ -8421,7 +8526,7 @@ Sitemap: https://luxyra.fr/sitemap.xml
     });
   }
 
-  if (host !== "luxyra.fr" && host !== "www.luxyra.fr" && host !== "admin.luxyra.fr" && host.endsWith(".luxyra.fr")) { // 31/10 : admin.luxyra.fr = administration, pas un site d'établissement
+  if (host !== "luxyra.fr" && host !== "www.luxyra.fr" && host !== "admin.luxyra.fr" && host !== "vue.luxyra.fr" && host.endsWith(".luxyra.fr")) { // 31/10 : admin.luxyra.fr = administration, pas un site d'établissement
     const subdomain = host.replace(".luxyra.fr", "");
     if (url.pathname !== "/" && url.pathname !== "/index.html" && url.pathname !== "/site.html") {
       return Response.redirect(`https://luxyra.fr${url.pathname}${url.search}`, 302);

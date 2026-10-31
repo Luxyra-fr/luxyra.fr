@@ -5607,9 +5607,14 @@ function saModeLib(s){ var m=s.modeActivite||"salon", z=(s.zoneKm!==null&&s.zone
 // --- Voir l'app comme le salon (lecture seule) ---
 async function asVoirApp(id){
   var s=gSalon(id); if(!s) return;
-  if(!(await lxConfirm("Ouvrir l'application de « "+s.nom+" » en LECTURE SEULE ?\n\nTu vois exactement ce que voit l’établissement. Rien de ce que tu fais dans cette fenêtre n'est enregistré dans son application (toute modification est bloquée). La consultation est notée dans le registre interne des accès Luxyra."))) return;
+  if(!(await lxConfirm("Ouvrir l'application de « "+s.nom+" » en LECTURE SEULE ?\n\nVous voyez ce que voit l’établissement, pendant 15 minutes, sur une adresse séparée (vue.luxyra.fr). Rien ne peut y être modifié. La consultation est notée dans le registre interne des accès Luxyra."))) return;
   try{ await _sb.from("admin_consultations").insert({salon_id:id}); }catch(e){}
-  window.open("/app.html?vue_admin="+encodeURIComponent(id),"_blank");
+  // 31/10 (lot C) : la vue s'ouvre sur son ORIGINE SÉPARÉE vue.luxyra.fr, avec un jeton de lecture de 15 min pour CET
+  // établissement (créé et tracé par la base) ; la session admin ne quitte jamais admin.luxyra.fr.
+  var r=await _sb.rpc("admin_vue_jeton_creer",{p_salon:id});
+  if(r.error||!r.data||!/^[0-9a-f]{64}$/.test(String(r.data.jeton||""))){ (await lxAlert("❌ Vue impossible : "+((r.error&&r.error.message)||"jeton non reçu"))); return; }
+  var exp=Date.parse(r.data.expire_le)||(Date.now()+15*60000);
+  window.open("https://vue.luxyra.fr/app.html?vue_admin="+encodeURIComponent(id)+"#t="+r.data.jeton+"&e="+exp,"_blank","noopener");
 }
 
 // --- Export des factures Luxyra (Stripe) ---
