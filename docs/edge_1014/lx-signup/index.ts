@@ -1,3 +1,7 @@
+// lx-signup v15 — 2026-10-31 (contre-audit du code) : IPv6 comptée par bloc /64 (M1) ; plafond global, échecs glissants 24 h
+//   et code précédent gardé valable (SQL code_inscription_v2.sql : M1, M2, B1) ; échec Brevo détecté (B2, success:false -> 502) ;
+//   appel interne = clé service de l'environnement OU jeton role=service_role confirmé par la base (lx_est_role_service) (B4 : plus de repli client_invites ni de cache ;
+//   verif_interne refusé hors appel interne) ; pas d'e-mail « Confirmez votre adresse » lors d'une invitation (le worker confirme).
 // lx-signup v14 — 2026-10-31 : CODE À 6 CHIFFRES envoyé par e-mail AVANT la création du compte (adresse fausse bloquée tout de suite).
 //   Étape 1 (sans « code ») : contrôles des champs puis envoi du code -> HTTP 428 { code_requis:true } ; aucune ligne créée.
 //     Réponse NEUTRE : si un compte existe déjà, l'e-mail envoyé dit « vous avez déjà un compte » (pas de code), même réponse HTTP.
@@ -39,20 +43,39 @@ function esc(s:unknown){return String(s??"").replace(/&/g,"&amp;").replace(/</g,
 function code6(): string { const b = new Uint32Array(1); for (;;) { crypto.getRandomValues(b); if (b[0] < 4294000000) return String(b[0] % 1000000).padStart(6, "0"); } }
 async function empreinteCode(email: string, code: string): Promise<string> { return await sha256Hex(LX_SECRET + "|signup|" + email + "|" + code); }
 function ipDe(req: Request): string { const h = req.headers; return (h.get("cf-connecting-ip") || (h.get("x-forwarded-for") || "").split(",")[0] || h.get("x-real-ip") || "").trim().slice(0, 64); }
+// 31/10 (M1) : une adresse IPv6 est comptée par bloc /64 (un abonné dispose en général de tout le bloc)
+function ipBloc(ip: string): string {
+  if (!ip || ip.indexOf(":") < 0) return ip;
+  let a = ip.toLowerCase().replace(/^\[|\]$/g, "").split("%")[0];
+  if (a.indexOf(".") >= 0) return a; // IPv4 encapsulée : telle quelle
+  const [g, d] = a.split("::");
+  const gauche = g ? g.split(":") : [], droite = d !== undefined && d ? d.split(":") : [];
+  const plein = d !== undefined ? [...gauche, ...Array(Math.max(0, 8 - gauche.length - droite.length)).fill("0"), ...droite] : gauche;
+  return plein.slice(0, 4).map((x) => (x || "0").replace(/^0+(?=.)/, "")).join(":") + "::/64";
+}
 async function envoyerMail(to: string, subject: string, html: string, text: string): Promise<boolean> {
   try { const r = await fetch(`${WORKER_BASE}/api/email/custom`, { method: "POST", headers: { "Content-Type": "application/json", "x-lx-internal": SB_SR }, body: JSON.stringify({ to, toName: "", salonName: "Luxyra", subject, htmlContent: html, textContent: text }) });
-    if (!r.ok) { await (globalThis as any).__lxReport?.("Email code d'inscription HTTP " + r.status, "warning"); return false; } return true;
+    if (!r.ok) { await (globalThis as any).__lxReport?.("Email code d'inscription HTTP " + r.status, "warning"); return false; }
+    // 31/10 (B2) : le worker répond 200 avec success:false quand Brevo refuse l'envoi
+    const j = await r.json().catch(() => null);
+    if (!j || j.success === false) { await (globalThis as any).__lxReport?.("Email code d'inscription refusé par l'envoi (success:false)", "warning"); return false; }
+    return true;
   } catch (e) { await (globalThis as any).__lxReport?.("Email code d'inscription: " + String((e as Error)?.message || e), "warning"); return false; }
 }
-// Appel interne (worker) : jeton service exact, sinon vérification auprès de la base (seul le rôle service lit client_invites)
-const _internes = new Map<string, boolean>();
+// Appel interne (worker, invitation) — B4, 31/10 : égalité EXACTE avec une clé service de l'environnement ; sinon, le jeton doit
+// porter role=service_role ET la base doit le confirmer par lx_est_role_service() (fonction exécutable par service_role
+// SEULEMENT, qui relit le rôle du jeton vérifié par PostgREST). Plus de repli sur client_invites, plus de cache.
+// (La clé du worker est une clé service valide du projet, différente de la valeur injectée dans l'environnement des edges.)
+function egal(a: string, b: string): boolean { if (!a || !b || a.length !== b.length) return false; let d = 0; for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i); return d === 0; }
+function roleDuJeton(t: string): string { try { const p = t.split(".")[1]; if (!p) return ""; const j = JSON.parse(atob(p.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((p.length + 3) % 4))); return String(j && j.role || ""); } catch (_) { return ""; } }
 async function estInterne(bearer: string): Promise<boolean> {
   if (!bearer) return false;
-  if (bearer === SB_SR || bearer === (Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "")) return true;
-  if (_internes.has(bearer)) return _internes.get(bearer)!;
-  let ok = false;
-  try { const r = await fetch(SB_URL + "/rest/v1/client_invites?select=token&limit=1", { headers: { apikey: bearer, Authorization: "Bearer " + bearer } }); ok = r.status === 200; } catch (_) { ok = false; }
-  if (_internes.size > 20) _internes.clear(); _internes.set(bearer, ok); return ok;
+  if ([Deno.env.get("SB_SERVICE_ROLE") || "", Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || ""].some((k) => egal(bearer, k))) return true;
+  if (roleDuJeton(bearer) !== "service_role") return false;
+  try {
+    const r = await fetch(SB_URL + "/rest/v1/rpc/lx_est_role_service", { method: "POST", headers: { "Content-Type": "application/json", apikey: bearer, Authorization: "Bearer " + bearer }, body: "{}" });
+    return r.status === 200 && (await r.text()).trim() === "true";
+  } catch (_) { return false; }
 }
 // Mise en page commune des emails Luxyra (identique à lx-password-reset / worker lxMailLayout)
 function lxMailLayout(corpsHtml: string, titre: string): string {
@@ -91,7 +114,7 @@ Deno.serve(async (req) => {
     if (!body) return json(400, { error: "Invalid JSON body" });
     const bearer = String(req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
     // contrôle de déploiement : le jeton service du worker est-il reconnu ? (ne renvoie qu'un booléen)
-    if (body.action === "verif_interne") return json(200, { interne: await estInterne(bearer) });
+    if (body.action === "verif_interne") return (await estInterne(bearer)) ? json(200, { interne: true }) : json(403, { error: "Accès refusé" }); // B4 : rien hors appel interne
     const email = String(body.email || "").toLowerCase().trim();
     const password = String(body.password || "");
     const nom = String(body.nom || "").trim();
@@ -111,11 +134,12 @@ Deno.serve(async (req) => {
         try { await sb.rpc("lx_signup_code_menage"); } catch (_) {}
         const c = code6();
         const ip = ipDe(req);
-        const { data: dem, error: demErr } = await sb.rpc("lx_signup_code_demander", { p_email: email, p_code_hash: await empreinteCode(email, c), p_ip_hash: ip ? await sha256Hex(LX_SECRET + "|ip|" + ip) : null });
+        const { data: dem, error: demErr } = await sb.rpc("lx_signup_code_demander", { p_email: email, p_code_hash: await empreinteCode(email, c), p_ip_hash: ip ? await sha256Hex(LX_SECRET + "|ip|" + ipBloc(ip)) : null });
         if (demErr || !dem) { await (globalThis as any).__lxReport?.("lx_signup_code_demander: " + (demErr?.message || "vide"), "error"); return json(500, { error: "Envoi du code impossible pour le moment. Réessayez dans un instant." }); }
         if (!dem.ok) {
           if (dem.raison === "attendre") return json(429, { error: "Un code vient d'être envoyé. Patientez " + (dem.attente_s || 60) + " s avant d'en demander un autre.", attente_s: dem.attente_s || 60, code_requis: true });
-          if (dem.raison === "trop_envois") return json(429, { error: "Trop de codes demandés pour cette adresse. Réessayez dans une heure." });
+          if (dem.raison === "trop_envois") return json(429, { error: "Trop de codes demandés pour cette adresse. Saisissez le dernier code reçu, ou réessayez dans une heure.", code_requis: true }); // B1 : le dernier code reste valable
+          if (dem.raison === "bloque_24h" || dem.raison === "plafond") return json(429, { error: "Trop de demandes pour le moment. Réessayez plus tard." }); // M1/M2 : réponse neutre
           if (dem.raison === "trop_ip") return json(429, { error: "Trop d'inscriptions depuis cette connexion. Réessayez dans une heure." });
           return json(400, { error: "Email invalide" });
         }
@@ -137,6 +161,7 @@ Deno.serve(async (req) => {
       if (!ver.ok) {
         if (ver.raison === "faux") return json(400, { error: "Code incorrect" + (ver.reste ? " (" + ver.reste + " essai" + (ver.reste > 1 ? "s" : "") + " restant" + (ver.reste > 1 ? "s" : "") + ")." : "."), code_faux: true, reste: ver.reste });
         if (ver.raison === "bloque") return json(429, { error: "Trop d'essais : demandez un nouveau code.", code_expire: true });
+        if (ver.raison === "bloque_24h") return json(429, { error: "Trop d'essais pour cette adresse. Réessayez demain.", code_expire: true }); // M2
         return json(400, { error: "Code expiré ou déjà utilisé : demandez un nouveau code.", code_expire: true });
       }
     }
@@ -149,7 +174,8 @@ Deno.serve(async (req) => {
       if (String((error as any).code) === "23505") return json(409, { error: "Un compte existe déjà avec cet email. Connectez-vous." }); // course : double inscription
       console.error("lx-signup insert error", error); await (globalThis as any).__lxReport?.("Insert clients_luxyra échec: "+error.message, "error", undefined, { email }); return json(500, { error: "Création du compte impossible pour le moment." });
     }
-    const envoye = verifie ? false : await envoyerVerification(user.id, user.email, user.prenom || "");
+    // 31/10 : invitation (interne) -> le worker confirme l'adresse juste après ; aucun e-mail « Confirmez votre adresse » inutile
+    const envoye = false; // (envoyerVerification gardée pour un retour arrière éventuel)
     const session_token = await signSession(user.id, user.email, Number(user.session_version) || 0);
     const { password_hash: _ph, verification_code: _vc, verification_email: _ve, ...safe } = user;
     return json(200, { user: { ...safe, email_verified: verifie }, session_token, verification_envoyee: envoye, email_verifie: verifie });
