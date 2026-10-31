@@ -664,8 +664,26 @@ async function handleCreateCheckout(request, env) {
       // s'arrêter) existe déjà : le changement de forfait passe par /api/stripe/switch-plan.
       if (_sal && _sal.stripe_subscription_id) {
         const _sub = await stripeAPI(env, `subscriptions/${encodeURIComponent(_sal.stripe_subscription_id)}`, null, "GET");
-        if (_sub && !_sub.error && ["active", "trialing", "past_due", "unpaid", "incomplete"].includes(String(_sub.status)) && !_sub.cancel_at_period_end && !_sub.cancel_at) {
+        // 2026-10-31 (contre-audit 5, R4) : lecture Stripe impossible -> on ne prend aucun risque de double abonnement
+        const _absent = _sub && _sub.error && (String(_sub.error.code || "") === "resource_missing" || Number(_sub.error.http_status) === 404);
+        if (!_sub || (_sub.error && !_absent)) return jsonResponse({ error: "Impossible de vérifier votre abonnement pour le moment. Réessayez dans une minute.", code: "stripe_indisponible" }, 503);
+        const _st = _absent ? "" : String(_sub.status || "");
+        const _vivant = ["active", "trialing", "past_due", "unpaid", "incomplete"].includes(_st);
+        // R5 : impayé -> régulariser par le portail (jamais un 2e abonnement)
+        if (_st === "past_due" || _st === "unpaid") return jsonResponse({ error: "Un paiement de votre abonnement n'a pas abouti. Mettez à jour votre moyen de paiement pour le régulariser.", code: "regulariser" }, 409);
+        if (_vivant && !_sub.cancel_at_period_end && !_sub.cancel_at) {
           return jsonResponse({ error: "Vous avez déjà un abonnement Luxyra en cours. Pour changer de formule : Paramètres → « Changer de forfait » (en haut).", code: "abonnement_actif" }, 409);
+        }
+        // R2 : abonnement encore en cours mais programmé pour s'arrêter -> on le RÉACTIVE (pas de 2e abonnement, pas de double prélèvement)
+        if ((_st === "active" || _st === "trialing") && (_sub.cancel_at_period_end || _sub.cancel_at)) {
+          const _re = await stripeAPI(env, `subscriptions/${encodeURIComponent(_sub.id)}`, { cancel_at_period_end: "false", cancel_at: "" }, "POST", null, "lx-reactiver-" + _sub.id + "-" + String(_sub.cancel_at || _sub.current_period_end || ""));
+          if (!_re || _re.error) return jsonResponse({ error: "La reprise de votre abonnement n'a pas abouti. Réessayez ou écrivez à contact@luxyra.fr.", code: "stripe_indisponible" }, 503);
+          const _planActuel = (_sal.plan === "pro") ? "pro" : "essential";
+          const _planVoulu = (plan === "pro") ? "pro" : "essential";
+          let _chg = null;
+          if (_planVoulu !== _planActuel) _chg = await lxChangerFormuleSub(env, _sal, _planVoulu, _re);
+          if (_sal.status === "cancelled" || _sal.status === "suspended") await supabaseUpdate(env, salon_id, { status: "active" });
+          return jsonResponse({ reactive: true, plan: _chg && _chg.ok ? _planVoulu : _planActuel, message: "Votre abonnement est repris : il continue sans interruption" + (_chg && !_chg.ok ? " (le changement de formule n'a pas pu se faire : Paramètres → « Changer de forfait »)" : "") + "." });
         }
       }
     }
@@ -791,7 +809,8 @@ async function handleWebhook(request, env) {
         // 2026-10-17 audit réglages (#1) : forfait AVANT l'abonnement (réouverture du site seulement si on passe en Pro)
         let _ancienPlan = "pro";
         try { const _av = await supabaseGet(env, salonId); _ancienPlan = (_av && _av.status !== "cancelled") ? (_av.plan || "essential") : "essential"; } catch (_) {}
-        await updateSalonPlan(env, salonId, plan, data.subscription, data.customer);
+        const _applique = await updateSalonPlan(env, salonId, plan, data.subscription, data.customer);
+        if (_applique === false) break; // 2026-10-31 (R1) : rejeu / doublon -> rien d'autre (site, Fondateur) n'est touché
         if (plan === "pro") { try { await lxSiteApresPassagePro(env, salonId, _ancienPlan); } catch (e) { console.warn("[site après Pro]", e?.message); } }
         // === Programme "100 Fondateurs" : claim atomique du slot ===
         // Appelé uniquement si la session checkout est taguée is_founder=true.
@@ -1143,6 +1162,16 @@ async function handleSwitchPlan(request, env) {
     if (!salon?.stripe_subscription_id) return jsonResponse({ error: "Pas d'abonnement actif" }, 400);
     const sub = await stripeAPI(env, `subscriptions/${salon.stripe_subscription_id}`, {}, "GET");
     if (!sub?.items?.data?.[0]) return jsonResponse({ error: "Impossible de lire l'abonnement" }, 500);
+    const _r = await lxChangerFormuleSub(env, salon, plan, sub);
+    if (_r.ok) return jsonResponse({ success: true, plan });
+    return jsonResponse({ error: "Erreur Stripe: " + JSON.stringify(_r.updated) }, 500);
+  } catch(e) { return jsonResponse({ error: "Switch error: " + e.message }, 500); }
+}
+// 2026-10-31 (contre-audit 5, R2) : cœur du changement de formule, partagé par switch-plan et la reprise d'un abonnement
+async function lxChangerFormuleSub(env, salon, plan, sub) {
+  {
+    const salon_id = salon.id;
+    if (!sub?.items?.data?.[0]) return { ok: false, updated: sub };
     // 2026-10-08 : même règle que create-checkout (CGV art. 5 bis) — un passage Essentiel → Pro
     // bénéficie du tarif Fondateur tant qu'il reste des places (ou si le salon est déjà Fondateur).
     // claim_founder_slot est atomique et idempotent : NULL = plus de place → tarif Pro standard.
@@ -1169,10 +1198,10 @@ async function handleSwitchPlan(request, env) {
       // 2026-10-17 audit réglages (#1) : jamais de réactivation de ce que le pro a coupé (voir lxSiteApresPassagePro)
       if (plan !== "pro") { if (salon.plan === "pro") await lxSiteCouperForfait(env, salon_id); }
       else await lxSiteApresPassagePro(env, salon_id, salon.plan);
-      return jsonResponse({ success: true, plan });
+      return { ok: true, updated };
     }
-    return jsonResponse({ error: "Erreur Stripe: " + JSON.stringify(updated) }, 500);
-  } catch(e) { return jsonResponse({ error: "Switch error: " + e.message }, 500); }
+    return { ok: false, updated };
+  }
 }
 
 // ============================================================
@@ -3769,39 +3798,67 @@ async function getOrCreateStripeCustomer(env, email, salonId) {
   } catch(e) { return null; }
 }
 
+// 2026-10-31 (contre-audit 4 B3 / 5 R1, R3) : annule un abonnement en double ; rembourse sa facture payée SEULEMENT s'il a
+// été créé il y a moins de 24 h (deux paiements le même jour). Jamais pour un abonnement ancien (résilié puis réabonné).
+// Pas de mécanisme d'avoir automatique sur factures_luxyra : l'alerte donne la facture à annuler par un avoir manuel.
+async function lxAnnulerAbonnementDouble(env, salonId, sub, gardeId) {
+  const subId = sub && sub.id;
+  if (!subId) return;
+  try {
+    if (String(sub.status || "") !== "canceled") await stripeAPI(env, `subscriptions/${encodeURIComponent(subId)}`, null, "DELETE");
+  } catch (e) { console.warn(`[abonnement double] annulation ${subId}:`, e?.message); }
+  if (!(Number(sub.created) > 0 && (Date.now() / 1000 - Number(sub.created)) < 86400 && sub.latest_invoice)) return;
+  try {
+    const _inv = await stripeAPI(env, `invoices/${encodeURIComponent(String(sub.latest_invoice))}?expand[]=payments`, null, "GET");
+    const _pay = _inv && _inv.payments && Array.isArray(_inv.payments.data) && _inv.payments.data[0] && _inv.payments.data[0].payment;
+    const _pi = (_inv && _inv.payment_intent) || (_pay && _pay.payment_intent) || null;
+    const _ch = (_inv && _inv.charge) || (_pay && _pay.charge) || null;
+    if (_inv && !_inv.error && _inv.status === "paid" && Number(_inv.amount_paid) > 0 && (_pi || _ch)) {
+      const meta = { reason: "duplicate", "metadata[salon_id]": salonId, "metadata[motif]": "abonnement_double" };
+      const _ref = await stripeAPI(env, "refunds", _pi ? { payment_intent: String(_pi), ...meta } : { charge: String(_ch), ...meta }, "POST", null, "lx-abo-double-" + subId);
+      // R3 : facture Luxyra correspondante (créée par invoice.paid) -> avoir à faire à la main
+      let _num = "";
+      try {
+        const fr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/factures_luxyra?select=numero&stripe_invoice_id=eq.${encodeURIComponent(String(_inv.id))}&limit=1`, { headers: _sbHeaders(env) });
+        const fj = fr.ok ? await fr.json() : [];
+        _num = Array.isArray(fj) && fj[0] && fj[0].numero ? String(fj[0].numero) : "";
+      } catch (_) {}
+      const _avoir = " — AVOIR À ÉTABLIR À LA MAIN pour la facture Luxyra " + (_num || "(pas encore créée : facture Stripe " + _inv.id + ")");
+      if (_ref && _ref.error) await reportWorkerError(env, "worker:abonnement-double", new Error("Remboursement de l'abonnement en double refusé : " + (_ref.error.message || "?")), { salon_id: salonId, doublon: subId, garde: gardeId, facture_stripe: _inv.id }, "critical");
+      else await reportWorkerError(env, "worker:abonnement-double", new Error("Abonnement en double annulé et remboursé (" + (Number(_inv.amount_paid) / 100).toFixed(2) + " €)" + _avoir), { salon_id: salonId, doublon: subId, garde: gardeId, facture_stripe: _inv.id, facture_luxyra: _num || null }, "error");
+    }
+  } catch (eR) { await reportWorkerError(env, "worker:abonnement-double", eR, { salon_id: salonId, doublon: subId }, "critical"); }
+}
 async function updateSalonPlan(env, salonId, plan, subscriptionId, customerId) {
-  // ANTI-DOUBLE-FACTURATION : si le salon avait déjà une sub différente,
-  // on l'annule sur Stripe AVANT de l'écraser en DB. Sinon le client serait facturé
-  // sur les 2 subs en parallèle (l'ancienne + la nouvelle) jusqu'à expiration manuelle.
-  // Cas concret : user annule (cancel_at_period_end) puis reSubscribe avant expiration
-  //              → sans ce fix, 2 subs Pro actives = double prélèvement.
+  // ANTI-DOUBLE-FACTURATION : si le salon avait déjà une sub différente, l'une des deux est un doublon.
+  // 2026-10-31 (contre-audit 5, R1) : on lit d'abord l'abonnement ARRIVANT chez Stripe. Un évènement rejoué ou arrivé
+  // en retard (abonnement déjà annulé, ou plus ancien que l'abonnement en place encore vivant) ne remplace plus rien :
+  // avant, il annulait et remboursait le BON abonnement et laissait le salon sur un abonnement mort.
+  const VIVANTS = ["active", "trialing", "past_due", "unpaid", "incomplete"];
+  let _nouveau = null;
+  try { _nouveau = await stripeAPI(env, `subscriptions/${encodeURIComponent(subscriptionId)}`, null, "GET"); } catch (_) { _nouveau = null; }
+  const _nouveauLu = !!(_nouveau && !_nouveau.error && _nouveau.id);
+  if (_nouveauLu && (_nouveau.status === "canceled" || _nouveau.status === "incomplete_expired")) {
+    await reportWorkerError(env, "worker:abonnement-double", new Error("Évènement de paiement ignoré : l'abonnement " + subscriptionId + " est déjà « " + _nouveau.status + " » (rejeu ou doublon déjà traité)"), { salon_id: salonId, subscription: subscriptionId }, "warning");
+    return false;
+  }
   try {
     const salon = await supabaseGet(env, salonId);
     if (salon && salon.stripe_subscription_id && salon.stripe_subscription_id !== subscriptionId) {
-      console.log(`[updateSalonPlan] Annule l'ancienne sub ${salon.stripe_subscription_id} (remplacée par ${subscriptionId})`);
-      try {
-        // 2026-10-31 (contre-audit 4, B3) : abonnement remplacé créé il y a MOINS de 24 h (double paiement, deux onglets) :
-        // sa facture payée est remboursée. Jamais pour un abonnement ancien (cas « résilié puis réabonné » : pas de remboursement).
-        let _ancien = null;
-        try { _ancien = await stripeAPI(env, `subscriptions/${encodeURIComponent(salon.stripe_subscription_id)}`, null, "GET"); } catch (_) {}
-        await stripeAPI(env, `subscriptions/${salon.stripe_subscription_id}`, null, "DELETE");
-        if (_ancien && !_ancien.error && Number(_ancien.created) > 0 && (Date.now() / 1000 - Number(_ancien.created)) < 86400 && _ancien.latest_invoice) {
-          try {
-            const _inv = await stripeAPI(env, `invoices/${encodeURIComponent(String(_ancien.latest_invoice))}?expand[]=payments`, null, "GET");
-            const _pay = _inv && _inv.payments && Array.isArray(_inv.payments.data) && _inv.payments.data[0] && _inv.payments.data[0].payment;
-            const _pi = (_inv && _inv.payment_intent) || (_pay && _pay.payment_intent) || null;
-            const _ch = (_inv && _inv.charge) || (_pay && _pay.charge) || null;
-            if (_inv && !_inv.error && _inv.status === "paid" && Number(_inv.amount_paid) > 0 && (_pi || _ch)) {
-              const _ref = await stripeAPI(env, "refunds", _pi ? { payment_intent: String(_pi), reason: "duplicate", "metadata[salon_id]": salonId, "metadata[motif]": "abonnement_double" } : { charge: String(_ch), reason: "duplicate", "metadata[salon_id]": salonId, "metadata[motif]": "abonnement_double" }, "POST", null, "lx-abo-double-" + salon.stripe_subscription_id);
-              if (_ref && _ref.error) await reportWorkerError(env, "worker:abonnement-double", new Error("Remboursement de l'abonnement remplacé refusé : " + (_ref.error.message || "?")), { salon_id: salonId, ancien: salon.stripe_subscription_id }, "critical");
-              else await reportWorkerError(env, "worker:abonnement-double", new Error("Abonnement en double annulé et remboursé (" + (Number(_inv.amount_paid) / 100).toFixed(2) + " €)"), { salon_id: salonId, ancien: salon.stripe_subscription_id, nouveau: subscriptionId }, "warning");
-            }
-          } catch (eR) { await reportWorkerError(env, "worker:abonnement-double", eR, { salon_id: salonId, ancien: salon.stripe_subscription_id }, "critical"); }
-        }
-      } catch (e) {
-        console.warn(`[updateSalonPlan] Échec annulation ancienne sub ${salon.stripe_subscription_id}:`, e?.message);
-        // On continue quand même, mais on log l'erreur. L'admin pourra annuler manuellement
-        // dans Stripe Dashboard si nécessaire.
+      let _ancien = null;
+      try { _ancien = await stripeAPI(env, `subscriptions/${encodeURIComponent(salon.stripe_subscription_id)}`, null, "GET"); } catch (_) {}
+      const _ancienLu = !!(_ancien && !_ancien.error && _ancien.id);
+      if (!_nouveauLu) {
+        // lecture impossible : on n'annule RIEN (risque d'annuler le bon) ; activation quand même, alerte pour vérification à la main
+        await reportWorkerError(env, "worker:abonnement-double", new Error("Abonnement " + subscriptionId + " illisible chez Stripe : aucun abonnement annulé, vérifier à la main un possible double abonnement (ancien " + salon.stripe_subscription_id + ")"), { salon_id: salonId, ancien: salon.stripe_subscription_id, nouveau: subscriptionId }, "critical");
+      } else if (_ancienLu && VIVANTS.includes(String(_ancien.status)) && Number(_nouveau.created) > 0 && Number(_nouveau.created) < Number(_ancien.created)) {
+        // R1 : l'arrivant est PLUS ANCIEN que l'abonnement en place, toujours vivant -> c'est l'arrivant le doublon.
+        console.log(`[updateSalonPlan] ${subscriptionId} plus ancien que ${salon.stripe_subscription_id} : traité comme doublon, salon inchangé`);
+        await lxAnnulerAbonnementDouble(env, salonId, _nouveau, salon.stripe_subscription_id);
+        return false;
+      } else {
+        console.log(`[updateSalonPlan] Annule l'ancienne sub ${salon.stripe_subscription_id} (remplacée par ${subscriptionId})`);
+        await lxAnnulerAbonnementDouble(env, salonId, _ancienLu ? _ancien : { id: salon.stripe_subscription_id }, subscriptionId);
       }
     }
   } catch (e) {
@@ -3818,6 +3875,7 @@ async function updateSalonPlan(env, salonId, plan, subscriptionId, customerId) {
   if (!_act || !_act.ok || !_act.n) {
     await reportWorkerError(env, "worker:stripe-activation", new Error("Abonnement payé mais établissement NON activé (HTTP " + (_act && _act.status) + ") : " + String((_act && _act.texte) || "").slice(0, 300)), { salon_id: salonId, subscription: subscriptionId, plan }, "critical");
   }
+  return true;
 }
 async function updateSalonStatus(env, salonId, status) { await supabaseUpdate(env, salonId, { status }); }
 
