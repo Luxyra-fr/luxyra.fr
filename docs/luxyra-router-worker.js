@@ -264,7 +264,7 @@ async function __wrappedApiHandler(request, url, env) {
 // (CSP avec frame-ancestors 'self' = aucun autre site ne peut encadrer l'admin, anti-encadrement, nosniff, pas de référent, jamais indexé, permissions minimales).
 // 'unsafe-inline' reste nécessaire (gestionnaires onclick de admin.html et app.html) ; les origines de scripts / connexions
 // sont limitées à l'inventaire exact (luxyra.fr, Supabase, api.github.com, géo/adresse data.gouv.fr pour la vue admin).
-// HSTS sans includeSubDomains : tous les sous-domaines DNS de luxyra.fr ne sont pas vérifiables d'ici.
+// HSTS avec includeSubDomains (posé sur admin.luxyra.fr : ne couvre que *.admin.luxyra.fr, inexistants).
 const LX_ADMIN_CSP = [
   "default-src 'self'",
   "script-src 'self' https://luxyra.fr 'unsafe-inline'",
@@ -275,10 +275,13 @@ const LX_ADMIN_CSP = [
   "worker-src 'self'", "manifest-src 'self'", "frame-src 'self' blob: data:", "child-src 'self' blob:",
   "object-src 'none'", "base-uri 'none'", "form-action 'self'", "frame-ancestors 'self'"
 ].join("; ");
-function lxEntetesAdmin(resp) {
+function lxEntetesAdmin(resp, chemin) {
   try {
     const h = new Headers(resp.headers);
-    h.set("Content-Security-Policy", LX_ADMIN_CSP);
+    // 2026-10-31 (lot A, S5) : une réponse /api qui n'est pas du JSON (HTML, texte…) ne peut rien exécuter sur l'origine admin
+    const _ct = String(h.get("Content-Type") || "").toLowerCase();
+    h.set("Content-Security-Policy", (String(chemin || "").startsWith("/api/") && _ct.indexOf("application/json") < 0)
+      ? "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data: https:" : LX_ADMIN_CSP);
     h.set("X-Frame-Options", "SAMEORIGIN"); // aperçus d'impression internes (iframes blob) = même origine
     h.set("X-Content-Type-Options", "nosniff");
     h.set("Referrer-Policy", "no-referrer");
@@ -292,7 +295,8 @@ function lxEntetesAdmin(resp) {
 }
 export default {
   async fetch(request, env) {
-    if (new URL(request.url).hostname === "admin.luxyra.fr") return lxEntetesAdmin(await this._fetchPrincipal(request, env));
+    const _uA = new URL(request.url);
+    if (_uA.hostname === "admin.luxyra.fr") return lxEntetesAdmin(await this._fetchPrincipal(request, env), _uA.pathname);
     return this._fetchPrincipal(request, env);
   },
   async _fetchPrincipal(request, env) {
@@ -312,6 +316,12 @@ export default {
       // les fichiers (js, css, icônes, polices, service worker) et /api/* passent normalement, toute autre page HTML -> luxyra.fr.
       if (url.hostname === "admin.luxyra.fr") {
         if (url.pathname.startsWith("/.well-known/")) return new Response("Not found", { status: 404, headers: { "Cache-Control": "no-store" } });
+        // 2026-10-31 (lot A, S5) : sur l'origine admin, seules les routes /api/admin/*, les quelques routes utilisées par le panneau
+        // et les LECTURES (GET/HEAD, routes de lecture de la vue établissement) sont servies ; tout le reste = 403.
+        if (url.pathname.startsWith("/api/") && request.method !== "GET" && request.method !== "HEAD"
+            && !url.pathname.startsWith("/api/admin/") && !LX_ROUTES_ORIGINE_ADMIN.has(url.pathname) && !LX_ROUTES_SALON_ADMIN_LECTURE.has(url.pathname)) {
+          return new Response(JSON.stringify({ error: "Route non disponible depuis l'administration" }), { status: 403, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" } });
+        }
         if (!url.pathname.startsWith("/api/") && (request.method === "GET" || request.method === "HEAD")) {
           const _p = url.pathname;
           if (_p === "/" || _p === "/index.html" || _p === "/admin" || _p === "/admin/") {
@@ -699,6 +709,8 @@ const LX_ROUTES_SALON = new Set([
 // 2026-10-31 audit final I5 : routes d'établissement que l'admin peut encore appeler (lecture / lien de consultation)
 // (2026-10-31 contre-audit : /api/stripe/portal retiré — le portail permet de résilier ou de changer la carte ;
 //  le panneau ouvre à la place la fiche client dans le tableau de bord Stripe)
+// lot A (S5) : routes POST autorisées sur admin.luxyra.fr en plus de /api/admin/* (utilisées par admin.html)
+const LX_ROUTES_ORIGINE_ADMIN = new Set(["/api/email/custom", "/api/siret", "/api/health", "/api/factures-luxyra/html"]);
 const LX_ROUTES_SALON_ADMIN_LECTURE = new Set(["/api/admin/export-nf525", "/api/stripe/connect-status"]);
 function lxUrlLuxyra(u) {
   try { const x = new URL(String(u)); return x.protocol === "https:" && (x.hostname === "luxyra.fr" || x.hostname.endsWith(".luxyra.fr")); } catch (e) { return false; }
