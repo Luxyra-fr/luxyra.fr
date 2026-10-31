@@ -2323,3 +2323,10 @@ Audit approuvé : `docs/admin-audit-1015.md` (P1 + P2, sauf le chat support fait
 - Téléphone : liste des établissements en cartes (`table.lx-cartes`), filtres repliés (`details.lx-filtres`), cibles ≥ 40 px.
 - Clôtures Z : Réelles / Test / Toutes (`mode_caisse` de la clôture ; vide -> déduit de l'établissement), synthèse par établissement. Lecture seule.
 - Harnais de test : navigateur sans tête avec Supabase simulé (393 px et 1440 px), 0 erreur JS.
+
+
+## 2026-10-31 — Éditeur sans écriture de caisse (NF525)
+- Le compte admin Luxyra (is_admin) ne peut plus créer d'avoir, débiter/recréditer un bon cadeau ou un forfait, clôturer mois/année/exercice, générer l'archive annuelle, émettre une facture ni encaisser une empreinte (rdv-empreinte-capture v8) pour un établissement.
+- Règle pour toute nouvelle fonction qui écrit dans la caisse (tickets, clotures*, nf525_*, factures*, cartes_cadeaux, packs_clients) : contrôle = propriétaire (auth.uid() = salons.user_id) OU appel serveur (auth.uid() nul / lx_prive.appel_serveur()) ; JAMAIS `or is_admin()`.
+- Exceptions éditeur assumées et tracées : lx_z_forcer_admin, nf525_annoter_cloture, nf525_signer_editeur, lectures/exports.
+- Scripts : docs/migrations_1031_audit_final/nf525_admin_sans_ecriture_caisse.sql (aller) / nf525_admin_avant.sql (retour). Registre NF525 à jour.

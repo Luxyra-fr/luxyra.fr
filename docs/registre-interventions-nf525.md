@@ -934,3 +934,15 @@ Aucune table, fonction ni déclencheur fiscal modifié ; lecture seule de `carte
 - Après : lecture par pages de 1000 jusqu'à la dernière ligne ; une page en erreur = export refusé (jamais de fichier partiel).
 - Ajouts dans `verification` : continuité de la numérotation, `export_complet`, nombre de tickets caisse réelle / mode test (les tickets de la période d'essai restent dans le fichier car ils font partie de la même chaîne, signalés « sans valeur fiscale »).
 - `version_logiciel` : « Luxyra 1.0 » codé en dur remplacé par la version réelle (la plus récente inscrite dans les tickets, sinon 6.8.7).
+
+### 31/10/2026 — L'éditeur ne peut plus faire d'opération de caisse à la place d'un établissement (validé par Alexandre)
+- Nature : CONTRÔLE D'ACCÈS UNIQUEMENT. Aucun calcul, format d'empreinte, chaînage, signature, numérotation, clôture ni JET modifié ; version MINEURE (BOI-TVA-DECLA-30-10-30 § 340).
+- Fonctions (condition « … ou administrateur » retirée, remplacement ciblé unique, droits/propriétaire/SECURITY DEFINER/search_path vérifiés identiques) :
+  creer_ticket_avoir, consommer_bon_cadeau, recrediter_bon_cadeau, lx_pack_consommer, cloturer_mois, cloturer_annee,
+  cloturer_exercice, nf525_generer_archive_annuelle, lx_facture_emettre.
+- Edge function rdv-empreinte-capture v8 : plus de passe-droit du compte support (encaissement d'empreinte = ticket scellé) ; propriétaire de l'établissement ou rôle service uniquement.
+- Restent autorisés : le propriétaire (session de l'établissement, opérateurs compris) et les traitements serveur sans utilisateur (cron de clôture Z / mensuelle / annuelle / exercice, archivage annuel, recettes en ligne, capture automatique d'empreinte via cron-empreinte-auto-capture) — chemins inchangés (auth.uid() nul).
+- Restent à l'éditeur (rôle d'éditeur, tracés) : lx_z_forcer_admin (déblocage d'une journée retenue, motif obligatoire, journalisé), nf525_annoter_cloture (annotation corrective signée), nf525_signer_editeur (attestation éditeur), contrôles et exports en LECTURE.
+- Aucune politique RLS d'écriture sur les tables de caisse ne contenait is_admin() (vérifié dans pg_policies).
+- Tests (transaction annulée) : compte admin (aal2, session valide) refusé sur les 9 fonctions ; propriétaire accepté au contrôle d'accès (arrêt sur contrôle métier, aucune écriture). Tests de nuit des protections et autocontrôle : indépendants de ce droit.
+- Fichiers : docs/migrations_1031_audit_final/nf525_admin_sans_ecriture_caisse.sql (rejouable), nf525_admin_avant.sql (retour arrière exact + empreintes md5 d'avant), docs/edge_1031_audit_final/rdv-empreinte-capture/index.ts.
