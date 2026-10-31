@@ -59,7 +59,7 @@ a{color:var(--gold);text-decoration:none}
 .sb-nav{flex:1;padding:12px 10px;overflow-y:auto}
 .sb-section{font-size:10px;font-weight:700;color:var(--text3);padding:16px 12px 6px;letter-spacing:1.5px;text-transform:uppercase}
 /* 2026-10-31 (lot A, E1) : menu en vrais boutons (clavier), focus visible partout */
-button.sb-item,button.sb-sub{width:100%;background:none;border:0;font-family:inherit;text-align:left;color:inherit}
+:where(button.sb-item,button.sb-sub){width:100%;background:none;border:0;font-family:inherit;text-align:left}
 :focus-visible{outline:2px solid var(--gold)!important;outline-offset:2px}
 .lx-subbar{display:flex;gap:8px;margin-bottom:16px;flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:thin;padding-bottom:4px}
 .lx-subbar>button{flex:0 0 auto;white-space:nowrap}
@@ -112,6 +112,7 @@ body:has(.dp-overlay.open) .lx-bandeau-bas{display:none}
 .tb-btn:hover{border-color:var(--gold);color:var(--gold)}
 .tb-btn.primary{background:var(--gold);color:#0a0a0a;border-color:var(--gold)}
 .kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px}
+:where(button.kpi){display:block;width:100%;text-align:left;font:inherit;color:inherit}
 .kpi{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:18px;position:relative;overflow:hidden}
 .kpi-label{font-size:12px;color:var(--text3);font-weight:600;margin-bottom:6px}
 .kpi-value{font-size:28px;font-weight:800;font-family:var(--mono)}
@@ -493,10 +494,10 @@ function lxDlgOuvert(cont, boite){
     if(!cont) return; boite=boite||cont.firstElementChild||cont;
     boite.setAttribute('role','dialog'); boite.setAttribute('aria-modal','true');
     var t=boite.querySelector('h1,h2,h3'); if(t){ if(!t.id) t.id='lxDlgT'+Date.now()+Math.floor(Math.random()*1000); boite.setAttribute('aria-labelledby',t.id); }
-    _lxDlgPile.push({cont:cont, avant:document.activeElement});
+    if(!_lxDlgPile.some(function(x){return x.cont===cont;})) _lxDlgPile.push({cont:cont, avant:document.activeElement});
     var foc=function(){ return Array.prototype.filter.call(boite.querySelectorAll('button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])'),function(x){ return !x.disabled && x.offsetParent!==null; }); };
     setTimeout(function(){ var f=foc(); if(boite.contains(document.activeElement)&&document.activeElement!==boite) return; var cible=boite.querySelector('[autofocus]')||boite.querySelector('input:not([type=hidden]):not([type=checkbox]),textarea,select')||f[0]; if(cible) try{ cible.focus(); }catch(e){} else { boite.setAttribute('tabindex','-1'); boite.focus(); } },30);
-    cont.addEventListener('keydown',function(e){ if(e.key!=='Tab') return; var f=foc(); if(!f.length) return; var a=f[0], z=f[f.length-1]; if(e.shiftKey&&document.activeElement===a){ e.preventDefault(); z.focus(); } else if(!e.shiftKey&&document.activeElement===z){ e.preventDefault(); a.focus(); } });
+    cont._lxFoc=foc; if(!cont._lxTrap){ cont._lxTrap=1; cont.addEventListener('keydown',function(e){ if(e.key!=='Tab') return; var f=(cont._lxFoc||foc)(); if(!f.length) return; var a=f[0], z=f[f.length-1]; if(e.shiftKey&&document.activeElement===a){ e.preventDefault(); z.focus(); } else if(!e.shiftKey&&document.activeElement===z){ e.preventDefault(); a.focus(); } }); }
   }catch(e){}
 }
 function lxDlgFerme(cont){
@@ -916,7 +917,7 @@ function lxNavResoudre(tab, sub){
 }
 // 2026-10-31 (lot A, E8) : garde « modifications non enregistrées » sur Réglages
 window._lxReglagesModifie=false;
-document.addEventListener('input',function(e){ if(e.target&&e.target.closest&&e.target.closest('#appConfigEditBox')) window._lxReglagesModifie=true; },true);
+document.addEventListener('input',function(e){ var t=e.target; if(!(t&&t.id&&t.id.indexOf('ac_')===0&&t.closest&&t.closest('#appConfigEditBox'))) return; /* lot B : seulement les vrais champs de réglage, et seulement s'ils diffèrent de la valeur chargée */ window._lxReglagesModifie=Array.prototype.some.call(document.querySelectorAll('#appConfigEditBox [id^="ac_"]'),function(x){ return x.type==='checkbox'?x.checked!==x.defaultChecked:x.value!==x.defaultValue; }); },true);
 window.addEventListener('beforeunload',function(e){ if(window._lxReglagesModifie){ e.preventDefault(); e.returnValue=''; } });
 function nav(tab, sub, _fromPop){
   if(window._lxReglagesModifie && !(tab==='croissance'&&(sub||'reglages')==='reglages')){
@@ -1287,13 +1288,14 @@ async function lxTdbCharger(force){
 }
 function _tdbCarte(o){
   // o: {label, valeur, sous, couleur, page, extra, icone, liste}
-  var click=o.page?' onclick="lxAller(\''+o.page+'\''+(o.extra?',\''+o.extra+'\'':'')+')" style="cursor:pointer"':'';
-  return '<div class="kpi"'+click+' title="Ouvrir">'+
+  var click=o.page?' type="button" onclick="lxAller(\''+o.page+'\''+(o.extra?',\''+o.extra+'\'':'')+')" style="cursor:pointer"':'';
+  var bal=o.page?'button':'div'; // lot B : carte cliquable = vrai bouton (clavier, lecteur d'écran)
+  return '<'+bal+' class="kpi"'+click+(o.page?' title="Ouvrir : '+saEsc(o.label)+'"':'')+'>'+
     '<div class="kpi-label">'+saEsc(o.label)+'</div>'+
     '<div class="kpi-value" style="color:'+(o.couleur||'var(--text)')+';font-size:'+(o.petit?'20px':'26px')+'">'+o.valeur+'</div>'+
     (o.sous?'<div class="kpi-sub">'+o.sous+'</div>':'')+
     (o.liste&&o.liste.length?'<div style="font-size:11px;color:var(--text2);margin-top:6px;line-height:1.5">'+o.liste.slice(0,4).map(function(x){return '• '+x;}).join('<br>')+(o.liste.length>4?'<br>… +'+(o.liste.length-4):'')+'</div>':'')+
-    '<div class="kpi-icon">'+(o.icone||'')+'</div></div>';
+    '<div class="kpi-icon">'+(o.icone||'')+'</div></'+bal+'>';
 }
 function lxTdbRendu(){
   var el=document.getElementById('tdbZone'); if(!el) return;
@@ -2225,7 +2227,7 @@ function rClaude(){
 async function lxCdCharger(){
   var box=document.getElementById('lxCdListe'); if(!box) return;
   var lim=window._lxCdLimite||15;
-  var r=await _sb.from('claude_demandes').select('*').order('cree_le',{ascending:false}).limit(200);
+  var r=await saToutLire(function(a,b){ return _sb.from('claude_demandes').select('*').order('cree_le',{ascending:false}).order('id').range(a,b); }); // lot B : toutes les demandes (plus de plafond silencieux)
   if(r.error){ box.innerHTML='<div style="color:var(--red)">Erreur : '+_esc(r.error.message)+'</div>'; return; }
   var L=r.data||[]; try{ localStorage.setItem('lx_cd_vu', new Date().toISOString()); }catch(_){} lxCdBadge(L);
   if(!L.length){ box.innerHTML='<div style="padding:20px;text-align:center">Aucune demande pour l\'instant.</div>'; return; }
@@ -3654,8 +3656,7 @@ async function asGroupe(action){
   if(action==="essai"){
     var jours=await lxChoix("Prolonger l'essai de combien de jours ? (établissements en essai uniquement)",[[3,"3 jours"],[7,"7 jours"],[14,"14 jours"],[30,"30 jours"]],{titre:"Prolonger l’essai"}); if(!(jours>0&&jours<=90)) return;
     var nb=0; for(var m=0;m<L.length;m++){ var x=L[m]; if(x.status!=="trial") continue; var d=new Date(Math.max(Date.now(), new Date(x.trialEnd||Date.now()).getTime())); d.setDate(d.getDate()+jours);
-      var _rg=await _sb.rpc("admin_salon_maj",{p_id:x.id,p_patch:{trial_end:d.toISOString()}}); if(_rg.error||!_rg.data) continue; nb++;
-      await saJournal(x.id,"TRIAL_EXTEND","+"+jours+" j (action groupée)",{trial_end:x.trialEnd||null},{trial_end:d.toISOString()});
+      var _rg=await _sb.rpc("admin_salon_maj",{p_id:x.id,p_patch:{trial_end:d.toISOString()},p_action:"TRIAL_EXTEND",p_details:"+"+jours+" j (action groupée)"}); if(_rg.error||!_rg.data) continue; nb++;
       try{ await _sb.from("admin_notes_salons").insert({salon_id:x.id,type:"autre",note:"Essai prolongé de "+jours+" j (jusqu'au "+d.toLocaleDateString("fr-FR")+")",auteur:"admin"}); }catch(e){} }
     (await lxAlert("⏰ Essai prolongé pour "+nb+" établissement(s)")); if(typeof loadData==="function") loadData(); return;
   }
@@ -4091,14 +4092,14 @@ async function confirmDeleteSalon(id){
 async function actS(id,act){
   var s=gSalon(id);if(!s||!_online)return;
   try{
-  if(act==="suspend"){await saMaj("salons",{status:"suspended"},id,["status"]);await saJournal(id,"SUSPEND","");(await lxAlert("⛔ Établissement suspendu"));}
-  else if(act==="reactivate"){await saMaj("salons",{status:"active"},id,["status"]);await saJournal(id,"REACTIVATE","");(await lxAlert("✅ Établissement réactivé"));}
+  if(act==="suspend"){await saMaj("salons",{status:"suspended"},id,["status"],"SUSPEND");(await lxAlert("⛔ Établissement suspendu"));}
+  else if(act==="reactivate"){await saMaj("salons",{status:"active"},id,["status"],"REACTIVATE");(await lxAlert("✅ Établissement réactivé"));}
   else if(act==="extend"){ return asAction(id,"essai7"); } // 2026-10-31 : une seule règle (max(aujourd'hui, fin d'essai) + 7 j) avec confirmation
   else if(act==="plan"&&s.stripeSub){ // 2026-10-09 : abonné Stripe -> le changement passe par Stripe (prix + prorata), sinon la facture ne suivait pas
     var np2=s.plan==="essential"?"pro":"essential"; if(!(await lxConfirm("Changer le forfait de "+s.nom+" en "+np2.toUpperCase()+" ? Stripe facturera la différence au prorata."))) return;
     var d2=await saApi({op:"changer_forfait",salon_id:id,plan:np2,motif:"bouton forfait admin"}); (await lxAlert(d2.error?"❌ "+d2.error:"📦 Forfait changé (Stripe + application)")); if(typeof loadData==="function") loadData(); return;
   }
-  else if(act==="plan"){var np=s.plan==="essential"?"pro":"essential";if(!(await lxConfirm("Changer le plan de "+s.nom+" en "+np.toUpperCase()+" ?")))return;await saMaj("salons",{plan:np},id,["plan"]);await saJournal(id,"PLAN_CHANGE",(s.plan||"")+" -> "+np);(await lxAlert("📦 Plan changé en "+np));}
+  else if(act==="plan"){var np=s.plan==="essential"?"pro":"essential";if(!(await lxConfirm("Changer le plan de "+s.nom+" en "+np.toUpperCase()+" ?")))return;await saMaj("salons",{plan:np},id,["plan"],"PLAN_CHANGE",(s.plan||"")+" -> "+np);(await lxAlert("📦 Plan changé en "+np));}
   else if(act==="reset"){var _rr=await _sb.auth.resetPasswordForEmail(s.email);if(_rr&&_rr.error){(await lxAlert("❌ Envoi impossible : "+_rr.error.message));return;}await saJournal(id,"RESET_PASSWORD_LINK",s.email);(await lxAlert("🔑 Lien de réinitialisation envoyé à "+s.email));return;}
   else if(act==="delete"){await confirmDeleteSalon(id);return;}
   }catch(eA){ (await lxAlert("❌ Action non appliquée : "+(eA&&eA.message||eA))); return; }
@@ -5695,10 +5696,8 @@ async function doSaveLegal(id){
   }
   if(!Object.keys(modif).length){ toast("Aucune modification à enregistrer."); return; }
   data=modif;
-  var r=await _sb.rpc("admin_salon_maj",{p_id:id,p_patch:data});
+  var r=await _sb.rpc("admin_salon_maj",{p_id:id,p_patch:data,p_action:"EDIT_LEGAL"});
   if(r&&r.error){(await lxAlert("Erreur sauvegarde : "+r.error.message));return;}
-  var _av={}; Object.keys(data).forEach(function(k){ _av[k]=avant[k]; });
-  await lxJournal("EDIT_LEGAL",{salon:id,cible:"salons:"+id,avant:_av,apres:data});
   toast("✅ Modifications enregistrées ("+Object.keys(data).length+" champ(s)).","success");
   await loadData();closeMod();render();openD(id);
 }
@@ -5708,9 +5707,8 @@ async function toggleDocLock(salonId,lock){
   if(!_sb||!_online)return;
   var msg=lock?"\ud83d\udd12 Verrouiller les documents de cet établissement ?\n\nLe client ne pourra plus les remplacer tant que vous n'aurez pas d\u00e9verrouill\u00e9.":"\ud83d\udd13 D\u00e9verrouiller les documents ?\n\nLe client pourra les modifier librement.";
   if(!(await lxConfirm(msg)))return;
-  var r=await _sb.rpc("admin_salon_maj",{p_id:salonId,p_patch:{documents_locked:!!lock}});
+  var r=await _sb.rpc("admin_salon_maj",{p_id:salonId,p_patch:{documents_locked:!!lock},p_action:lock?"DOCS_LOCKED":"DOCS_UNLOCKED"});
   if(r&&r.error){(await lxAlert("Erreur : "+r.error.message));return;}
-  await lxJournal(lock?"DOCS_LOCKED":"DOCS_UNLOCKED",{salon:salonId,cible:"salons:"+salonId,avant:{documents_locked:!lock},apres:{documents_locked:!!lock}});
   (await lxAlert(lock?"\u2705 Documents verrouill\u00e9s":"\ud83d\udd13 Documents d\u00e9verrouill\u00e9s"));
   await loadData();render();openD(salonId);
 }
@@ -5728,8 +5726,7 @@ async function resetDocs(id){
       else { var l2=await st.list(pref+"/"+it.name,{limit:1000}); if(l2.error) throw new Error("liste des fichiers : "+l2.error.message); (l2.data||[]).forEach(function(x){ if(x.id) chemins.push(pref+"/"+it.name+"/"+x.name); }); }
     }
     if(chemins.length){ var rm=await st.remove(chemins); if(rm.error) throw new Error("suppression des fichiers : "+rm.error.message); }
-    await saMaj("salons",{documents_kbis:null,documents_id:null,documents_id_verso:null,verification_status:"pending",verified_at:null,verified_by:null,documents_uploaded_at:null},id,["verification_status"]);
-    await saJournal(id,"DOCS_RESET","Tous les documents supprim\u00e9s ("+chemins.length+" fichier(s) effac\u00e9(s) du stockage)");
+    await saMaj("salons",{documents_kbis:null,documents_id:null,documents_id_verso:null,verification_status:"pending",verified_at:null,verified_by:null,documents_uploaded_at:null},id,["verification_status"],"DOCS_RESET","Tous les documents supprim\u00e9s ("+chemins.length+" fichier(s) effac\u00e9(s) du stockage)");
     (await lxAlert("\ud83d\uddd1 Documents r\u00e9initialis\u00e9s ("+chemins.length+" fichier(s) supprim\u00e9(s))"));
   }catch(eD){ (await lxAlert("\u274c R\u00e9initialisation interrompue : "+(eD&&eD.message||eD))); return; }
   await loadData();render();openD(id);
@@ -5742,8 +5739,7 @@ async function verifSalon(id,status){
   var data={verification_status:status};
   if(status==="verified"){data.verified_at=new Date().toISOString();data.verified_by=_uid;}
   if(status==="pending"||status==="rejected"){data.verified_at=null;data.verified_by=null;}
-  try{ await saMaj("salons",data,id,["verification_status"]); }catch(eV){ (await lxAlert("\u274c Statut non modifi\u00e9 : "+(eV&&eV.message||eV))); return; }
-  await saJournal(id,"VERIFY_"+status.toUpperCase(),"");
+  try{ await saMaj("salons",data,id,["verification_status"],"VERIFY_"+status.toUpperCase()); }catch(eV){ (await lxAlert("\u274c Statut non modifi\u00e9 : "+(eV&&eV.message||eV))); return; }
   var msgs={verified:"\u2705 Salon v\u00e9rifi\u00e9 !",pending:"\u23f3 Remis en attente",incomplete:"\ud83d\udcdd Marqu\u00e9 comme incomplet",rejected:"\u274c Salon rejet\u00e9"};
   (await lxAlert(msgs[status]||"Statut mis \u00e0 jour"));
   await loadData();render();openD(id);
@@ -5779,8 +5775,8 @@ async function doEditUserId(id,newUid){
 async function saveNotes(id){
   var n=document.getElementById("dpNotes");if(!n)return;
   var _sN=gSalon(id), _avN=_sN?_sN.notesAdmin:null;
-  try{ await saMaj("salons",{notes_admin:n.value},id); }catch(eN){ (await lxAlert("❌ Notes non enregistrées : "+(eN&&eN.message||eN))); return; }
-  if(_sN) _sN.notesAdmin=n.value; await saJournal(id,"NOTES_ADMIN","",{notes_admin:_avN},{notes_admin:n.value});
+  try{ await saMaj("salons",{notes_admin:n.value},id,null,"NOTES_ADMIN"); }catch(eN){ (await lxAlert("❌ Notes non enregistrées : "+(eN&&eN.message||eN))); return; }
+  if(_sN) _sN.notesAdmin=n.value;
   (await lxAlert("Notes enregistrées !"));
 }
 
@@ -5816,7 +5812,7 @@ function asMenuActions(s){
 async function asAction(id,v){
   if(!v) return; var s=gSalon(id); if(!s) return;
   if(/^essai\d+$/.test(v)){ var j=parseInt(v.slice(5),10); if(!(await lxConfirm("Prolonger l'essai de "+s.nom+" de "+j+" jours ?"))) return; var d=new Date(Math.max(Date.now(), new Date(s.trialEnd||Date.now()).getTime())); d.setDate(d.getDate()+j);
-    var _avT=s.trialEnd||null; var _rt=await _sb.rpc("admin_salon_maj",{p_id:id,p_patch:{trial_end:d.toISOString()}}); if(_rt.error||!_rt.data){ (await lxAlert("❌ Essai non prolongé : "+((_rt.error&&_rt.error.message)||"aucune ligne (droits ?)"))); return; } s.trialEnd=d.toISOString(); await saJournal(id,"TRIAL_EXTEND","+"+j+" j",{trial_end:_avT},{trial_end:s.trialEnd}); if(window._currentSub==="impayes"){ (await lxAlert("⏰ Essai prolongé jusqu'au "+d.toLocaleDateString("fr-FR"))); render(); return; } try{ await _sb.from("admin_notes_salons").insert({salon_id:id,type:"autre",note:"Essai prolongé de "+j+" j (jusqu'au "+d.toLocaleDateString("fr-FR")+")",auteur:"admin"}); }catch(e){} (await lxAlert("⏰ Essai prolongé jusqu'au "+d.toLocaleDateString("fr-FR"))); openD(id); return; }
+    var _avT=s.trialEnd||null; var _rt=await _sb.rpc("admin_salon_maj",{p_id:id,p_patch:{trial_end:d.toISOString()},p_action:"TRIAL_EXTEND",p_details:"+"+j+" j"}); if(_rt.error||!_rt.data){ (await lxAlert("❌ Essai non prolongé : "+((_rt.error&&_rt.error.message)||"aucune ligne (droits ?)"))); return; } s.trialEnd=d.toISOString(); if(window._currentSub==="impayes"){ (await lxAlert("⏰ Essai prolongé jusqu'au "+d.toLocaleDateString("fr-FR"))); render(); return; } try{ await _sb.from("admin_notes_salons").insert({salon_id:id,type:"autre",note:"Essai prolongé de "+j+" j (jusqu'au "+d.toLocaleDateString("fr-FR")+")",auteur:"admin"}); }catch(e){} (await lxAlert("⏰ Essai prolongé jusqu'au "+d.toLocaleDateString("fr-FR"))); openD(id); return; }
   if(v==="suspend"&&!(await lxConfirm("Suspendre le compte de « "+s.nom+" » ? L’établissement n'aura plus accès à l'application."))) return;
   if(v==="reactivate"&&!(await lxConfirm("Réactiver le compte de « "+s.nom+" » ?"))) return;
   if(v==="reset"&&!(await lxConfirm("Envoyer à « "+s.nom+" » ("+s.email+") un lien pour choisir un nouveau mot de passe ?"))) return;
@@ -5940,8 +5936,7 @@ async function lxAppliquerSiret(id,mode){
   map.forEach(function(m){ var val=m[2]; if(!val) return; var cur=String(s[m[1]]||"").trim(); if(mode==="vides" && cur) return; if(cur===String(val)) return; patch[m[0]]=val; champs.push(m[0]); });
   if(!champs.length){ (await lxAlert("Rien à compléter : la fiche est déjà à jour.")); return; }
   if(!(await lxConfirm((mode==="vides"?"Compléter les champs vides :\n":"Remplacer par les données officielles :\n")+champs.join(", ")+" ?"))) return;
-  var r=await _sb.rpc("admin_salon_maj",{p_id:id,p_patch:patch}); if(r.error){ (await lxAlert("❌ "+r.error.message)); return; }
-  try{ var _avS={}; map.forEach(function(m){ if(patch[m[0]]!=null) _avS[m[0]]=s[m[1]]; }); await lxJournal("SIRET_APPLIQUE",{salon:id,cible:"salons:"+id,details:"Champs mis à jour depuis le répertoire officiel : "+champs.join(", "),avant:_avS,apres:patch}); }catch(e){}
+  var r=await _sb.rpc("admin_salon_maj",{p_id:id,p_patch:patch,p_action:"SIRET_APPLIQUE",p_details:"Champs mis à jour depuis le répertoire officiel"}); if(r.error){ (await lxAlert("❌ "+r.error.message)); return; }
   map.forEach(function(m){ if(patch[m[0]]!=null) s[m[1]]=patch[m[0]]; });
   (await lxAlert("✅ Fiche mise à jour ("+champs.length+" champ(s))")); openD(id);
 }
@@ -6088,10 +6083,11 @@ async function saToutLire(page){
 }
 // 2026-10-14 : écriture admin VÉRIFIÉE : erreur, ligne réellement modifiée, et valeurs relues (certaines colonnes
 // sont remises à l'ancienne valeur sans erreur par la base si la session n'est pas admin 2FA).
-async function saMaj(table, patch, id, aRelire){
+async function saMaj(table, patch, id, aRelire, action, details){
   // 2026-10-31 (lot A, S3) : établissements = RPC admin_salon_maj (liste blanche + journal serveur), plus d'écriture directe
   if(table==="salons"){
-    var rs=await _sb.rpc("admin_salon_maj",{p_id:id,p_patch:patch});
+    // 31/10 (lot B) : UNE ligne de journal écrite par le serveur, avec le nom d'action (plus de journal en double)
+    var rs=await _sb.rpc("admin_salon_maj",{p_id:id,p_patch:patch,p_action:action||null,p_details:details||null});
     if(rs.error) throw new Error(rs.error.message);
     if(!rs.data) throw new Error("aucune ligne modifiée (reconnectez-vous)");
     (aRelire||[]).forEach(function(k){ var v=rs.data[k], att=patch[k]; if(String(v==null?"":v)!==String(att==null?"":att)) throw new Error("la base a refusé la valeur de « "+k+" »"); });
@@ -6306,9 +6302,8 @@ async function saveFreePlan(id){
     if(dz.error){ (await lxAlert("❌ Stripe : "+dz.error+"\nRien n'a été modifié.")); return; }
   }
   var _avF=_s0?{is_free:_s0.isFree,free_until:_s0.freeUntil||null,plan:_s0.plan,status:_s0.status}:null;
-  var _rf=await _sb.rpc("admin_salon_maj",{p_id:id,p_patch:update});
+  var _rf=await _sb.rpc("admin_salon_maj",{p_id:id,p_patch:update,p_action:isFree?"PLAN_OFFERT":"PLAN_OFFERT_RETIRE",p_details:isFree?(plan+(freeUntil?" jusqu'au "+freeUntil:" illimité")):""});
   if(_rf.error||!_rf.data){ (await lxAlert("❌ Plan offert non enregistré : "+((_rf.error&&_rf.error.message)||"aucune ligne (droits ? double authentification ?)"))); return; }
-  await saJournal(id,isFree?"PLAN_OFFERT":"PLAN_OFFERT_RETIRE",isFree?(plan+(freeUntil?" jusqu'au "+freeUntil:" illimité")):"",_avF,update);
   var s=gSalon(id);
   if(s){s.isFree=isFree;s.freeUntil=freeUntil;s.plan=isFree?plan:s.plan;s.status=isFree?"active":s.status;}
   (await lxAlert("\u2705 "+(isFree?"Plan "+plan+" offert"+(freeUntil?" jusqu\u2019au "+fmtD(freeUntil):" (illimit\u00e9)"):"Plan gratuit d\u00e9sactiv\u00e9")));
