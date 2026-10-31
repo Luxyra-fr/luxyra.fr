@@ -976,3 +976,16 @@ Aucune table, fonction ni déclencheur fiscal modifié ; lecture seule de `carte
   trace JET 410 pour l'éditeur et aucune en double pour le propriétaire.
 - Fichiers : docs/migrations_1031_audit_final/nf525_admin_sans_ecriture_caisse_2.sql (aller, rejouable),
   nf525_admin_sans_ecriture_caisse_avant_2.sql (retour exact).
+
+### 31/10/2026 — Droits de l'éditeur, lot 3 (contre-audit NF525 n°2), révision serveur 6.8.7-s1 (validé par Alexandre)
+- Nature : contrôle d'accès et traçabilité uniquement. Aucun calcul, format d'empreinte, chaînage, signature, numérotation ni ligne JET existante modifiés ; codes JET existants réutilisés (410 CONFIG_IDENTITE, 270 CONFIG_TVA). Version mineure (BOI-TVA-DECLA-30-10-30 § 340).
+- `lx_prive.salons_identite_trace` : la ligne JET 410 doit exister (via `nf525_jet.source_audit_id`), sinon la modification est REFUSÉE (`trg_audit_vers_jet` ne fait qu'avertir) ; propriétaire reconnu sur `OLD.user_id`. md5 c87d2f71… → b9f9ff031f8d14cd3f8fa45e478948fb.
+- `salon_a_historique_fiscal` : les signatures des lignes JET d'installation (`source_table = 'nf525_jet'`) ne rendent plus un essai jamais encaissé « avec historique » (les JET fiscaux restent couverts par la liste de codes). md5 e47fb8ef… → 6aeebc002687d1bc5b1d9e4653f1d409.
+- Nouveau `lx_prive.salons_tva_trace` (+ trigger `trg_salons_tva_trace`) : taux_tva, taux_tva_produits, show_tva_ticket changés par un autre que le propriétaire → JET 270, refus si la ligne JET n'est pas créée. md5 73c5e2020b2929525b57761bfd13a94d.
+- Nouveau `lx_prive.salons_config_garde_editeur` (+ trigger) : `config_json` (configuration de caisse) ne peut plus être modifié par un compte connecté autre que le propriétaire, sauf par `admin_salon_cfg_migration` (clés migration* seulement, drapeau local `luxyra.cfg_migration`). Traitements serveur (auth.uid() nul) inchangés. md5 1b59d7938fd3679f4a5e7e6413f9815b ; `admin_salon_cfg_migration` 81dc077b… → 4ab18c9713b0a33d766156fdfca9d697.
+- Nouveau `lx_prive.salons_proprietaire_non_admin` (+ trigger BEFORE INSERT OR UPDATE OF user_id) : un compte administrateur (admin_users ou support@) ne peut pas être propriétaire d'un établissement. md5 a6feec4ee32a08944fcf65c640310146.
+- Textes de refus des réinitialisations sans « ou un administrateur » : `factory_reset_salon` f8a7df03… → bb5971c2133ac61b66cae100ea148f3c ; `reset_ventes_test_salon` 6e5a2046… → 10a48681dd2018521568b8890082111e.
+- Commentaire SQL interne d'`admin_delete_salon_cascade` citant l'ancienne politique `salon_delete` : laissé tel quel (modifier le corps changerait le md5 d'une fonction qui touche la conservation, pour un simple commentaire) ; la politique n'existe plus.
+- RGPD : les lignes JET 410 contiennent l'ancienne et la nouvelle adresse, conservées 6 ans avec le JET (obligation fiscale) ; mention ajoutée sur securite-rgpd.html.
+- Banc : docs/migrations_1031_audit_final/tests_acces_admin_caisse.sql relancé le 31/10 (transaction annulée) : 11/11 REFUSÉ, historique=f, hist_jet_signe=f, hist_tk_signe=t, trace_admin=1, trace_proprio=0, tva_admin=1, cfg_admin=REFUSÉ, cfg_migration=passe, cfg_proprio=passe, cfg_serveur=passe, insert/update admin propriétaire=REFUSÉ, proprio_reset=passe.
+- Fichiers : nf525_admin_sans_ecriture_caisse_3.sql (aller, rejouable) / nf525_admin_sans_ecriture_caisse_avant_3.sql (retour exact, md5 vérifiés).

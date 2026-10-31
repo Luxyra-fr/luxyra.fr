@@ -64,3 +64,11 @@ signature Stripe ou `auth.getUser` seulement. (3) Aucune de ces fonctions n'acco
 - Lancements manuels de `lx-cloture-auto` (mode « run ») : uniquement pour rattraper une Z, avec mention au registre (date, établissement,
   motif) ; chaque Z produite porte son horodatage et sa trace JET 50 ; une Z antérieure à une Z existante est refusée.
 - En cas de fuite supposée : rotation immédiate de la clé et mention au registre.
+
+## 7. Lot 3 (31/10/2026, même révision 6.8.7-s1)
+
+- Changements des informations légales (JET 410) et des paramètres de TVA (JET 270) faits par un autre que le propriétaire : trace JET obligatoire, la modification est refusée si la ligne JET n'est pas créée.
+- Configuration de caisse (`config_json`) : modifiable uniquement par l'établissement et par les traitements serveur ; l'éditeur ne passe que par `admin_salon_cfg_migration` (clés de suivi de migration de données, sans effet sur la caisse).
+- Un compte administrateur Luxyra ne peut jamais être propriétaire d'un établissement (création comme changement).
+- Essai jamais encaissé : les signatures des lignes JET d'installation ne comptent pas comme historique fiscal ; dès qu'un ticket, une Z ou une signature de document fiscal existe, l'établissement n'est plus supprimable.
+- Prochaine version (6.8.8) : trace SERVEUR aussi pour les changements faits par le propriétaire (aujourd'hui tracés par l'application : CONFIG_IDENTITE / CONFIG_TVA), sans doublon avec la trace de l'application.
