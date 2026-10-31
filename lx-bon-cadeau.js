@@ -78,7 +78,7 @@
       ".lxbA .lxb-cc{font-family:'Cormorant Garamond',Georgia,serif;font-style:italic;font-size:calc(var(--mm)*4.4);color:var(--ink)}",
       ".lxbA .lxb-vs{position:absolute;inset:calc(var(--mm)*6) calc(var(--mm)*6.5) calc(var(--mm)*5);display:grid;grid-template-columns:1fr calc(var(--mm)*19);grid-template-rows:1fr auto;column-gap:calc(var(--mm)*5)}",
       ".lxbA .lxb-lab{font-size:calc(var(--mm)*1.65);letter-spacing:.22em;text-transform:uppercase;color:var(--inkSoft);font-weight:500}",
-      ".lxbA .lxb-val{font-family:'Cormorant Garamond',Georgia,serif;font-size:calc(var(--mm)*4.1);line-height:1.05;color:#1C1A17;margin:calc(var(--mm)*.6) 0 calc(var(--mm)*1.8);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+      ".lxbA .lxb-val{font-family:'Cormorant Garamond',Georgia,serif;font-size:calc(var(--mm)*3.8);line-height:1.05;color:#1C1A17;margin:calc(var(--mm)*.6) 0 calc(var(--mm)*1.8);white-space:normal;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere}",
       ".lxbA .lxb-amt{font-family:'Cormorant Garamond',Georgia,serif;font-weight:300;font-size:calc(var(--mm)*10);line-height:.9;color:var(--ink);font-variant-numeric:tabular-nums}",
       ".lxbA .lxb-amt small{font-size:.45em;margin-left:.12em}",
       ".lxbA .lxb-qr{width:calc(var(--mm)*19);height:calc(var(--mm)*19);margin-top:calc(var(--mm)*.6)}",
@@ -90,8 +90,8 @@
       ".lxbB.lxb-r{background:var(--deep);color:#F4EFE6}",
       ".lxbB .lxb-wm{position:absolute;right:calc(var(--mm)*-4);bottom:calc(var(--mm)*-27);font-family:'Cormorant Garamond',Georgia,serif;font-style:italic;font-weight:300;font-size:calc(var(--mm)*88);line-height:1;color:var(--foil);opacity:.16;pointer-events:none}",
       ".lxbB .lxb-hd{position:absolute;left:calc(var(--mm)*6);top:calc(var(--mm)*6);right:calc(var(--mm)*6);display:flex;gap:calc(var(--mm)*2.4);align-items:center}",
-      ".lxbB .lxb-lgw{background:#FBFAF7;border-radius:calc(var(--mm)*1.6);padding:calc(var(--mm)*.8);flex:none}",
-      ".lxbB .lxb-lgw img{display:block;max-height:calc(var(--mm)*8);max-width:calc(var(--mm)*16);object-fit:contain}",
+      ".lxbB .lxb-lgw{flex:none}",
+      ".lxbB .lxb-lgw img{display:block;max-height:calc(var(--mm)*9);max-width:calc(var(--mm)*18);object-fit:contain;border-radius:calc(var(--mm)*1.2)}",
       ".lxbB .lxb-nm{font-weight:500;font-size:calc(var(--mm)*2.15);letter-spacing:.26em;text-transform:uppercase;line-height:1.3;overflow-wrap:anywhere}",
       ".lxbB .lxb-sb{font-size:calc(var(--mm)*1.6);letter-spacing:.26em;text-transform:uppercase;color:var(--foil);margin-top:calc(var(--mm)*.9)}",
       ".lxbB .lxb-lb{position:absolute;left:calc(var(--mm)*6);bottom:calc(var(--mm)*6.2);font-size:calc(var(--mm)*1.9);letter-spacing:.26em;text-transform:uppercase;color:var(--foil);font-weight:500}",
@@ -102,7 +102,7 @@
       ".lxbB .lxb-edge{position:absolute;left:0;top:0;bottom:0;width:calc(var(--mm)*3);background:var(--deep)}",
       ".lxbB .lxb-gr{position:absolute;inset:calc(var(--mm)*5.5) calc(var(--mm)*6) calc(var(--mm)*4.5) calc(var(--mm)*9);display:grid;grid-template-columns:1fr 1fr calc(var(--mm)*19);grid-template-rows:auto auto 1fr;column-gap:calc(var(--mm)*4);row-gap:calc(var(--mm)*3)}",
       ".lxbB .lxb-k{font-size:calc(var(--mm)*1.55);letter-spacing:.2em;text-transform:uppercase;color:#5F5D63;font-weight:500}",
-      ".lxbB .lxb-vv{font-size:calc(var(--mm)*3.1);font-weight:500;margin-top:calc(var(--mm)*.6);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+      ".lxbB .lxb-vv{font-size:calc(var(--mm)*2.8);line-height:1.15;font-weight:500;margin-top:calc(var(--mm)*.6);font-variant-numeric:tabular-nums;white-space:normal;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere}",
       ".lxbB .lxb-q{grid-column:3;grid-row:1/3;width:calc(var(--mm)*19);height:calc(var(--mm)*19)}",
       ".lxbB .lxb-cd{grid-column:3;grid-row:3;font-weight:600;font-size:calc(var(--mm)*2.1);letter-spacing:.1em;text-align:center;align-self:start;white-space:nowrap}",
       ".lxbB .lxb-mn{grid-column:1/3;grid-row:3;align-self:end;font-size:calc(var(--mm)*1.72);line-height:1.42;color:#5F5D63;border-top:calc(var(--mm)*.12) solid #E3E0DA;padding-top:calc(var(--mm)*1.4)}",
@@ -129,8 +129,8 @@
       ".lxb6B .lxb-wm{position:absolute;left:calc(var(--mm)*-10);bottom:calc(var(--mm)*-55);font-family:'Cormorant Garamond',Georgia,serif;font-style:italic;font-weight:300;font-size:calc(var(--mm)*170);line-height:1;color:var(--foil);opacity:.13;pointer-events:none}",
       ".lxb6B .lxb-c1{position:relative;padding:calc(var(--mm)*10);display:flex;flex-direction:column}",
       ".lxb6B .lxb-c2{position:relative;padding:calc(var(--mm)*10) calc(var(--mm)*10) calc(var(--mm)*9);border-left:calc(var(--mm)*.2) solid rgba(255,255,255,.14);display:flex;flex-direction:column}",
-      ".lxb6B .lxb-lgw{background:#FBFAF7;border-radius:calc(var(--mm)*2);padding:calc(var(--mm)*1.2);align-self:flex-start;margin-bottom:calc(var(--mm)*4)}",
-      ".lxb6B .lxb-lgw img{display:block;max-height:calc(var(--mm)*11);max-width:calc(var(--mm)*28);object-fit:contain}",
+      ".lxb6B .lxb-lgw{align-self:flex-start;margin-bottom:calc(var(--mm)*4)}",
+      ".lxb6B .lxb-lgw img{display:block;max-height:calc(var(--mm)*12);max-width:calc(var(--mm)*30);object-fit:contain;border-radius:calc(var(--mm)*1.6)}",
       ".lxb6B .lxb-nm{font-weight:500;font-size:calc(var(--mm)*2.6);letter-spacing:.26em;text-transform:uppercase;overflow-wrap:anywhere}",
       ".lxb6B .lxb-lb{font-size:calc(var(--mm)*2.1);letter-spacing:.26em;text-transform:uppercase;color:var(--foil);font-weight:500}",
       ".lxb6B .lxb-am{font-weight:300;font-size:calc(var(--mm)*28);line-height:.8;letter-spacing:-.03em;font-variant-numeric:tabular-nums}",
@@ -298,7 +298,7 @@
   }
 
   g.LXBon = {
-    version: "20261031-2", MODELES: MODELES, OCCASIONS: OCCASIONS,
+    version: "20261031-3", MODELES: MODELES, OCCASIONS: OCCASIONS,
     modeleValide: modeleValide, palette: palette, contraste: contraste, css: css, poserCss: poserCss,
     carte: carte, a6: a6, documentImpression: documentImpression, imprimer: imprimer,
     occasionDepuisTheme: occasionDepuisTheme, qrSvg: qrSvg, esc: esc
