@@ -1,0 +1,5 @@
+-- 31/10/2026 (appliqué en prod) — contre-audit « admin pro » :
+-- 1) admin_config_maj refuse les clés techniques/fiscales (recettes_en_ligne_serveur*, bons_tva_v2, stripe_charges_directes,
+--    app_version, app_commit_short, sms_auto_serveur, rappels_serveur_2h_email, plafonds d'envoi, toute clé nf525/cloture/fiscal).
+-- 2) DROP POLICY app_config_write_admin : l'admin n'écrit plus app_config directement, seulement via admin_config_maj (journalisée, filtrée).
+-- Retour arrière : create policy app_config_write_admin on public.app_config for update to authenticated using (is_admin()) with check (is_admin());
