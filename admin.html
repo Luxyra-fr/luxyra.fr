@@ -539,7 +539,7 @@ function lxEcranActivationMfa(){
     '<button class="tb-btn" style="width:100%;min-height:40px;margin-top:8px" onclick="doAdminLogout()">Se déconnecter</button></div></div>';
 }
 async function lxMfaActiver(){
-  var en=await _sb.auth.mfa.enroll({factorType:"totp", friendlyName:"Luxyra admin "+new Date().toISOString().slice(0,10)});
+  var en=await _sb.auth.mfa.enroll({factorType:"totp", friendlyName:"Luxyra admin "+lxJourParis()});
   if(en.error){ (await lxAlert("Activation impossible : "+en.error.message)); return; }
   var t=en.data.totp||{};
   lxMfaModale('<h2 style="color:var(--gold);margin-bottom:6px">Activer la double authentification</h2><div style="font-size:13px;color:var(--text2);margin-bottom:10px">1. Scannez ce QR code avec Google Authenticator, Microsoft Authenticator ou une application équivalente.</div><div style="background:#fff;border-radius:10px;padding:10px;display:inline-block"><img src="'+t.qr_code+'" style="width:190px;height:190px"></div><div style="font-size:11px;color:var(--text3);margin:8px 0;word-break:break-all">Clé manuelle : '+saEsc(t.secret||"")+'</div><div style="font-size:13px;color:var(--text2);margin:6px 0">2. Saisissez le code affiché :</div><input id="lxMfaCode" inputmode="numeric" maxlength="6" style="width:100%;font-size:22px;letter-spacing:6px;text-align:center;padding:8px;border-radius:10px;background:var(--bg3);color:var(--text);border:1px solid var(--border)"><div id="lxMfaErr" style="color:var(--red);font-size:12px;min-height:18px;margin-top:6px"></div><button id="lxMfaOk" class="tb-btn primary" style="width:100%">Activer</button><button class="tb-btn" style="width:100%;margin-top:6px" onclick="lxMfaFermer()">Plus tard</button>');
@@ -776,6 +776,8 @@ async function loadData(){
           created_at:s.created_at,is_free:s.is_free||false,isFounder:s.is_founder===true,cancelledAt:s.cancelled_at,pastDueSince:s.past_due_since||null,fermeLe:s.ferme_le||null,fermeMotif:s.ferme_motif||"",fermePar:s.ferme_par||"",
           contratSignature:s.contrat_signature||"",contratAcceptedAt:s.contrat_accepted_at||""};
       });
+      // 2026-10-31 (lot A, F5) : catégorie (payant / offert / essai / test / résilié / fermé) calculée PAR LE SERVEUR ; repli local si indisponible
+      try{ var rcat=await _sb.rpc('admin_salons_categories'); if(rcat&&!rcat.error&&rcat.data){ var mcat={}; rcat.data.forEach(function(x){ mcat[x.id]=x.categorie; }); SALONS.forEach(function(sx){ if(mcat[sx.id]) sx.categorieServeur=mcat[sx.id]; }); } }catch(eCat){}
       // 2026-10-15 : compteurs clients / collaborateurs de TOUS les salons en UNE requête (RPC admin_salons_compteurs)
       // au lieu de 2 requêtes par salon. Repli : admin_salon_health (une requête aussi).
       try{
@@ -1067,6 +1069,7 @@ function lxEstTestEssai(s){ // compte test pour un essai : nom Démo ou offre gr
 function lxOffreEnCours(s){ return !!(s&&s.isFree && (!s.freeUntil || new Date(s.freeUntil)>new Date())); }
 function lxCategorie(s){
   if(!s) return 'test';
+  if(s.categorieServeur) return s.categorieServeur; // lot A F5 : règle serveur unique (salon_categorie_admin)
   if(s.fermeLe) return 'ferme';
   if(/^\s*(salon|luxyra)\s+d[eé]mo/i.test(s.nom||'')) return 'test';
   if(s.status==='trial') return lxOffreEnCours(s)?'test':'essai';
@@ -1195,7 +1198,7 @@ function shortcutClick(url){
   if(p.filter==='unpaid'){ window._AF=Object.assign(window._AF||{}, {statut:'past_due'}); }
   // 2026-10-15 : « non lus » filtre vraiment la boîte de réception (avant : variable _chatFiltre lue par personne)
   if(p.filter==='unread'){ window._chatNonLus=true; }
-  window._clotDate=(p.date==='today')?new Date().toISOString().slice(0,10):null;
+  window._clotDate=(p.date==='today')?lxJourParis():null;
   nav(p.tab||'tableau',p.sub||null);
 }
 
@@ -1251,7 +1254,8 @@ function lxTdbRendu(){
   if(!d){ el.innerHTML='<div class="card" style="text-align:center;color:var(--text3)">Chargement du tableau de bord…</div>'; return; }
   var nom=function(id){ var s=gSalon(id); return s?s.nom:'?'; };
   var h='';
-  if(window._TDBerr) h+='<div class="card" style="border-left:4px solid var(--orange);font-size:12px;color:var(--text2)">⚠️ Calcul serveur indisponible ('+saEsc(window._TDBerr)+'). Chiffres partiels calculés dans le navigateur.</div>';
+  // 2026-10-31 (lot A, F6) : sans calcul serveur, AUCUN chiffre partiel : « — » et Réessayer (les alertes locales restent)
+  if(window._TDBerr){ el.innerHTML='<div class="card" style="border-left:4px solid var(--orange)"><div style="font-weight:700;margin-bottom:6px">Tableau de bord indisponible pour le moment</div><div style="font-size:12px;color:var(--text2);margin-bottom:10px">Le calcul du serveur n\'a pas répondu ('+saEsc(window._TDBerr)+'). Les chiffres ne sont pas affichés plutôt que d\'être faux.</div><div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">'+['Revenu mensuel','Payants','Essais','Impayés'].map(function(t){return '<div class="kpi" style="min-width:120px"><div class="kpi-label">'+t+'</div><div class="kpi-value">—</div></div>';}).join('')+'</div><button class="tb-btn primary" onclick="window._TDBerr=null;lxTdbCharger(true)">Réessayer</button></div>'; return; }
 
   // Données partagées
   var m=d.mrr||{}, v=m.variation, ab=d.abonnes||{}, e7=d.essais_7j||[], nc=d.essais_non_convertis||[], imp=d.impayes||[];
@@ -1263,7 +1267,7 @@ function lxTdbRendu(){
 
   // 1) ALERTES DU JOUR (en premier) : serveur + points calculés ici
   var A=(d.alertes||[]).slice();
-  var auj=new Date().toISOString().slice(0,10);
+  var auj=lxJourParis();
   var nouveaux=SALONS.filter(function(s){ return asSuivi(s.id).etape==='nouveau' && !s.fermeLe && !lxEstTestStatut(s) && (Date.now()-new Date(s.created).getTime())<30*864e5; });
   if(nouveaux.length) A.push({niveau:'info',texte:nouveaux.length+' nouvel(aux) établissement(s) à accueillir (étape « Nouveau »)',page:'salons/liste',af:{etape:'nouveau'}});
   if(window._SALON_HEALTH){ var sf=SALONS.filter(function(s){var hh=_salonHealthOf(s.id);return hh&&hh.score!=null&&hh.score<40&&mrrOf(s)>0&&(Date.now()-new Date(s.created).getTime())>14*864e5;}); if(sf.length) A.push({niveau:'attention',texte:sf.length+' client(s) avec une santé faible (< 40) : '+sf.map(function(x){return x.nom;}).join(', '),page:'salons/liste',af:{tri:'sante'}}); }
@@ -1409,7 +1413,7 @@ var CHAT_FILTRES=[['nonlus','Non lus'],['escalades','🙋 Escaladés'],['ouverts
 async function loadChatConvs(){
   if(!_sb||!_online)return;
   try{
-    var r=await _sb.from('support_conversations').select('*').order('last_message_at',{ascending:false}).limit(500);
+    var r=await saToutLire(function(x,y){ return _sb.from('support_conversations').select('*').order('last_message_at',{ascending:false}).order('id').range(x,y); }); // lot A F3 : toutes les conversations
     if(r.error) throw r.error;
     window.CHAT_CONVS=r.data||[];
     var unread=0;window.CHAT_CONVS.forEach(function(c){if(c.status!=='resolved')unread+=(c.unread_count_admin||0);});
@@ -1617,6 +1621,7 @@ async function chatReactiverBot(){
 async function openChatConv(convId,salonId){
   if(window.CHAT_ACTIVE){ var i0=document.getElementById('chatInput'); if(i0) CHAT_DRAFT[window.CHAT_ACTIVE]=i0.value; }
   if(window.CHAT_ACTIVE!==convId){ CHAT_FICHIERS=[]; CHAT_PRO_LU=null; CHAT_PRO_ECRIT=0; CHAT_PRO_PRESENT=false; }
+  if(window.CHAT_ACTIVE!==convId) window.CHAT_LIMITE=null;
   window.CHAT_ACTIVE=convId; window.CHAT_ACTIVE_SALON=salonId;
   if(!chatConv(convId)) await loadChatConvs();
   var g=document.getElementById('chatG');
@@ -1642,12 +1647,14 @@ async function loadChatThread(){
   var el=document.getElementById('chatThread'); if(!el) return;
   try{
     var r=await Promise.all([
-      _sb.from('support_messages').select('*').eq('conversation_id',conv).order('created_at',{ascending:true}).limit(500),
-      _sb.from('support_notes').select('*').eq('conversation_id',conv).order('created_at',{ascending:true}).limit(500)
+      // 2026-10-31 (lot A, F2) : les PLUS RÉCENTS d'abord (avant : les 500 plus anciens, les nouveaux étaient coupés)
+      _sb.from('support_messages').select('*',{count:'exact'}).eq('conversation_id',conv).order('created_at',{ascending:false}).limit(window.CHAT_LIMITE||300),
+      _sb.from('support_notes').select('*').eq('conversation_id',conv).order('created_at',{ascending:false}).limit(window.CHAT_LIMITE||300)
     ]);
     if(conv!==window.CHAT_ACTIVE) return;
     if(r[0].error) throw r[0].error;
-    CHAT_MSGS=r[0].data||[]; CHAT_NOTES=(r[1]&&!r[1].error&&r[1].data)||[];
+    CHAT_MSGS=(r[0].data||[]).slice().reverse(); CHAT_NOTES=((r[1]&&!r[1].error&&r[1].data)||[]).slice().reverse();
+    window.CHAT_MSGS_TOTAL=(r[0].count==null?CHAT_MSGS.length:r[0].count);
     chatRenderThread();
     if(CHAT_MSGS.some(function(m){return m.sender==='client'&&!m.read_by_admin;})&&document.visibilityState!=='hidden'){
       chatMarquerLu(conv); chatRenderListe();
@@ -1673,6 +1680,7 @@ function chatRenderThread(){
     var txt=saEsc(m.message||''); if(bot) txt=txt.replace(/\*\*([^*\n]{1,120})\*\*/g,'<strong>$1</strong>');
     return sep+'<div class="chatBul" style="align-self:'+(mine?'flex-end':'flex-start')+';background:'+(mine?'var(--gold-bg2)':(bot?'rgba(79,195,247,.08)':'var(--bg3)'))+(bot?';border:1px dashed rgba(79,195,247,.35)':'')+'">'+auteur+(txt?'<div style="white-space:pre-line">'+txt+'</div>':'')+chatPiecesHtml(m.pieces)+'<div style="font-size:10px;color:var(--text2);margin-top:4px;text-align:right">'+hh+ticks+'</div></div>';
   }).join(''):'<div style="color:var(--text3);font-size:12px">Aucun message.</div>';
+  if((window.CHAT_MSGS_TOTAL||0)>CHAT_MSGS.length) el.insertAdjacentHTML('afterbegin','<div style="text-align:center;margin:6px 0"><button class="tb-btn" onclick="window.CHAT_LIMITE=(window.CHAT_LIMITE||300)+300;loadChatThread()">Messages plus anciens ('+(window.CHAT_MSGS_TOTAL-CHAT_MSGS.length)+')</button></div>');
   chatSignerPieces(el);
   if(bas||!el.dataset.vu){ el.scrollTop=el.scrollHeight; el.dataset.vu='1'; }
 }
@@ -2059,10 +2067,10 @@ function rEmail(){
 async function emCharger(){
   var el=document.getElementById("emZone"); if(!el) return; var t=window._emailOnglet;
   if(t==="modeles"){ var r=await _sb.from("admin_email_modeles").select("*").order("nom"); window._EM_MODELES=r.data||[]; el.innerHTML=emVueModeles(); return; }
-  var a=await _sb.from("salon_emails_auto").select("*").order("envoye_le",{ascending:false}).limit(500);
+  var a=await saToutLire(function(x,y){ return _sb.from("salon_emails_auto").select("*").order("envoye_le",{ascending:false}).order("id").range(x,y); }); // lot A F3 : tout l'historique (statistiques exactes)
   var auto=a.data||[];
   if(t==="historique"){
-    var n=await _sb.from("admin_notes_salons").select("*").eq("type","email").order("cree_le",{ascending:false}).limit(200);
+    var n=await saToutLire(function(x,y){ return _sb.from("admin_notes_salons").select("*").eq("type","email").order("cree_le",{ascending:false}).order("id").range(x,y); });
     var L=auto.map(function(x){return {d:x.envoye_le,salon:x.salon_id,txt:"🤖 "+(EM_TYPES[x.type]||x.type)+(x.sujet?" — "+x.sujet:""),ouvert:x.ouvert_le};}).concat((n.data||[]).map(function(x){return {d:x.cree_le,salon:x.salon_id,txt:"✉️ "+x.note,ouvert:null};})).sort(function(p,q){return new Date(q.d)-new Date(p.d);});
     el.innerHTML='<div class="card">'+(L.length?L.map(function(x){var s=gSalon(x.salon);return '<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-top:1px solid var(--border);font-size:13px"><span><span style="color:var(--text3)">'+new Date(x.d).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit"})+'</span> <b style="cursor:pointer" onclick="openD(\''+x.salon+'\')">'+saEsc(s?s.nom:"?")+'</b> '+saEsc(x.txt)+'</span><span style="font-size:11px">'+(x.ouvert?'<span style="color:var(--green)">👁 ouvert '+new Date(x.ouvert).toLocaleDateString("fr-FR")+'</span>':'')+'</span></div>';}).join(""):'<i>Aucun email envoyé pour l\'instant</i>')+'</div>';
     return;
@@ -3248,9 +3256,8 @@ function rAnalyticsFunnel(h){
   var data=lxAnaCacheGet('funnel');
   if(!data){
     var now=Date.now(),limit90=now-90*86400000;
-    var logs=(window.INSCRIPTIONS_LOG||[]).filter(function(l){var d=new Date(l.created_at).getTime();return d>=limit90;});
     var salons90=SALONS.filter(function(s){var d=new Date(s.created_at).getTime();return d>=limit90;});
-    var step1=logs.length||salons90.length;
+    var step1=(window.INSCRIPTIONS_90J!=null?Math.max(window.INSCRIPTIONS_90J,salons90.length):salons90.length);
     var step2=salons90.length; // un établissement créé = inscription complétée
     var step3=salons90.length;
     var step4=salons90.filter(function(s){return mrrOf(s)>0||!!s.stripeSub;}).length;
@@ -3281,29 +3288,33 @@ function rAnalyticsFunnel(h){
 // === Pré-chargement inscriptions_log pour le funnel ===
 async function loadInscriptionsLogForFunnel(){
   if(!_sb)return;
-  try{var r=await _sb.from('inscriptions_log').select('created_at,status,email').order('created_at',{ascending:false}).limit(500);window.INSCRIPTIONS_LOG=r.data||[];}catch(e){window.INSCRIPTIONS_LOG=[];}
+  // 2026-10-31 (lot A, F3) : nombre exact sur 90 jours compté PAR LE SERVEUR (avant : 500 dernières lignes seulement, sans e-mail)
+  try{var r=await _sb.from('inscriptions_log').select('id',{count:'exact',head:true}).gte('created_at',new Date(Date.now()-90*86400000).toISOString());window.INSCRIPTIONS_90J=(r&&!r.error&&r.count!=null)?r.count:null;window.INSCRIPTIONS_LOG=[];}catch(e){window.INSCRIPTIONS_90J=null;window.INSCRIPTIONS_LOG=[];}
 }
 async function loadClotures(){
   // FIX 2026-07-13 : la table 'z_closures' N'EXISTE PAS (table fantome). L'appel echouait,
   // le catch retombait sur [] => la vue "Clotures Z" du panel etait TOUJOURS VIDE.
   // La vraie table est 'clotures' (date_cloture, num, total_ca, nb_tickets, hash...).
   // RLS : la policy salon_clotures_select autorise is_admin() => lecture cross-salons OK.
+  // 2026-10-31 (lot A, F1) : filtres établissement / jour appliqués PAR LE SERVEUR, lecture par pages (« charger plus »),
+  // total exact affiché : plus aucune troncature silencieuse. Lecture seule (aucune donnée de caisse modifiée).
+  var lim=window._clotLimite||200;
+  window._clotCle=(window._clotSalon||'')+'|'+(window._clotDate||'')+'|'+lim;
   try{
-    var r=await _sb.from('clotures')
-      .select('id,salon_id,date_cloture,num,total_ca,total_ht,nb_tickets,nb_annulations,ecart_caisse,hash,timestamp_cloture,mode_caisse')
-      .order('date_cloture',{ascending:false})
-      .order('num',{ascending:false})
-      .limit(200);
+    var q=_sb.from('clotures')
+      .select('id,salon_id,date_cloture,num,total_ca,total_ht,nb_tickets,nb_annulations,ecart_caisse,hash,timestamp_cloture,mode_caisse',{count:'exact'});
+    if(window._clotSalon) q=q.eq('salon_id',window._clotSalon);
+    if(window._clotDate) q=q.eq('date_cloture',window._clotDate);
+    var r=await q.order('date_cloture',{ascending:false}).order('num',{ascending:false}).range(0,lim-1);
     if(r.error) throw r.error;
-    window.Z_CLOSURES=r.data||[];
-  }catch(e){ window.Z_CLOSURES=[]; }
+    window.Z_CLOSURES=r.data||[]; window.Z_TOTAL=(r.count==null?window.Z_CLOSURES.length:r.count);
+  }catch(e){ window.Z_CLOSURES=[]; window.Z_TOTAL=0; window.Z_ERREUR=(e&&e.message)||String(e); }
 }
 function rClotures(){
-  if(!window.Z_CLOSURES){loadClotures().then(render);return '<div style="padding:20px;color:var(--text3)">Chargement…</div>';}
+  var _cleZ=(window._clotSalon||'')+'|'+(window._clotDate||'')+'|'+(window._clotLimite||200);
+  if(!window.Z_CLOSURES||window._clotCle!==_cleZ){loadClotures().then(render);return '<div style="padding:20px;color:var(--text3)">Chargement…</div>';}
   var zs=window.Z_CLOSURES;
-  var today=new Date().toISOString().slice(0,10);
-  if(window._clotDate) zs=zs.filter(function(z){return String(z.date_cloture||'').slice(0,10)===window._clotDate;});
-  if(window._clotSalon) zs=zs.filter(function(z){return z.salon_id===window._clotSalon;});
+  var today=lxJourParis();
   // 2026-10-31 : clôtures de TEST et RÉELLES séparées (lecture seule, colonne mode_caisse de la clôture)
   var _cm=window._clotMode||'reel';
   // mode_caisse vide (clôtures antérieures au champ) : déduit de l'établissement (caisse en test, Salon/Luxyra Démo)
@@ -3314,11 +3325,11 @@ function rClotures(){
   var todayZ=zs.filter(function(z){return String(z.date_cloture||'').slice(0,10)===today;});
   var totCA=zs.reduce(function(a,z){return a+(Number(z.total_ca)||0);},0);
   var nbEcart=zs.filter(function(z){return Number(z.ecart_caisse||0)!==0;}).length;
-  var h='<div class="topbar"><h1>Clôtures Z <span>'+zs.length+' clôture(s) '+({reel:'réelles',test:'de test',all:'au total'}[_cm])+'</span></h1><div style="display:flex;gap:6px;flex-wrap:wrap">'
+  var h='<div class="topbar"><h1>Clôtures Z <span>'+zs.length+' clôture(s) '+({reel:'réelles',test:'de test',all:'au total'}[_cm])+' — '+window.Z_CLOSURES.length+' chargée(s) sur '+(window.Z_TOTAL||0)+'</span></h1><div style="display:flex;gap:6px;flex-wrap:wrap">'
     +'<button class="tb-btn'+(_cm==='reel'?' primary':'')+'" onclick="window._clotMode=\'reel\';render()">Réelles ('+nReelZ+')</button>'
     +'<button class="tb-btn'+(_cm==='test'?' primary':'')+'" onclick="window._clotMode=\'test\';render()">Test ('+nTestZ+')</button>'
     +'<button class="tb-btn'+(_cm==='all'?' primary':'')+'" onclick="window._clotMode=\'all\';render()">Toutes</button>'
-    +'<select onchange="window._clotSalon=this.value||null;render()" style="padding:6px;border-radius:8px;background:var(--bg3);color:var(--text);border:1px solid var(--border)"><option value="">Tous les établissements</option>'+SALONS.map(function(x){return '<option value="'+x.id+'"'+(window._clotSalon===x.id?' selected':'')+'>'+saEsc(x.nom)+'</option>';}).join('')+'</select><button class="tb-btn'+(window._clotDate?' primary':'')+'" onclick="window._clotDate=window._clotDate?null:new Date().toISOString().slice(0,10);render()">'+(window._clotDate?'✓ Aujourd\'hui':'Aujourd\'hui seulement')+'</button></div></div>';
+    +'<select onchange="window._clotSalon=this.value||null;render()" style="padding:6px;border-radius:8px;background:var(--bg3);color:var(--text);border:1px solid var(--border)"><option value="">Tous les établissements</option>'+SALONS.map(function(x){return '<option value="'+x.id+'"'+(window._clotSalon===x.id?' selected':'')+'>'+saEsc(x.nom)+'</option>';}).join('')+'</select><button class="tb-btn'+(window._clotDate?' primary':'')+'" onclick="window._clotDate=window._clotDate?null:lxJourParis();render()">'+(window._clotDate?'✓ Aujourd\'hui':'Aujourd\'hui seulement')+'</button></div></div>';
   h+='<div class="kpi-row">';
   h+='<div class="kpi"><div class="kpi-label">Z aujourd\'hui</div><div class="kpi-value" style="color:var(--gold)">'+todayZ.length+'</div></div>';
   h+='<div class="kpi"><div class="kpi-label">Clôtures affichées</div><div class="kpi-value" style="color:var(--blue)">'+zs.length+'</div></div>';
@@ -3351,6 +3362,7 @@ function rClotures(){
       +'<td style="font-family:var(--mono);font-size:10px;color:var(--text3)">'+String(z.hash||'').slice(0,12)+'\u2026</td></tr>';
   });
   h+='</tbody></table></div></div>';
+  if(window.Z_CLOSURES.length<(window.Z_TOTAL||0)) h+='<div style="text-align:center;margin:12px 0"><button class="tb-btn" onclick="window._clotLimite=(window._clotLimite||200)+200;render()">Charger plus ('+(window.Z_TOTAL-window.Z_CLOSURES.length)+' restante(s))</button></div>';
   return h;
 }
 
@@ -3554,7 +3566,7 @@ function asLignes(L){
     h+='<td>'+planB(s.plan)+(lxEstOffert(s)?' <span class="badge badge-gold" style="font-size:9px">🎁 Offert</span>':(lxEstTest(s)?' <span class="badge" style="font-size:9px;background:var(--bg3);color:var(--text3)">🧪 Test</span>':''))+'</td>';
     h+='<td>'+statusB(s.fermeLe?"ferme":s.status)+(j!==null?'<div style="font-size:10px;color:'+(j<=3?'var(--red)':'var(--text3)')+'">'+(j>0?j+' j restants':'essai fini')+'</div>':'')+'</td>';
     h+='<td style="font-size:11px">'+(ETAPES[su.etape]||su.etape)+'</td><td>'+asScoreBadge(s.id)+'</td><td>'+((_salonHealthOf(s.id)||{}).clients!=null?_salonHealthOf(s.id).clients:s.clients)+'</td><td style="font-size:12px">'+(function(){var d=asDemarrageScore(s.id);return d==null?'…':'<span style="color:'+(d>=6?'var(--green)':d>=3?'var(--orange)':'var(--red)')+'">'+d+'/7</span>';})()+'</td><td style="font-size:12px;color:var(--text3)">'+fmtD(s.created)+'</td>'+_salonActivityCell(s);
-    h+='<td style="font-size:11px">'+(su.rappel_le?'<span style="color:'+(su.rappel_le<=new Date().toISOString().slice(0,10)?'var(--red)':'var(--text2)')+'">📞 '+fmtD(su.rappel_le)+'</span>':'—')+'</td>';
+    h+='<td style="font-size:11px">'+(su.rappel_le?'<span style="color:'+(su.rappel_le<=lxJourParis()?'var(--red)':'var(--text2)')+'">📞 '+fmtD(su.rappel_le)+'</span>':'—')+'</td>';
     h+='<td><div class="td-actions"><button class="td-btn" onclick="openD(\''+s.id+'\')" title="Fiche">👁</button><button class="td-btn" onclick="window.open(\'mailto:'+saJs(s.email)+'\')" title="Email">✉️</button>'+(s.tel?'<button class="td-btn" onclick="window.open(\'tel:'+saJs(s.tel)+'\')" title="Appeler">📞</button>':'')+'</div></td></tr>';
   });
   return h||'<tr><td colspan="12" style="text-align:center;padding:40px;color:var(--text3)">Aucun établissement</td></tr>';
@@ -3567,7 +3579,7 @@ function asExport(selection){
   L.forEach(function(s){ var su=asSuivi(s.id), hh=_salonHealthOf(s.id)||{};
     rows.push([s.nom,s.ville,s.cp,s.adresse,s.email,s.tel,s.siret,s.formeJur,(s.gerantPrenom+" "+s.gerantNom).trim(),s.plan,s.isFree?"oui":"",s.status,s.trialEnd?String(s.trialEnd).slice(0,10):"",ETAPES[su.etape]||su.etape,(su.etiquettes||[]).join(", "),su.rappel_le||"",s.clients,s.collabs,hh.tickets_30d||0,String(hh.ca_30d||0).replace(".",","),hh.last_ticket||"",s.smsCredits,String(s.created||"").slice(0,10)].map(q).join(";")); });
   var blob=new Blob(["﻿"+rows.join("\r\n")],{type:"text/csv;charset=utf-8"});
-  var a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="luxyra-salons-"+new Date().toISOString().slice(0,10)+".csv"; a.click();
+  var a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="luxyra-salons-"+lxJourParis()+".csv"; a.click();
 }
 async function asGroupe(action){
   var L=asSelection(); if(!L.length) return;
@@ -3790,7 +3802,7 @@ function openD(id){
   h+='<div class="dp-field"><span class="k">Statut</span><span class="v">'+statusB(s.fermeLe?"ferme":s.status)+'</span></div>';
   if(s.fermeLe) h+='<div class="dp-field"><span class="k">Fermé le</span><span class="v">'+new Date(s.fermeLe).toLocaleDateString("fr-FR")+' — '+saEsc(s.fermeMotif||"")+'<div style="font-size:11px;color:var(--text3)">Caisse, clôtures, signatures et journal conservés 6 ans (jusqu\'au '+(function(){var d=new Date(s.fermeLe);d.setFullYear(d.getFullYear()+6);return d.toLocaleDateString("fr-FR");})()+'). Le gérant garde l\'accès en lecture seule (Mode archives).</div></span></div>';
   h+='<div class="dp-field"><span class="k">Inscrit le</span><span class="v">'+fmtD(s.created)+'</span></div>';
-  if(s.trialEnd){var days=dBetween(new Date().toISOString().slice(0,10),s.trialEnd);h+='<div class="dp-field"><span class="k">Fin essai</span><span class="v" style="color:'+(days<=3?"var(--red)":"var(--orange)")+'">'+fmtD(s.trialEnd)+' ('+days+'j)</span></div>';}
+  if(s.trialEnd){var days=dBetween(lxJourParis(),s.trialEnd);h+='<div class="dp-field"><span class="k">Fin essai</span><span class="v" style="color:'+(days<=3?"var(--red)":"var(--orange)")+'">'+fmtD(s.trialEnd)+' ('+days+'j)</span></div>';}
   // 2026-10-15 : liens Stripe (client, abonnement) — 2026-10-31 : portail client retiré (lecture seule)
   if(s.stripeCust)h+='<div class="dp-field" style="align-items:flex-start"><span class="k">Stripe</span><span class="v" style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end">'+lxStripeLiens(s)+'</span></div>';
   h+='<div class="dp-field" style="align-items:flex-start"><span class="k">Geste</span><span class="v">'+(s.stripeSub?('<button class="dp-btn" style="font-size:12px;padding:6px 10px" onclick="lxOfferMonths(&#39;'+s.id+'&#39;)">🎁 Offrir des mois</button>'):'<span style="font-size:11px;color:var(--text3)">Pas d\'abonnement Stripe — geste indisponible</span>')+'</span></div>';
@@ -4691,7 +4703,7 @@ async function smsCharger(){
 function smsCfg(){ var c=window._appConfig||{}; return {cout:c.sms_cost_brevo_eur!=null&&c.sms_cost_brevo_eur!==''?Number(c.sms_cost_brevo_eur):null, seuil:Number(c.sms_seuil_alerte!=null?c.sms_seuil_alerte:20)}; }
 function smsVueDash(d){
   var C=smsCfg(), mois=(d.par_mois||[]), ceMois=mois.length?mois[mois.length-1]:{brevo:0,natif:0};
-  var moisCour=new Date().toISOString().slice(0,7); if(ceMois.mois!==moisCour) ceMois={brevo:0,natif:0};
+  var moisCour=lxMoisParis(); if(ceMois.mois!==moisCour) ceMois={brevo:0,natif:0};
   // 2026-10-09 : nombre RÉEL de SMS facturés par Brevo (un message long compte 2 ou 3) quand il est connu
   var cm=d.conso_mois||{}, depuisM=d.conso_depuis?String(d.conso_depuis).slice(0,7):null;
   var smsFactures=(depuisM && depuisM<moisCour) ? (Number(cm.sms)||0) : Math.max(Number(cm.sms)||0, ceMois.brevo); // mois du démarrage du comptage exact : estimation prudente
@@ -4719,7 +4731,7 @@ function smsVueDash(d){
   setTimeout(function(){ smsChargerRevenus(d); },20);
   // 30 derniers jours (barres)
   var jours={}; (d.par_jour||[]).forEach(function(x){jours[x.jour]=x;});
-  var max=1, L=[]; for(var i=29;i>=0;i--){ var dt=new Date(Date.now()-i*86400000).toISOString().slice(0,10); var v=jours[dt]||{brevo:0,natif:0}; L.push([dt,v]); max=Math.max(max,v.brevo+v.natif); }
+  var max=1, L=[]; for(var i=29;i>=0;i--){ var dt=lxJourParis(Date.now()-i*86400000); var v=jours[dt]||{brevo:0,natif:0}; L.push([dt,v]); max=Math.max(max,v.brevo+v.natif); }
   h+='<div class="card" style="margin-bottom:14px"><h3>📈 30 derniers jours</h3><div style="display:flex;align-items:flex-end;gap:3px;height:120px;margin-top:10px">';
   L.forEach(function(p){ var v=p[1], hb=Math.round(v.brevo/max*110), hn=Math.round(v.natif/max*110); h+='<div title="'+new Date(p[0]).toLocaleDateString("fr-FR")+' : '+v.brevo+' Brevo, '+v.natif+' téléphone" style="flex:1;display:flex;flex-direction:column;justify-content:flex-end"><div style="height:'+hn+'px;background:#64b5f6"></div><div style="height:'+hb+'px;background:var(--gold);border-radius:3px 3px 0 0"></div></div>'; });
   h+='</div><div style="font-size:11px;color:var(--text3);margin-top:6px"><span style="color:var(--gold)">■</span> Brevo (payants) &nbsp; <span style="color:#64b5f6">■</span> téléphone de l’établissement (gratuits)</div></div>';
@@ -4736,7 +4748,7 @@ async function smsChargerRevenus(d){
   if(r.error){ el.innerHTML='<span style="color:var(--red)">'+saEsc(r.error)+'</span>'; return; }
   var pm=r.par_mois||{}, cpm=d.conso_par_mois||{}, envois={}; (d.par_mois||[]).forEach(function(m){ envois[m.mois]=m.brevo; });
   var depuis=d.conso_depuis?String(d.conso_depuis).slice(0,7):null;
-  var mois=[]; for(var i=11;i>=0;i--){ var dt=new Date(); dt.setDate(1); dt.setMonth(dt.getMonth()-i); mois.push(dt.toISOString().slice(0,7)); }
+  var mois=[]; for(var i=11;i>=0;i--){ var dt=new Date(); dt.setDate(1); dt.setMonth(dt.getMonth()-i); mois.push(lxMoisParis(dt)); }
   var T={eur:0,sms:0,cout:0,nb:0};
   var h='<div style="overflow-x:auto"><table><tr><th>Mois</th><th>Packs vendus</th><th>Encaissé</th><th>SMS facturés Brevo</th><th>Coût Brevo</th><th>Marge</th></tr>';
   mois.slice().reverse().forEach(function(m){
@@ -5214,7 +5226,7 @@ async function lxExportNf525(id){
     var r=await fetch("/api/admin/export-nf525",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+tok},body:JSON.stringify({salon_id:id})});
     if(!r.ok){ var j=await r.json().catch(function(){return {};}); (await lxAlert("❌ Export impossible : "+(j.error||("erreur "+r.status)))); return; }
     var blob=await r.blob(); var a=document.createElement("a"); a.href=URL.createObjectURL(blob);
-    a.download="luxyra-nf525-"+(s.siret||id)+"-"+new Date().toISOString().slice(0,10)+".json"; a.click();
+    a.download="luxyra-nf525-"+(s.siret||id)+"-"+lxJourParis()+".json"; a.click();
     await lxJournal("EXPORT_NF525",{salon:id,cible:"salons:"+id,details:s.nom});
   }catch(e){ (await lxAlert("❌ Export impossible : "+(e&&e.message||e))); }
 }
@@ -5300,7 +5312,7 @@ function rParrainage(){
 }
 async function lxParrCharger(){
   var el=document.getElementById('parrZone'); if(!el) return;
-  var r=await _sb.from('parrainages').select('*').order('cree_le',{ascending:false}).limit(500);
+  var r=await saToutLire(function(x,y){ return _sb.from('parrainages').select('*').order('cree_le',{ascending:false}).order('id').range(x,y); }); // lot A F3 : totaux exacts
   if(r.error){ el.innerHTML='<div class="card" style="color:var(--red)">❌ '+saEsc(r.error.message)+'</div>'; return; }
   var L=r.data||[], tot=0, nbR=0, nbA=0;
   L.forEach(function(p){ if(p.statut==='recompense'){ nbR++; tot+=Number(p.montant)||0; } if(p.statut==='en_attente'||p.statut==='en_cours'||p.statut==='inscrit') nbA++; });
@@ -5777,7 +5789,9 @@ async function asChargerSupport(id, convChoisie){
   if(!convs.length){ el.innerHTML='<i>Aucune conversation avec cet établissement pour l\'instant.</i>'; return; }
   var cur=convChoisie||(convs[0]&&convs[0].id);
   var h='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">'+convs.map(function(c){ return '<button class="tf-btn'+(c.id===cur?' active':'')+'" onclick="asChargerSupport(\''+id+'\',\''+c.id+'\')">'+new Date(c.last_message_at||c.created_at).toLocaleDateString("fr-FR")+(c.status==="open"?' • ouverte':c.status==="waiting"?' • en attente du pro':' • résolue')+(c.escalade_bot&&c.status!=="resolved"?' 🙋':'')+(c.unread_count_admin?' ('+c.unread_count_admin+' non lu)':'')+'</button>'; }).join("")+'</div>';
-  var ms=await _sb.from("support_messages").select("*").eq("conversation_id",cur).order("created_at",{ascending:true}).limit(300);
+  var ms=await _sb.from("support_messages").select("*",{count:"exact"}).eq("conversation_id",cur).order("created_at",{ascending:false}).limit(300); // lot A F2 : les plus récents
+  if(ms.data) ms.data=ms.data.slice().reverse();
+  if(ms.count!=null&&ms.data&&ms.count>ms.data.length) h+='<div style="font-size:11px;color:var(--text3);margin-bottom:4px">'+ms.data.length+' derniers messages sur '+ms.count+' (historique complet dans Support).</div>';
   h+='<div style="max-height:420px;overflow-y:auto;border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg3)">';
   (ms.data||[]).forEach(function(m){
     var moi=m.sender==="admin", bot=m.sender==="bot";
@@ -5811,7 +5825,7 @@ async function asVoirApp(id){
 
 // --- Export des factures Luxyra (Stripe) ---
 async function saExportFactures(){
-  var m=(await lxSaisie("Mois à exporter (AAAA-MM), ou laisse vide pour les 12 derniers mois :", new Date().toISOString().slice(0,7))); if(m===null) return;
+  var m=(await lxSaisie("Mois à exporter (AAAA-MM), ou laisse vide pour les 12 derniers mois :", lxMoisParis())); if(m===null) return;
   var d=await saApi({op:"factures",mois:m.trim()});
   if(d.error){ (await lxAlert("❌ "+d.error)); return; }
   var L=d.factures||[]; if(!L.length){ (await lxAlert("Aucune facture sur cette période.")); return; }
@@ -5998,6 +6012,9 @@ async function kbEnregistrer(cleOrig){
   kbCharger();
 }
 
+// 2026-10-31 (lot A, F4) : date « du jour » et mois à l'heure de Paris (toISOString donnait la veille entre 0 h et 2 h)
+function lxJourParis(d){ try{ return new Intl.DateTimeFormat('fr-CA',{timeZone:'Europe/Paris',year:'numeric',month:'2-digit',day:'2-digit'}).format(d?new Date(d):new Date()); }catch(e){ var x=d?new Date(d):new Date(); return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0'); } }
+function lxMoisParis(d){ return lxJourParis(d).slice(0,7); }
 function saEsc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
 // 2026-10-14 : lecture complète par pages (range) — renvoie {data, error} comme supabase-js
 async function saToutLire(page){
@@ -6215,7 +6232,7 @@ async function saveFreePlan(id){
     else if(dur==="3m")d.setMonth(d.getMonth()+3);
     else if(dur==="6m")d.setMonth(d.getMonth()+6);
     else if(dur==="1y")d.setFullYear(d.getFullYear()+1);
-    freeUntil=d.toISOString().slice(0,10);
+    freeUntil=lxJourParis(d);
   }
   var update={is_free:isFree,free_until:freeUntil};
   if(isFree){update.plan=plan;update.status="active";update.trial_end=null;}
