@@ -135,6 +135,8 @@ tr:hover{background:rgba(255,255,255,.02)}
 .dp-overlay.fullscreen .dpTab{column-count:2;column-gap:28px}
 .dp-overlay.fullscreen .dpTab .dp-section{break-inside:avoid;display:inline-block;width:100%}
 @media (max-width:1100px){.dp-overlay.fullscreen .dpTab{column-count:1}}
+/* 2026-10-31 audit final F3 : aucune page ne déborde sur téléphone (tableaux défilables, filtres repliés) */
+@media (max-width:700px){#mainContent{max-width:100vw;overflow-x:hidden}#mainContent table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%}#mainContent .topbar{flex-wrap:wrap;gap:8px}#mainContent .topbar select,#mainContent .topbar input{max-width:100%;min-width:0}#mainContent pre{white-space:pre-wrap;word-break:break-all}}
 @media (max-width:700px){.dp-panel{padding:14px!important}.dp-field{flex-wrap:wrap;gap:4px}.dp-field .v{text-align:left!important;max-width:100%;word-break:break-word}.dp-stats{flex-wrap:wrap}.dpTabBtn{font-size:11px!important;padding:6px 8px!important}}
 .dp-actions-select{padding:8px 12px;border-radius:10px;border:1px solid var(--gold);background:var(--bg3);color:var(--text);font-size:13px;font-weight:600;cursor:pointer}
 .dp-expand{background:none;border:1px solid var(--border);color:var(--text2);font-size:14px;cursor:pointer;padding:6px 10px;border-radius:8px;margin-right:6px;transition:all .15s}
@@ -1217,7 +1219,7 @@ function lxTdbRendu(){
   if(d.local){ var rp=SALONS.filter(function(s){var su2=asSuivi(s.id);return su2.rappel_le&&su2.rappel_le<=auj;}); if(rp.length) A.push({niveau:'info',texte:rp.length+' rappel(s) prévu(s)',page:'salons/liste',af:{rappel:'1',tri:'rappel'}}); }
   if(smsFr!=null && smsFr<C.seuil) A.push({niveau:'attention',texte:'Crédits Brevo bas : ≈ '+smsFr+' SMS restants',page:'diffusion/sms'});
   if(sv && !sv.erreur && !sv.ok) A.push({niveau:'grave',texte:'Sauvegarde de nuit en échec ou en retard',page:'qualite/sauvegardes'});
-  var ord={grave:0,attention:1,info:2}; A.sort(function(a,b){return (ord[a.niveau]||2)-(ord[b.niveau]||2);});
+  var ord={grave:0,attention:1,info:2}; A.sort(function(a,b){return ((a.niveau in ord)?ord[a.niveau]:2)-((b.niveau in ord)?ord[b.niveau]:2);});
   var col={grave:'#ef5350',attention:'#ff9800',info:'#64b5f6'}, lib={grave:'GRAVE',attention:'À VOIR',info:'INFO'};
   window._TDBalertes=A;
   h+='<div class="card"><h3>🎯 Alertes du jour <span style="color:var(--text3);font-weight:500">('+A.length+')</span></h3>';
@@ -5360,7 +5362,7 @@ async function lxSauvCharger(forcer){
     _lxTable(['Tâche','Horaire (UTC)','Dernière exécution','Statut','Échecs 24 h / 7 j'],T.map(function(t){
       var ko=(Number(t.echecs_24h)||0)>0||t.manquee;
       return ['<span style="font-family:var(--mono);font-size:11px">'+saEsc(t.nom)+'</span>', '<span style="font-family:var(--mono);font-size:11px">'+saEsc(t.horaire)+'</span>', _lxDt(t.derniere,true),
-        '<span style="color:'+(ko?'var(--red)':'var(--green)')+';font-weight:700">'+(t.manquee?'n\'a pas tourné (26 h)':saEsc(t.dernier_statut||'—'))+'</span>'+(t.message?'<div style="font-size:10px;color:var(--text3);max-width:320px;word-break:break-word">'+saEsc(t.message)+'</div>':''),
+        '<span style="color:'+(ko?'var(--red)':(t.jamais_lancee?'var(--text3)':'var(--green)'))+';font-weight:700">'+(t.manquee?'n\'a pas tourné (26 h)':(t.jamais_lancee?'nouvelle, pas encore lancée':saEsc(t.dernier_statut||'—')))+'</span>'+(t.message?'<div style="font-size:10px;color:var(--text3);max-width:320px;word-break:break-word">'+saEsc(t.message)+'</div>':''),
         saEsc(t.echecs_24h)+' / '+saEsc(t.echecs_7j)]; }),'Aucune tâche quotidienne.')+'<div style="font-size:11px;color:var(--text3);margin-top:6px">Source : cron.job_run_details (historique gardé 7 jours).</div></div>';
 }
 
@@ -6145,6 +6147,10 @@ async function saveFreePlan(id){
   }
   var update={is_free:isFree,free_until:freeUntil};
   if(isFree){update.plan=plan;update.status="active";update.trial_end=null;}
+  // 2026-10-31 audit final I4 : confirmation (pause Stripe + passage en caisse réelle possibles)
+  var _sC=gSalon(id);
+  var _msgC=isFree?("Offrir le plan "+plan+(freeUntil?" jusqu\u2019au "+fmtD(freeUntil):" sans limite de durée")+" ?"+(_sC&&_sC.stripeSub?"\n\nLa facturation Stripe de cet établissement sera mise en pause pendant l\u2019offre.":"")):("Retirer le plan offert ?"+(_sC&&_sC.stripeSub?"\n\nLa facturation Stripe reprendra.":""));
+  if(!(await lxConfirm(_msgC,{titre:isFree?"Plan offert":"Retrait du plan offert",ok:isFree?"Offrir":"Retirer",danger:!isFree}))) return;
   // 2026-10-09 : salon abonné chez Stripe -> pas de facture pendant l'offre (pause de facturation), reprise à la fin
   var _s0=gSalon(id);
   if(_s0&&_s0.stripeSub){
