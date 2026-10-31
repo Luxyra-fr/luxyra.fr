@@ -298,7 +298,7 @@
   }
 
   g.LXBon = {
-    version: "20261031-1", MODELES: MODELES, OCCASIONS: OCCASIONS,
+    version: "20261031-2", MODELES: MODELES, OCCASIONS: OCCASIONS,
     modeleValide: modeleValide, palette: palette, contraste: contraste, css: css, poserCss: poserCss,
     carte: carte, a6: a6, documentImpression: documentImpression, imprimer: imprimer,
     occasionDepuisTheme: occasionDepuisTheme, qrSvg: qrSvg, esc: esc
