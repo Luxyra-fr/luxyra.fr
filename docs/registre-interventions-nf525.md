@@ -908,3 +908,10 @@ Aucune table, fonction ni déclencheur fiscal modifié ; lecture seule de `carte
   - `admin_config_maj.sql` : écriture atomique de clés de `app_config` (admin 2FA), seules les clés passées changent.
   - `admin_salon_cfg_migration.sql` : statut de migration dans `salons.config_json` (clés migration* uniquement, format conservé). Vérifié en transaction annulée : les 31 autres clés identiques, config_version +1.
 - admin.html : commits d2e1ac7, 3395925, fb26adb, c3cc474, af55d00. inscription.html : e-mail pré-rempli par le lien d'inscription (toujours vérifié par code).
+
+### 31/10/2026 (nuit) — Lot I3 : plus d'écriture admin directe sur les données métier des établissements (hors tables fiscales)
+- Nature : durcissement des DROITS d'accès uniquement. Aucune donnée lue ni modifiée ; aucune table de caisse NF525 touchée ; check_fiscal_integrity = 0 après application.
+- Inventaire préalable : admin.html n'écrit dans aucune de ces tables ; la vue admin (?vue_admin=) est en lecture seule ; worker/edge = clé service ; fonctions SECURITY DEFINER inchangées. Aucune fonction admin dédiée nécessaire.
+- « OR is_admin() » retiré des policies INSERT/UPDATE/DELETE de : appointments, cartes_abo_clients, cartes_cadeaux, client_salon, clients, clients_online, collaborateurs, commandes_online, devis, fidelite_client, messaging_log, produits, produits_prix_historique, rdv_online, salon_operateurs, services, site_config, sms_differes, sms_queue. Policies « admin seul » supprimées : salon_cmd_delete, prix_historique_update/delete (historique des prix désormais non modifiable), écriture admin sur client_duplicate_ignored et migrated_invoices. Lecture admin conservée (2 policies SELECT ajoutées : sms_differes_admin_lecture, lx_admin_lecture).
+- Essai en transaction annulée : admin aal2 lit (5 prestations, 6 clients) mais UPDATE = 0 ligne, INSERT refusé (42501) ; propriétaire UPDATE = 1 ligne, INSERT accepté par la RLS. Retour arrière vérifié identique au texte d'origine des policies.
+- Fichiers : docs/migrations_1031_i3/i3_admin_ecriture_metier.sql (md5 2c325633…), retour arrière exact i3_retour_arriere.sql.
