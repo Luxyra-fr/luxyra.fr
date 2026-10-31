@@ -131,6 +131,11 @@ async function __wrappedApiHandler(request, url, env) {
       if (url.pathname === "/api/qr" && request.method === "GET") return handleQr(url); // 2026-10-28 (-3)
       if (url.pathname.startsWith("/api/qr/t/") && request.method === "GET") return await handleQrJeton(url, env); // 2026-10-31 (-3) R3
       if (url.pathname === "/api/bons/ecarte" && request.method === "POST") return await handleBonEcarte(request, env); // 2026-10-31 (-3) R1
+      // 2026-10-31 : factures d'abonnement Luxyra (rendu FR complet, lien signé, envoi à l'abonné, Stripe en français)
+      if (url.pathname === "/api/factures-luxyra/voir" && request.method === "GET") return await handleFactureLuxyraVoir(url, env);
+      if (url.pathname === "/api/factures-luxyra/html" && request.method === "POST") return await handleFactureLuxyraHtml(request, env);
+      if (url.pathname === "/api/factures-luxyra/envoyer" && request.method === "POST") return await handleFactureLuxyraEnvoyer(request, env);
+      if (url.pathname === "/api/stripe/locale-fr" && request.method === "POST") return await handleStripeLocaleFr(request, env);
       if (url.pathname === "/api/stripe/create-checkout" && request.method === "POST") return await handleCreateCheckout(request, env);
       if (url.pathname === "/api/stripe/webhook" && request.method === "POST") return await handleWebhook(request, env);
       if (url.pathname === "/api/siret" && request.method === "GET") return await handleSiret(request, env);
@@ -639,7 +644,7 @@ async function handleCreateCheckout(request, env) {
     if (smsPacks[plan]) {
       const pack = smsPacks[plan];
       const session = await stripeAPI(env, "checkout/sessions", {
-        customer: customerId, mode: "payment",
+        customer: customerId, mode: "payment", locale: "fr",
         "line_items[0][price_data][currency]": "eur",
         "line_items[0][price_data][product_data][name]": pack.label,
         "line_items[0][price_data][unit_amount]": String(pack.amount),
@@ -725,7 +730,7 @@ async function handleCreateCheckout(request, env) {
 
     const planLabel = plan === "pro" ? (isFounder ? "Pro Fondateur" : "Pro") : "Essentiel";
     const sessionParams = {
-      customer: customerId, mode: "subscription",
+      customer: customerId, mode: "subscription", locale: "fr", // 31/10 : page de paiement Stripe en français
       // 2026-06-17 : on NE force PLUS payment_method_types. Stripe Checkout utilise
       // les moyens de paiement actives dans le dashboard (carte par defaut ; SEPA si/quand
       // tu l'actives). Evite l'erreur "sepa_debit is invalid" si SEPA non active en live.
@@ -971,13 +976,20 @@ async function handleWebhook(request, env) {
           console.log("invoice.paid: inserting facture", numero);
           const insertRes = await fetch(`${sbUrl}/rest/v1/factures_luxyra`, {
             method: "POST",
-            headers: { "apikey": env.SUPABASE_SERVICE_KEY, "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`, "Content-Type": "application/json", "Prefer": "return=minimal" },
+            headers: { "apikey": env.SUPABASE_SERVICE_KEY, "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`, "Content-Type": "application/json", "Prefer": "return=representation" },
             body: JSON.stringify(insertBody)
           });
           console.log("invoice.paid: insert status=", insertRes.status);
           if (!insertRes.ok) {
             const errText = await insertRes.text();
             console.log("invoice.paid: insert error=", errText);
+          } else {
+            // 2026-10-31 : identité figée + facture FR envoyée à l'abonné (une seule fois par facture)
+            try {
+              const _rows = await insertRes.json();
+              const _f = Array.isArray(_rows) ? _rows[0] : null;
+              if (_f && _f.id) { await lxFactMeta(env, _f, null); await lxFactureLuxyraEnvoyer(env, _f.id); }
+            } catch (e) { try { await reportWorkerError(env, "worker:facture-luxyra-email", e, { stripe_invoice: data.id || null }, "error"); } catch (_) {} }
           }
         } catch (e) { console.log("Invoice generation error:", e.message); }
       } else {
@@ -1559,6 +1571,198 @@ function lxBonMentionTvaCaisse(b) {
   if (b && (b.is_offert === true || b.pay_method === "Offert")) t = "Bon offert \u00e0 titre gracieux \u00b7 " + t;
   return t;
 }
+// ============================================================
+// 2026-10-31 — FACTURES D'ABONNEMENT LUXYRA (factures_luxyra) : rendu unique, complet et en français
+// Mentions : art. 242 nonies A ann. II CGI, art. L441-9 C. com., art. 293 B CGI (franchise), mentions « EI ».
+// Identité client / vendeur FIGÉE à l'émission (lx_prive.factures_luxyra_meta) ; e-mail à l'abonné à chaque paiement,
+// lien signé (HMAC) vers la facture imprimable : GET /api/factures-luxyra/voir?id=&k= ; l'app (Mes factures) utilise
+// POST /api/factures-luxyra/html {facture_id} (propriétaire de l'établissement ou admin).
+// ============================================================
+function lxFactFmtEur(n) { return Number(n || 0).toFixed(2).replace(".", ",") + " €"; }
+function lxFactDate(d) { try { const x = new Date(String(d).length <= 10 ? String(d) + "T12:00:00Z" : d); return x.toLocaleDateString("fr-FR", { timeZone: "Europe/Paris" }); } catch (_) { return String(d || ""); } }
+function lxFactSiret(s) { const d = String(s || "").replace(/\D/g, ""); return d.length === 14 ? d.replace(/(\d{3})(\d{3})(\d{3})(\d{5})/, "$1 $2 $3 $4") : d; }
+async function lxFactSigne(env, id) {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode("facture-luxyra|" + String(env.SUPABASE_SERVICE_KEY || "")), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(String(id)));
+  return Array.from(new Uint8Array(sig)).slice(0, 20).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+async function lxFactRpc(env, nom, args) {
+  const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/${nom}`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify(args) });
+  if (!r.ok) return null;
+  try { return await r.json(); } catch (_) { return null; }
+}
+async function lxFactConfig(env) {
+  try { const r = await lxSbGet(env, "app_config?id=eq.1&select=config"); return (r && r[0] && r[0].config) || {}; } catch (_) { return {}; }
+}
+function lxFactVendeur(cfg) {
+  return {
+    nom: "Alexandre JENSEN", ei: true, marque: "Luxyra",
+    forme: String(cfg.luxyra_forme_juridique || "Entreprise individuelle (micro-entrepreneur)"),
+    adresse: String(cfg.luxyra_adresse || "29 rue de l'Abbé Alexandre Pax, 57200 Sarreguemines"),
+    siret: String(cfg.luxyra_siret_editeur || "91092846400023"),
+    tva_intra: String(cfg.luxyra_tva_intra || ""), tva_pct: Number(cfg.luxyra_tva_pct || 0),
+    email: "contact@luxyra.fr", site: "luxyra.fr",
+  };
+}
+function lxFactClient(s) {
+  s = s || {};
+  const forme = String(s.forme_juridique || "");
+  const ei = /entrepreneur individuel|entreprise individuelle|micro/i.test(forme);
+  const legal = [s.gerant_prenom, s.gerant_nom ? String(s.gerant_nom).toUpperCase() : ""].filter(Boolean).join(" ");
+  const siret = String(s.siret || "").replace(/\D/g, "");
+  return {
+    denomination: String(s.nom || ""), nom_legal: legal ? legal + (ei ? " EI" : "") : "", forme,
+    adresse: String(s.adresse || ""), cp: String(s.cp || ""), ville: String(s.ville || ""),
+    siret, siren: String(s.siren || "").replace(/\D/g, "") || (siret.length >= 9 ? siret.slice(0, 9) : ""),
+    tva_intra: String(s.tva_intra || s.tva || ""), email: String(s.email || ""),
+  };
+}
+// Lit (ou fige au premier appel) l'identité client/vendeur de la facture
+async function lxFactMeta(env, f, salon) {
+  let m = await lxFactRpc(env, "lx_facture_luxyra_meta_lire", { p_facture: f.id });
+  if (m && m.client) return m;
+  const s = salon || await supabaseGet(env, f.salon_id);
+  const cfg = await lxFactConfig(env);
+  m = await lxFactRpc(env, "lx_facture_luxyra_meta_poser", { p_facture: f.id, p_client: lxFactClient(s), p_vendeur: lxFactVendeur(cfg) });
+  return m && m.client ? m : { client: lxFactClient(s), vendeur: lxFactVendeur(cfg) };
+}
+function lxFactureLuxyraHtml(f, meta, opts) {
+  opts = opts || {};
+  const e = ccEsc, c = meta.client || {}, v = meta.vendeur || {};
+  const taux = Number(f.taux_tva || 0), assuj = taux > 0;
+  const plan = f.plan === "pro" ? (/Fondateur/i.test(String(f.description || "")) ? "Pro Fondateur" : "Pro") : "Essentiel";
+  const lib = (f.type && f.type !== "abonnement") ? String(f.description || "Pack SMS") : ("Abonnement au logiciel Luxyra — formule " + plan + " — mensuel");
+  const brut = f.montant_brut != null ? Number(f.montant_brut) : Number(f.montant_ttc);
+  const rem = Number(f.remise || 0);
+  const puHT = assuj ? Math.round(brut / (1 + taux / 100) * 100) / 100 : brut;
+  const remHT = assuj ? Math.round(rem / (1 + taux / 100) * 100) / 100 : rem;
+  const periode = f.periode_debut ? ("du " + lxFactDate(f.periode_debut) + " au " + lxFactDate(f.periode_fin)) : "—";
+  const paye = Number(f.montant_ttc) > 0;
+  const mode = f.mode_paiement === "sepa" ? "prélèvement SEPA" : "carte bancaire";
+  const adrC = [c.adresse, [c.cp, c.ville].filter(Boolean).join(" ")].filter(Boolean).join(", ");
+  const mentionTva = assuj ? "TVA acquittée sur les encaissements" : "TVA non applicable, art. 293 B du CGI";
+  const css = "body{font-family:Arial,Helvetica,sans-serif;color:#1a1a1a;margin:0;background:#f4f1ea;font-size:13px;line-height:1.5}" +
+    ".page{max-width:780px;margin:24px auto;background:#fff;padding:40px 44px;border:1px solid #e6dcc3;border-radius:10px}" +
+    ".hd{display:flex;justify-content:space-between;gap:20px;border-bottom:3px solid #c8a84e;padding-bottom:18px;margin-bottom:22px}" +
+    ".mq{font-family:Georgia,serif;font-size:26px;letter-spacing:5px;color:#9a7b2c}.pt{font-size:11.5px;color:#444;margin-top:6px}" +
+    "h1{font-family:Georgia,serif;font-weight:400;font-size:26px;margin:0;text-align:right}.num{font-size:15px;font-weight:700;color:#9a7b2c;text-align:right}" +
+    ".blocs{display:flex;gap:16px;margin-bottom:18px}.bl{flex:1;background:#faf6ec;border:1px solid #e6dcc3;border-radius:8px;padding:12px 14px;font-size:12px}" +
+    ".bl b.t{display:block;font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:#9a7b2c;margin-bottom:4px}" +
+    "table{width:100%;border-collapse:collapse;margin:8px 0 14px}th{background:#f5f0e8;text-align:left;font-size:11px;padding:8px;border-bottom:2px solid #c8a84e}" +
+    "td{padding:9px 8px;border-bottom:1px solid #eee;vertical-align:top}.r{text-align:right;white-space:nowrap}" +
+    ".tot{margin-left:auto;width:300px}.tot div{display:flex;justify-content:space-between;padding:3px 0}.tot .g{font-size:16px;font-weight:700;border-top:2px solid #1a1a1a;margin-top:4px;padding-top:6px}" +
+    ".mn{font-size:10.5px;color:#555;margin-top:18px;line-height:1.55}.bt{text-align:center;margin:0 auto 10px;max-width:780px}" +
+    ".bt button{background:#c8a84e;border:0;border-radius:24px;padding:11px 22px;font-weight:700;cursor:pointer;font-size:14px}" +
+    "@media print{body{background:#fff}.page{border:0;margin:0;padding:10mm 8mm;max-width:none}.bt{display:none}}@page{size:A4;margin:10mm}";
+  let h = '<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Facture ' + e(f.numero) + ' — Luxyra</title><style>' + css + '</style></head><body>';
+  if (!opts.sansBouton) h += '<div class="bt" style="padding-top:16px"><button onclick="window.print()">Imprimer / enregistrer en PDF</button></div>';
+  h += '<div class="page"><div class="hd"><div><div class="mq">LUXYRA</div><div class="pt"><b>' + e(v.nom) + ' — EI</b><br>' + e(v.forme) + '<br>' + e(v.adresse) +
+    '<br>SIRET ' + e(lxFactSiret(v.siret)) + (v.tva_intra ? '<br>N° TVA intracom. : ' + e(v.tva_intra) : '') + '<br>' + e(v.email) + ' — ' + e(v.site) + '</div></div>' +
+    '<div><h1>FACTURE</h1><div class="num">N° ' + e(f.numero) + '</div><div style="text-align:right;font-size:12px;margin-top:6px">Date d’émission : ' + e(lxFactDate(f.date_facture)) + '</div></div></div>';
+  h += '<div class="blocs"><div class="bl"><b class="t">Client</b><b>' + e(c.denomination) + '</b>' + (c.nom_legal ? '<br>' + e(c.nom_legal) : '') +
+    (adrC ? '<br>' + e(adrC) : '') + (c.siren ? '<br>SIREN ' + e(c.siren) + (c.siret && c.siret.length === 14 ? ' — SIRET ' + e(lxFactSiret(c.siret)) : '') : '') +
+    (c.tva_intra ? '<br>N° TVA intracom. : ' + e(c.tva_intra) : '') + '</div>' +
+    '<div class="bl"><b class="t">Opération</b>Nature : prestation de services (logiciel en ligne par abonnement)<br>Période : ' + e(periode) +
+    '<br>Date de la prestation : ' + e(periode) + '<br>Adresse de livraison : sans objet (service en ligne)</div></div>';
+  h += '<table><tr><th>Désignation</th><th class="r">Qté</th><th class="r">Prix unitaire ' + (assuj ? 'HT' : '') + '</th><th class="r">Montant ' + (assuj ? 'HT' : '') + '</th></tr>';
+  h += '<tr><td>' + e(lib) + '<br><span style="font-size:11px;color:#777">Période ' + e(periode) + '</span></td><td class="r">1</td><td class="r">' + lxFactFmtEur(puHT) + '</td><td class="r">' + lxFactFmtEur(puHT) + '</td></tr>';
+  if (rem > 0.004) h += '<tr><td>' + e(f.remise_libelle ? String(f.remise_libelle).charAt(0).toUpperCase() + String(f.remise_libelle).slice(1) : "Remise") + '</td><td class="r">1</td><td class="r">− ' + lxFactFmtEur(remHT) + '</td><td class="r">− ' + lxFactFmtEur(remHT) + '</td></tr>';
+  h += '</table><div class="tot">';
+  if (assuj) {
+    h += '<div><span>Total HT</span><span>' + lxFactFmtEur(f.montant_ht) + '</span></div><div><span>TVA ' + String(taux).replace(".", ",") + ' %</span><span>' + lxFactFmtEur(f.montant_tva) + '</span></div>';
+    h += '<div class="g"><span>Total TTC</span><span>' + lxFactFmtEur(f.montant_ttc) + '</span></div>';
+  } else {
+    h += '<div><span>Total HT</span><span>' + lxFactFmtEur(f.montant_ht) + '</span></div><div><span>TVA</span><span>0,00 €</span></div>';
+    h += '<div class="g"><span>Net à payer</span><span>' + lxFactFmtEur(f.montant_ttc) + '</span></div>';
+  }
+  h += '</div><div style="text-align:right;font-size:11px;color:#555;margin-top:4px">' + e(mentionTva) + '</div>';
+  h += '<div class="mn"><b>' + (paye ? 'Facture acquittée le ' + e(lxFactDate(f.date_paiement || f.date_facture)) + ' par ' + mode + '.' : 'Montant nul : aucun paiement dû.') + '</b><br>' +
+    'Date d’échéance : paiement à la souscription, puis à chaque échéance mensuelle (prélèvement automatique). Pas d’escompte pour paiement anticipé.<br>' +
+    'En cas de retard de paiement : pénalités au taux d’intérêt appliqué par la BCE à son opération de refinancement la plus récente majoré de 10 points, ' +
+    'et indemnité forfaitaire pour frais de recouvrement de 40 € (art. L441-10 et D441-5 du Code de commerce).<br>' +
+    'Conditions générales de vente : luxyra.fr/cgv — Facture établie par ' + e(v.nom) + ' EI (' + e(v.marque) + '), ' + e(v.adresse) + ', SIRET ' + e(lxFactSiret(v.siret)) + '. ' + e(mentionTva) + '.</div>';
+  h += '</div></body></html>';
+  return h;
+}
+async function lxFactLire(env, id) {
+  if (!/^[0-9a-f-]{36}$/i.test(String(id || ""))) return null;
+  const r = await lxSbGet(env, `factures_luxyra?id=eq.${encodeURIComponent(id)}&select=*&limit=1`);
+  return (r && r[0]) || null;
+}
+// GET /api/factures-luxyra/voir?id=&k=  (lien signé reçu par e-mail)
+async function handleFactureLuxyraVoir(url, env) {
+  const id = url.searchParams.get("id") || "", k = url.searchParams.get("k") || "";
+  const page = (msg, st) => new Response('<!DOCTYPE html><meta charset="utf-8"><title>Facture</title><p style="font-family:Arial;padding:30px">' + msg + '</p>', { status: st, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+  if (!/^[0-9a-f-]{36}$/i.test(id) || !/^[0-9a-f]{40}$/.test(k) || k !== await lxFactSigne(env, id)) return page("Lien de facture invalide.", 403);
+  const f = await lxFactLire(env, id);
+  if (!f) return page("Facture introuvable.", 404);
+  const meta = await lxFactMeta(env, f, null);
+  return new Response(lxFactureLuxyraHtml(f, meta), { status: 200, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "private, no-store", "X-Robots-Tag": "noindex", "Referrer-Policy": "no-referrer" } });
+}
+// POST /api/factures-luxyra/html {facture_id}  (app : Paramètres › Mes factures)
+async function handleFactureLuxyraHtml(request, env) {
+  let b = {}; try { b = await request.json(); } catch (_) {}
+  const f = await lxFactLire(env, b.facture_id);
+  if (!f) return jsonResponse({ error: "Facture introuvable" }, 404);
+  const u = await lxAuthUser(request);
+  if (!u) return jsonResponse({ error: "Authentification requise" }, 401);
+  if (!lxIsAdminUser(u) && !(await lxOwnsSalon(env, u.id, f.salon_id))) return jsonResponse({ error: "Accès refusé" }, 403);
+  const meta = await lxFactMeta(env, f, null);
+  return jsonResponse({ html: lxFactureLuxyraHtml(f, meta), lien: `https://luxyra.fr/api/factures-luxyra/voir?id=${f.id}&k=${await lxFactSigne(env, f.id)}` });
+}
+// Envoi de la facture à l'abonné (une seule fois par facture ; réservation avant envoi, libérée si Brevo refuse)
+async function lxFactureLuxyraEnvoyer(env, factureId, opts) {
+  opts = opts || {};
+  const f = await lxFactLire(env, factureId);
+  if (!f) return { ok: false, erreur: "facture introuvable" };
+  const salon = await supabaseGet(env, f.salon_id);
+  const meta = await lxFactMeta(env, f, salon);
+  const to = String((salon && salon.email) || (meta.client && meta.client.email) || "").trim();
+  if (!/^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/.test(to)) return { ok: false, erreur: "pas d'adresse e-mail" };
+  if (!opts.forcer) {
+    const res = await lxFactRpc(env, "lx_facture_luxyra_envoi_marquer", { p_facture: f.id, p_ref: "en cours" });
+    if (res !== true) return { ok: true, deja: true };
+  }
+  const lien = `https://luxyra.fr/api/factures-luxyra/voir?id=${f.id}&k=${await lxFactSigne(env, f.id)}`;
+  const prenom = salon && salon.gerant_prenom ? ccEsc(String(salon.gerant_prenom).slice(0, 60)) : "";
+  const plan = f.plan === "pro" ? (/Fondateur/i.test(String(f.description || "")) ? "Pro Fondateur" : "Pro") : "Essentiel";
+  const corps = `<p>Bonjour${prenom ? " " + prenom : ""},</p><p>Merci pour votre confiance. Voici votre facture Luxyra <b>${ccEsc(f.numero)}</b>.</p>` +
+    `<table style="width:100%;border-collapse:collapse;font-size:14px;margin:6px 0 4px">` +
+    `<tr><td style="padding:6px 0;border-bottom:1px solid #eee">Formule</td><td style="text-align:right;border-bottom:1px solid #eee"><b>${ccEsc(plan)}</b> — mensuel</td></tr>` +
+    (f.periode_debut ? `<tr><td style="padding:6px 0;border-bottom:1px solid #eee">Période</td><td style="text-align:right;border-bottom:1px solid #eee">du ${ccEsc(lxFactDate(f.periode_debut))} au ${ccEsc(lxFactDate(f.periode_fin))}</td></tr>` : "") +
+    `<tr><td style="padding:6px 0">Montant réglé</td><td style="text-align:right"><b>${lxFactFmtEur(f.montant_ttc)}</b></td></tr></table>` +
+    `<p style="font-size:12px;color:#777;margin:0">${Number(f.taux_tva || 0) > 0 ? "TVA incluse" : "TVA non applicable, art. 293 B du CGI"}</p>` +
+    lxMailBouton("Voir et télécharger ma facture", lien) +
+    `<p style="font-size:13px;color:#555">Vos factures sont aussi disponibles dans l’application : Paramètres › Abonnement › Mes factures.</p>`;
+  const r = await brevoSendEmail(env, { to, toName: salon && salon.nom ? String(salon.nom) : "", senderName: "Luxyra", subject: `Votre facture Luxyra ${f.numero}`,
+    htmlContent: lxMailLayout(corps, { titre: "Votre facture" }), replyTo: "contact@luxyra.fr",
+    textContent: `Bonjour,\n\nVoici votre facture Luxyra ${f.numero} (${lxFactFmtEur(f.montant_ttc)}).\nVoir et télécharger : ${lien}\n\nLuxyra` });
+  if (!r || !r.messageId) {
+    if (!opts.forcer) await lxFactRpc(env, "lx_facture_luxyra_envoi_liberer", { p_facture: f.id, p_ref: null });
+    try { await reportWorkerError(env, "worker:facture-luxyra-email", new Error("Brevo : " + String((r && (r.message || r.code)) || "refus")), { facture: f.numero }, "error"); } catch (_) {}
+    return { ok: false, erreur: "envoi refusé" };
+  }
+  if (!opts.forcer) await lxFactRpc(env, "lx_facture_luxyra_envoi_liberer", { p_facture: f.id, p_ref: String(r.messageId) });
+  return { ok: true, messageId: r.messageId };
+}
+// POST /api/factures-luxyra/envoyer {facture_id, forcer?}  — interne (x-lx-internal) ou admin : (r)envoi manuel
+async function handleFactureLuxyraEnvoyer(request, env) {
+  let b = {}; try { b = await request.json(); } catch (_) {}
+  if (!(await lxIsInternal(request, env))) { const u = await lxAuthUser(request); if (!lxIsAdminUser(u)) return jsonResponse({ error: "Accès refusé" }, 403); }
+  return jsonResponse(await lxFactureLuxyraEnvoyer(env, b.facture_id, { forcer: b.forcer === true }));
+}
+// POST /api/stripe/locale-fr — interne/admin : passe en français (preferred_locales) les clients Stripe des établissements
+async function handleStripeLocaleFr(request, env) {
+  if (!(await lxIsInternal(request, env))) { const u = await lxAuthUser(request); if (!lxIsAdminUser(u)) return jsonResponse({ error: "Accès refusé" }, 403); }
+  const rows = await lxSbGet(env, "salons?select=stripe_customer_id&stripe_customer_id=not.is.null");
+  let ok = 0, ko = 0;
+  for (const s of rows || []) {
+    const c = await stripeAPI(env, `customers/${encodeURIComponent(s.stripe_customer_id)}`, { "preferred_locales[0]": "fr" });
+    if (c && c.id) ok++; else ko++;
+  }
+  return jsonResponse({ ok, ko });
+}
+
 async function handleBonEcarte(request, env) {
   try {
     if (await lxIsInternal(request, env)) return jsonResponse({ error: "Réservé à l'établissement" }, 403);
@@ -3939,10 +4143,11 @@ async function getOrCreateStripeCustomer(env, email, salonId) {
     if (salon?.stripe_customer_id) return salon.stripe_customer_id;
     const existing = await stripeAPI(env, `customers?email=${encodeURIComponent(email)}&limit=1`, null, "GET");
     if (existing?.data?.length > 0) {
+      try { await stripeAPI(env, `customers/${existing.data[0].id}`, { "preferred_locales[0]": "fr" }); } catch (_) {}
       await supabaseUpdate(env, salonId, { stripe_customer_id: existing.data[0].id });
       return existing.data[0].id;
     }
-    const customer = await stripeAPI(env, "customers", { email, "metadata[salon_id]": salonId, name: salon?.nom || email });
+    const customer = await stripeAPI(env, "customers", { email, "metadata[salon_id]": salonId, name: salon?.nom || email, "preferred_locales[0]": "fr" }); // 31/10 : e-mails Stripe en français
     if (!customer?.id) return null;
     await supabaseUpdate(env, salonId, { stripe_customer_id: customer.id });
     return customer.id;
@@ -5023,8 +5228,11 @@ async function lxFactureSms(env, salonId, qty, montantEur, piId, auto) {
     const corps = { salon_id: salonId, numero: null, type: auto ? "sms_recharge_auto" : "sms_pack", description: `Pack ${qty} SMS${auto ? " (recharge automatique)" : ""}`,
       plan: null, montant_brut: ttc, remise: 0, montant_ht: ht, taux_tva: tvaPct, montant_tva: Math.round((ttc - ht) * 100) / 100, montant_ttc: ttc,
       stripe_payment_intent: piId || null, mode_paiement: "carte", status: "paid", date_paiement: new Date().toISOString() };
-    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/factures_luxyra`, { method: "POST", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify(corps) });
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/factures_luxyra`, { method: "POST", headers: _sbHeaders(env, { Prefer: "return=representation" }), body: JSON.stringify(corps) });
     if (!r.ok && r.status !== 409) console.error("facture SMS:", r.status, (await r.text()).slice(0, 200));
+    else if (r.ok) { // 31/10 : identité figée + facture FR envoyée à l'établissement
+      try { const _a = await r.json(); const _f = Array.isArray(_a) ? _a[0] : null; if (_f && _f.id) { await lxFactMeta(env, _f, null); await lxFactureLuxyraEnvoyer(env, _f.id); } } catch (e2) { console.error("facture SMS e-mail:", e2?.message || e2); }
+    }
   } catch (e) { console.error("facture SMS:", e?.message || e); }
 }
 async function lxCrediterSms(env, salonId, nb, type, montant, motif, auteur) {
