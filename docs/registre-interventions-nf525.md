@@ -900,3 +900,11 @@ Aucune table, fonction ni déclencheur fiscal modifié ; lecture seule de `carte
 - Propriétaire d'un établissement (salons.user_id) : garde en base (trg_salons_user_id_garde) ; seul chemin = lx_admin_salon_changer_proprietaire() (admin aal2, journalisée dans admin_log). Le salon ne pouvait déjà pas le changer (salons_proteger_facturation).
 - Fichiers : docs/migrations_1031_i2/i2_admin_ecriture_caisse.sql (md5 94feb459…), retour arrière exact i2_retour_arriere.sql ; admin.html (changement de propriétaire par la fonction dédiée).
 - 31/10/2026 (contre-audit I2, R1) : la fonction de changement de propriétaire refuse tout compte administrateur ; la garde salons.user_id n accepte plus d exception par variable. Lot I3 proposé (retirer l écriture admin sur cartes_cadeaux, appointments, rdv_online, clients, services, produits…).
+
+### 31/10/2026 (soir) — Panneau admin « pro » (hors périmètre fiscal, aucune table NF525 modifiée)
+- Nature : affichage et outils de l'administration uniquement. Aucune table, fonction ni déclencheur de caisse touché ; aucun ticket, clôture ou journal lu en écriture. La page Clôtures Z ne fait que LIRE `clotures` (ajout de la colonne `mode_caisse` à la lecture, pour séparer test et réel).
+- SQL appliqué (MCP), dossier `docs/migrations_1031_adminpro/` :
+  - `admin_tableau_de_bord_v2.sql` : `lx_prive.salon_est_test()` + `admin_tableau_de_bord()` v2 (lecture seule) : revenu mensuel et payants = abonnement Stripe en cours, hors comptes de test ; essais terminés non convertis ; inscrits 7 j. Vérifié en transaction annulée : 14,99 € / 1 payant.
+  - `admin_config_maj.sql` : écriture atomique de clés de `app_config` (admin 2FA), seules les clés passées changent.
+  - `admin_salon_cfg_migration.sql` : statut de migration dans `salons.config_json` (clés migration* uniquement, format conservé). Vérifié en transaction annulée : les 31 autres clés identiques, config_version +1.
+- admin.html : commits d2e1ac7, 3395925, fb26adb, c3cc474, af55d00. inscription.html : e-mail pré-rempli par le lien d'inscription (toujours vérifié par code).
