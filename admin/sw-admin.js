@@ -29,7 +29,7 @@ self.addEventListener('push', function(event) {
   const options = {
     body: data.body || '',
     icon: data.icon || '/icon-192.png',
-    badge: data.badge || '/icon-96.png',
+    badge: data.badge || '/icon-192.png', // 2026-10-31 : /icon-96.png n'existait pas
     tag: data.tag || 'lx-admin-' + Date.now(),
     data: {
       // 2026-10-12 : send-push place l'adresse dans data.data.url

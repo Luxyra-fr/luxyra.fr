@@ -3099,16 +3099,17 @@ function _esc(s){ return saEsc(s); } // 31/10 audit : échappement unique (apost
 // Analytics
 function rAnalytics(sub){
   var totalC=0,totalCollabs=0;SALONS.forEach(function(s){totalC+=s.clients||0;totalCollabs+=s.collabs||0;});
-  var byPlan={essential:0,pro:0};SALONS.forEach(function(s){if(s.status==='active')byPlan[s.plan]=(byPlan[s.plan]||0)+1;});
+  // 2026-10-31 : seuls les abonnements PAYANTS (mrrOf > 0) comptent par forfait ; offerts et tests à part
+  var byPlan={essential:0,pro:0},nOff=0,nTest=0;SALONS.forEach(function(s){ if(s.fermeLe) return; if(mrrOf(s)>0) byPlan[s.plan]=(byPlan[s.plan]||0)+1; else if(s.status==='active'&&s.isFree&&!lxEstTest({modeCaisse:s.modeCaisse,nom:s.nom})) nOff++; else if(lxEstTest(s)&&s.status!=='cancelled') nTest++; });
   var byMetier={};SALONS.forEach(function(s){if(s.fermeLe)return;byMetier[s.metier]=(byMetier[s.metier]||0)+1;});
-  var h='<div class="topbar"><h1>Analytics <span>'+(sub||'kpis')+'</span></h1></div>';
+  var h='<div class="topbar"><h1>'+({cohorts:'Cohortes',funnel:'Entonnoir'}[sub]||'Chiffres clés')+' <span>'+({cohorts:'Rétention des établissements',funnel:'De l’inscription à l’abonnement'}[sub]||'Vue d’ensemble')+'</span></h1></div>';
   if(sub==='cohorts'){return rAnalyticsCohorts(h);}
   if(sub==='funnel'){return rAnalyticsFunnel(h);}
   h+='<div class="kpi-row">';
-  h+='<div class="kpi"><div class="kpi-label">Total clients</div><div class="kpi-value" style="color:var(--blue)">'+totalC+'</div><div class="kpi-sub">Tous salons confondus</div></div>';
+  h+='<div class="kpi"><div class="kpi-label">Total clients</div><div class="kpi-value" style="color:var(--blue)">'+totalC+'</div><div class="kpi-sub">Tous établissements confondus</div></div>';
   h+='<div class="kpi"><div class="kpi-label">Total collaborateurs</div><div class="kpi-value" style="color:var(--gold)">'+totalCollabs+'</div></div>';
-  h+='<div class="kpi"><div class="kpi-label">Plan Essential</div><div class="kpi-value" style="color:var(--green)">'+(byPlan.essential||0)+'</div></div>';
-  h+='<div class="kpi"><div class="kpi-label">Plan Pro</div><div class="kpi-value" style="color:var(--purple)">'+(byPlan.pro||0)+'</div></div>';
+  h+='<div class="kpi"><div class="kpi-label">Essentiel payants</div><div class="kpi-value" style="color:var(--green)">'+(byPlan.essential||0)+'</div><div class="kpi-sub">abonnement Stripe en cours</div></div>';
+  h+='<div class="kpi"><div class="kpi-label">Pro payants</div><div class="kpi-value" style="color:var(--purple)">'+(byPlan.pro||0)+'</div><div class="kpi-sub">hors offerts ('+nOff+') et comptes de test ('+nTest+')</div></div>';
   h+='</div>';
   h+='<div class="card"><h3>📊 Répartition par métier</h3>';
   Object.keys(byMetier).forEach(function(k){
@@ -3210,10 +3211,10 @@ async function loadClotures(){
   // RLS : la policy salon_clotures_select autorise is_admin() => lecture cross-salons OK.
   try{
     var r=await _sb.from('clotures')
-      .select('id,salon_id,date_cloture,num,total_ca,total_ht,nb_tickets,nb_annulations,ecart_caisse,hash,timestamp_cloture')
+      .select('id,salon_id,date_cloture,num,total_ca,total_ht,nb_tickets,nb_annulations,ecart_caisse,hash,timestamp_cloture,mode_caisse')
       .order('date_cloture',{ascending:false})
       .order('num',{ascending:false})
-      .limit(50);
+      .limit(200);
     if(r.error) throw r.error;
     window.Z_CLOSURES=r.data||[];
   }catch(e){ window.Z_CLOSURES=[]; }
@@ -3224,28 +3225,45 @@ function rClotures(){
   var today=new Date().toISOString().slice(0,10);
   if(window._clotDate) zs=zs.filter(function(z){return String(z.date_cloture||'').slice(0,10)===window._clotDate;});
   if(window._clotSalon) zs=zs.filter(function(z){return z.salon_id===window._clotSalon;});
+  // 2026-10-31 : clôtures de TEST et RÉELLES séparées (lecture seule, colonne mode_caisse de la clôture)
+  var _cm=window._clotMode||'reel';
+  // mode_caisse vide (clôtures antérieures au champ) : déduit de l'établissement (caisse en test, Salon/Luxyra Démo)
+  var _estTestZ=function(z){ if(z.mode_caisse) return z.mode_caisse==='test'; var sa=gSalon(z.salon_id); return !!(sa&&(sa.modeCaisse==='test'||/^\s*(salon|luxyra)\s+d[eé]mo/i.test(sa.nom||''))); };
+  var nTestZ=zs.filter(_estTestZ).length, nReelZ=zs.length-nTestZ;
+  if(_cm==='reel') zs=zs.filter(function(z){return !_estTestZ(z);}); else if(_cm==='test') zs=zs.filter(_estTestZ);
   // FIX 2026-07-13 : colonnes reelles de 'clotures' (date_cloture / total_ca), pas 'z_closures'.
   var todayZ=zs.filter(function(z){return String(z.date_cloture||'').slice(0,10)===today;});
   var totCA=zs.reduce(function(a,z){return a+(Number(z.total_ca)||0);},0);
   var nbEcart=zs.filter(function(z){return Number(z.ecart_caisse||0)!==0;}).length;
-  var h='<div class="topbar"><h1>Clôtures Z <span>'+zs.length+' clôtures</span></h1><div style="display:flex;gap:6px"><select onchange="window._clotSalon=this.value||null;render()" style="padding:6px;border-radius:8px;background:var(--bg3);color:var(--text);border:1px solid var(--border)"><option value="">Tous les établissements</option>'+SALONS.map(function(x){return '<option value="'+x.id+'"'+(window._clotSalon===x.id?' selected':'')+'>'+saEsc(x.nom)+'</option>';}).join('')+'</select><button class="tb-btn'+(window._clotDate?' primary':'')+'" onclick="window._clotDate=window._clotDate?null:new Date().toISOString().slice(0,10);render()">'+(window._clotDate?'✓ Aujourd\'hui':'Aujourd\'hui seulement')+'</button></div></div>';
+  var h='<div class="topbar"><h1>Clôtures Z <span>'+zs.length+' clôture(s) '+({reel:'réelles',test:'de test',all:'au total'}[_cm])+'</span></h1><div style="display:flex;gap:6px;flex-wrap:wrap">'
+    +'<button class="tb-btn'+(_cm==='reel'?' primary':'')+'" onclick="window._clotMode=\'reel\';render()">Réelles ('+nReelZ+')</button>'
+    +'<button class="tb-btn'+(_cm==='test'?' primary':'')+'" onclick="window._clotMode=\'test\';render()">Test ('+nTestZ+')</button>'
+    +'<button class="tb-btn'+(_cm==='all'?' primary':'')+'" onclick="window._clotMode=\'all\';render()">Toutes</button>'
+    +'<select onchange="window._clotSalon=this.value||null;render()" style="padding:6px;border-radius:8px;background:var(--bg3);color:var(--text);border:1px solid var(--border)"><option value="">Tous les établissements</option>'+SALONS.map(function(x){return '<option value="'+x.id+'"'+(window._clotSalon===x.id?' selected':'')+'>'+saEsc(x.nom)+'</option>';}).join('')+'</select><button class="tb-btn'+(window._clotDate?' primary':'')+'" onclick="window._clotDate=window._clotDate?null:new Date().toISOString().slice(0,10);render()">'+(window._clotDate?'✓ Aujourd\'hui':'Aujourd\'hui seulement')+'</button></div></div>';
   h+='<div class="kpi-row">';
   h+='<div class="kpi"><div class="kpi-label">Z aujourd\'hui</div><div class="kpi-value" style="color:var(--gold)">'+todayZ.length+'</div></div>';
-  h+='<div class="kpi"><div class="kpi-label">Total 50 derniers</div><div class="kpi-value" style="color:var(--blue)">'+zs.length+'</div></div>';
-  h+='<div class="kpi"><div class="kpi-label">CA cumul\u00e9 (50 derniers)</div><div class="kpi-value" style="color:var(--gold)">'+fmtM(totCA)+'</div></div>';
+  h+='<div class="kpi"><div class="kpi-label">Clôtures affichées</div><div class="kpi-value" style="color:var(--blue)">'+zs.length+'</div></div>';
+  h+='<div class="kpi"><div class="kpi-label">CA cumulé ('+({reel:'réel',test:'test',all:'réel + test'}[_cm])+')</div><div class="kpi-value" style="color:var(--gold)">'+fmtM(totCA)+'</div></div>';
   h+='<div class="kpi"><div class="kpi-label">\u00c9carts de caisse</div><div class="kpi-value" style="color:'+(nbEcart?'var(--red)':'var(--green)')+'">'+nbEcart+'</div></div>';
   h+='</div>';
   if(!zs.length){
     h+='<div class="card" style="padding:20px;color:var(--text3);font-size:13px">Aucune cl\u00f4ture Z trouv\u00e9e.</div>';
     return h;
   }
-  h+='<div class="table-wrap"><div style="overflow-x:auto"><table><tr><th>Date</th><th>N\u00b0</th><th>Salon</th><th>CA TTC</th><th>Dont HT</th><th>Tickets</th><th>Annul.</th><th>\u00c9cart caisse</th><th>Hash</th></tr><tbody>';
+  // Synthèse par établissement
+  var parE={}; zs.forEach(function(z){ var k=z.salon_id; var o=parE[k]||(parE[k]={n:0,ca:0,der:null,ec:0}); o.n++; o.ca+=Number(z.total_ca)||0; if(!o.der||String(z.date_cloture)>String(o.der)) o.der=z.date_cloture; if(Number(z.ecart_caisse||0)!==0) o.ec++; });
+  h+='<div class="card"><h3>🏠 Par établissement</h3><div style="overflow-x:auto"><table><tr><th>Établissement</th><th>Clôtures</th><th>CA TTC</th><th>Dernière</th><th>Écarts</th></tr>';
+  Object.keys(parE).sort(function(a,b){return parE[b].ca-parE[a].ca;}).forEach(function(k){ var o=parE[k], sa=gSalon(k);
+    h+='<tr style="cursor:pointer" onclick="window._clotSalon=\''+saJs(k)+'\';render()"><td>'+saEsc(sa?sa.nom:'?')+'</td><td>'+o.n+'</td><td style="font-family:var(--mono);color:var(--gold)">'+fmtM(o.ca)+'</td><td>'+fmtD(o.der)+'</td><td style="color:'+(o.ec?'var(--red)':'var(--text3)')+'">'+(o.ec||'—')+'</td></tr>'; });
+  h+='</table></div></div>';
+  h+='<div class="table-wrap"><div style="overflow-x:auto"><table><tr><th>Date</th><th>N\u00b0</th><th>Établissement</th><th>Caisse</th><th>CA TTC</th><th>Dont HT</th><th>Tickets</th><th>Annul.</th><th>\u00c9cart caisse</th><th>Hash</th></tr><tbody>';
   zs.forEach(function(z){
     var sa=gSalon(z.salon_id);
     var ec=Number(z.ecart_caisse||0);
     h+='<tr><td>'+fmtD(z.date_cloture)+'</td>'
       +'<td style="font-family:var(--mono)">#'+(z.num||'?')+'</td>'
       +'<td>'+saEsc(sa?sa.nom:'?')+'</td>'
+      +'<td>'+(_estTestZ(z)?'<span class="badge" style="background:rgba(255,152,0,.12);color:var(--orange)">test</span>':'<span class="badge badge-green">réelle</span>')+(z.mode_caisse?'':'<div style="font-size:9px;color:var(--text3)">déduit</div>')+'</td>'
       +'<td style="font-family:var(--mono);color:var(--gold)">'+fmtM(z.total_ca||0)+'</td>'
       +'<td style="font-family:var(--mono);color:var(--text3)">'+fmtM(z.total_ht||0)+'</td>'
       +'<td>'+(z.nb_tickets||0)+'</td>'
@@ -3269,7 +3287,13 @@ function rLegalPage(){
     {nom:'CGV / CGU',url:'https://luxyra.fr/cgv'},
     {nom:'Politique de confidentialité',url:'https://luxyra.fr/politique-confidentialite'},
     {nom:'DPA (sous-traitance RGPD)',url:'https://luxyra.fr/dpa'},
-    {nom:'Suppression des données',url:'https://luxyra.fr/suppression-donnees'}
+    {nom:'Suppression des données',url:'https://luxyra.fr/suppression-donnees'},
+    // 2026-10-31 : liste complétée (pages présentes dans le dépôt et liées depuis le site)
+    {nom:'Sécurité & RGPD',url:'https://luxyra.fr/securite-rgpd.html'},
+    {nom:'Attestation de conformité de l’éditeur (caisse)',url:'https://luxyra.fr/nf525-attestation-generale.html'},
+    {nom:'Vérifier un ticket / une archive de caisse',url:'https://luxyra.fr/verif-nf525.html'},
+    {nom:'Tarifs publics',url:'https://luxyra.fr/tarifs'},
+    {nom:'À propos (éditeur)',url:'https://luxyra.fr/a-propos.html'}
   ];
   docs.forEach(function(d){
     h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--bg3);border-radius:8px"><span style="font-size:13px">'+saEsc(d.nom)+'</span><a href="'+d.url+'" target="_blank" rel="noopener" class="tb-btn" style="text-decoration:none">Voir la page ↗</a></div>';
@@ -3711,9 +3735,10 @@ function openD(id){
   h+='<div class="dpTab" data-t="technique"'+(_ot==="technique"?'':' style="display:none"')+'>';
   // TECHNIQUE
   h+='<div class="dp-section"><div class="dp-label">⚙️ Technique</div>';
-  h+='<div class="dp-field"><span class="k">Salon ID</span><span class="v" style="font-size:10px;font-family:var(--mono)">'+s.id.slice(0,18)+'...</span></div>';
-  h+='<div class="dp-field"><span class="k">User ID</span><span class="v" style="font-size:10px;font-family:var(--mono)">'+(s.userId?saEsc(String(s.userId).slice(0,18))+'...':'—')+'</span></div>';
-  h+='<button class="dp-btn" style="margin-top:6px" onclick="editUserId(&#39;'+s.id+'&#39;)">🔑 Changer user_id</button></div>';
+  // 2026-10-31 : identifiants complets et copiables
+  h+='<div class="dp-field"><span class="k">Identifiant établissement</span><span class="v" style="font-size:10px;font-family:var(--mono);word-break:break-all">'+saEsc(s.id)+' <button class="td-btn" style="min-width:32px" title="Copier" aria-label="Copier l’identifiant" onclick="lxCopier(\''+saJs(s.id)+'\')">📋</button></span></div>';
+  h+='<div class="dp-field"><span class="k">Identifiant de connexion</span><span class="v" style="font-size:10px;font-family:var(--mono);word-break:break-all">'+(s.userId?saEsc(s.userId)+' <button class="td-btn" style="min-width:32px" title="Copier" aria-label="Copier l’identifiant de connexion" onclick="lxCopier(\''+saJs(s.userId)+'\')">📋</button>':'—')+'</span></div>';
+  h+='<button class="dp-btn" style="margin-top:6px" onclick="editUserId(&#39;'+s.id+'&#39;)">🔑 Changer l’identifiant de connexion</button></div>';
 
   // SMS CREDITS
   h+='<div class="dp-section"><div class="dp-label">\ud83d\udcf1 Cr\u00e9dits SMS</div>';
@@ -4250,6 +4275,7 @@ function lxSaisie(msg, defaut, o){
     },10);
   });
 }
+async function lxCopier(t){ try{ await navigator.clipboard.writeText(String(t)); toast('Copié.','success'); }catch(e){ await lxSaisie('Copiez le texte ci-dessous :', String(t), {titre:'Copier'}); } }
 // toast(msg[, 'success'|'error'|'info']) : message bref en bas d'écran, sans bloquer
 function toast(msg, type){
   try{
@@ -5431,10 +5457,10 @@ function editLegal(id){
   var h='<div class="mbg" onclick="closeMod()"><div class="mbox" onclick="event.stopPropagation()" style="max-width:560px;max-height:90vh;overflow-y:auto">';
   h+='<div style="display:flex;justify-content:space-between;margin-bottom:14px"><h2 style="font-size:18px">🏢 Informations légales &amp; identité</h2><button onclick="closeMod()" style="background:none;border:none;color:var(--text);font-size:20px;cursor:pointer">✕</button></div>';
   h+='<div style="background:rgba(212,168,67,.06);border:1px solid rgba(212,168,67,.2);border-radius:10px;padding:10px 12px;margin-bottom:14px;font-size:12px;color:var(--text2);line-height:1.5">';
-  h+='⚠️ Ces champs sont verrouillés côté établissement. Toute modification ici se propage automatiquement à : l\'app salon, le site public (luxyra.fr/&lt;slug&gt;), les tickets de caisse, les factures et les exports comptables.';
+  h+='⚠️ Ces champs sont verrouillés côté établissement. Toute modification ici se propage automatiquement à : l\'app de l’établissement, le site public (luxyra.fr/&lt;slug&gt;), les tickets de caisse, les factures et les exports comptables.';
   h+='</div>';
   // Identité salon (verrouillée côté app)
-  h+='<div style="font-size:11px;font-weight:700;color:var(--gold);text-transform:uppercase;letter-spacing:1px;margin:6px 0 6px">Identité salon</div>';
+  h+='<div style="font-size:11px;font-weight:700;color:var(--gold);text-transform:uppercase;letter-spacing:1px;margin:6px 0 6px">Identité de l’établissement</div>';
   var idFs=[
     ["elNom","Nom commercial de l’établissement",s.nom],
     ["elMetier","Métier (coiffure / barbier / esthetique / ongles / regard / maquillage / tatouage / spa / bien_etre)",s.metier]
@@ -5489,23 +5515,38 @@ async function doSaveLegal(id){
     ville:document.getElementById("elVille").value.trim(),
     tel:document.getElementById("elTel").value.trim()
   };
-  // Filtrer les champs vides pour ne pas écraser des données existantes par "" si l'admin
-  // a juste cliqué Enregistrer sans toucher tous les champs (mais on garde nom/metier obligatoires)
+  // 2026-10-31 : on n'envoie QUE les champs modifiés. Un champ vidé alors qu'il avait une valeur
+  // n'est effacé qu'après confirmation explicite (sinon la valeur actuelle est gardée).
   if(!data.nom){(await lxAlert("Le nom de l’établissement est obligatoire."));return;}
   if(!data.metier){(await lxAlert("Le métier est obligatoire."));return;}
-  // SIRET : si fourni, doit faire 14 chiffres
   var siretClean=data.siret.replace(/\s/g,"");
   if(siretClean && !/^\d{14}$/.test(siretClean)){
     (await lxAlert("Le SIRET doit contenir exactement 14 chiffres."));
     return;
   }
   data.siret=siretClean;
-  // Auto-déduire SIREN depuis SIRET si pas renseigné
   if(siretClean && !data.siren) data.siren=siretClean.slice(0,9);
+  var s0=gSalon(id)||{};
+  var avant={nom:s0.nom,metier:s0.metier,gerant_nom:s0.gerantNom,gerant_prenom:s0.gerantPrenom,forme_juridique:s0.formeJur,siret:s0.siret,siren:s0.siren,tva_intra:s0.tva,adresse:s0.adresse,cp:s0.cp,ville:s0.ville,tel:s0.tel};
+  var libs={gerant_nom:"Nom du gérant",gerant_prenom:"Prénom du gérant",forme_juridique:"Forme juridique",siret:"SIRET",siren:"SIREN",tva_intra:"N° TVA intracommunautaire",adresse:"Adresse",cp:"Code postal",ville:"Ville",tel:"Téléphone"};
+  var vides=[], modif={};
+  Object.keys(data).forEach(function(k){
+    var av=avant[k]==null?"":String(avant[k]), ap=String(data[k]==null?"":data[k]);
+    if(av===ap) return;
+    if(ap==="" && av!==""){ vides.push(k); return; }
+    modif[k]=data[k];
+  });
+  if(vides.length){
+    var ok=await lxConfirm("Ces champs ont été vidés :\n\n"+vides.map(function(k){return "• "+(libs[k]||k)+" (actuellement « "+avant[k]+" »)";}).join("\n")+"\n\nEffacer ces valeurs ? « Annuler » = garder les valeurs actuelles.",{ok:"Effacer ces valeurs",danger:true,titre:"Champs vidés"});
+    if(ok) vides.forEach(function(k){ modif[k]=""; });
+  }
+  if(!Object.keys(modif).length){ toast("Aucune modification à enregistrer."); return; }
+  data=modif;
   var r=await _sb.from("salons").update(data).eq("id",id);
   if(r&&r.error){(await lxAlert("Erreur sauvegarde : "+r.error.message));return;}
-  await lxJournal("EDIT_LEGAL",{salon:id,cible:"salons:"+id,apres:data});
-  (await lxAlert("✅ Modifications enregistrées et propagées (app salon, site public, tickets, factures)"));
+  var _av={}; Object.keys(data).forEach(function(k){ _av[k]=avant[k]; });
+  await lxJournal("EDIT_LEGAL",{salon:id,cible:"salons:"+id,avant:_av,apres:data});
+  toast("✅ Modifications enregistrées ("+Object.keys(data).length+" champ(s)).","success");
   await loadData();closeMod();render();openD(id);
 }
 
