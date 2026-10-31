@@ -37,7 +37,12 @@
     // garde-fou de contraste (texte) : l'encre doit rester lisible sur le papier, la dorure sur l'aplat
     if (contraste(ink, PAPIER_A) < 7) ink = hsl2h(h, Math.min(s, .4), .16);
     if (contraste(foil, deep) < 4.5) foil = hsl2h(h, Math.min(s, .45), .82);
-    return { accent: acc, ink: ink, inkSoft: inkSoft, deep: deep, foil: foil, tint: mix(acc, PAPIER_A, .9), line: mix(acc, PAPIER_A, .55), paperA: PAPIER_A, paperB: PAPIER_B };
+    // 31/10 (contre-audit R7) : liserés / filets visibles même avec une couleur très claire (blanc, crème…)
+    // seuil bas : l'or Luxyra et les couleurs habituelles ne changent pas ; seules les couleurs presque blanches sont foncées
+    // (sans teinte : gris neutre, pour ne pas inventer une couleur)
+    var accTrait = contraste(acc, PAPIER_A) < 1.6 ? (s < .12 ? "#8A857C" : hsl2h(h, Math.max(s, .3), .42)) : acc;
+    var line = mix(accTrait, PAPIER_A, .55); if (contraste(line, PAPIER_A) < 1.2) line = mix(accTrait, PAPIER_A, .3);
+    return { accent: accTrait, accentBrut: acc, ink: ink, inkSoft: inkSoft, deep: deep, foil: foil, tint: mix(acc, PAPIER_A, .9), line: line, paperA: PAPIER_A, paperB: PAPIER_B };
   }
 
   // ---------- QR (SVG vectoriel : net à l'impression) ----------
