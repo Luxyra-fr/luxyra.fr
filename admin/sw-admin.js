@@ -65,6 +65,16 @@ self.addEventListener('notificationclick', function(event) {
   );
 });
 
+// 31/10/2026 : le service de push a remplacé ou expiré l'abonnement -> on en recrée un tout de suite avec la même clé,
+// et on prévient l'admin ouverte (elle l'enregistre en base). Sinon, la prochaine ouverture de l'admin le répare
+// (lxPushAutoRepare dans admin.html).
 self.addEventListener('pushsubscriptionchange', function(event) {
-  console.log('[lx-admin-sw] pushsubscriptionchange — re-subscribe needed');
+  var opts = (event.oldSubscription && event.oldSubscription.options) || null;
+  if (!opts || !opts.applicationServerKey) return;
+  event.waitUntil(
+    self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: opts.applicationServerKey })
+      .then(function () { return self.clients.matchAll({ type: 'window', includeUncontrolled: true }); })
+      .then(function (list) { (list || []).forEach(function (c) { try { c.postMessage({ type: 'lx-push-renouvele' }); } catch (_) {} }); })
+      .catch(function (e) { console.log('[lx-admin-sw] ré-abonnement impossible', e); })
+  );
 });
