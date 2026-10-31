@@ -1054,29 +1054,38 @@ function render(){
 
 // ===== DASHBOARD =====
 // ===== COCKPIT HELPERS =====
-// Compte de test (exclu des chiffres) : caisse en mode test, « Salon Démo » / « Luxyra Démo », offert en cours.
-// Même règle que lx_prive.salon_est_test() côté serveur (admin_tableau_de_bord).
+// Compte de test (exclu des chiffres) : « Salon Démo » / « Luxyra Démo », caisse en mode test hors essai, offre gratuite sur caisse de test. Offert = caisse réelle + offre en cours (actif, 0 €).
+// Même règle que lx_prive.salon_categorie_admin() côté serveur (admin_tableau_de_bord, compute_current_mrr, bons cadeaux).
 function lxEstTestEssai(s){ // compte test pour un essai : nom Démo ou offre gratuite en cours (pas le mode de caisse)
   if(!s) return true;
   if(/^\s*(salon|luxyra)\s+d[eé]mo/i.test(s.nom||'')) return true;
   return !!(s.isFree && (!s.freeUntil || new Date(s.freeUntil)>new Date()));
 }
 // 2026-10-31 : règle unique selon le statut (un essai est en caisse test par nature) — même règle que admin_tableau_de_bord
-function lxEstTestStatut(s){ return (s&&s.status==='trial')?lxEstTestEssai(s):lxEstTest(s); }
-function lxEstTest(s){
-  if(!s) return true;
-  if(s.modeCaisse==='test') return true;
-  if(/^\s*(salon|luxyra)\s+d[eé]mo/i.test(s.nom||'')) return true;
-  if(s.isFree && (!s.freeUntil || new Date(s.freeUntil)>new Date())) return true;
-  return false;
+// 2026-10-31 : catégorie admin unique, miroir de lx_prive.salon_categorie_admin (serveur) :
+// ferme | test | essai | resilie | offert (caisse réelle + abonnement offert en cours : actif, 0 €, jamais test) | payant | autre
+function lxOffreEnCours(s){ return !!(s&&s.isFree && (!s.freeUntil || new Date(s.freeUntil)>new Date())); }
+function lxCategorie(s){
+  if(!s) return 'test';
+  if(s.fermeLe) return 'ferme';
+  if(/^\s*(salon|luxyra)\s+d[eé]mo/i.test(s.nom||'')) return 'test';
+  if(s.status==='trial') return lxOffreEnCours(s)?'test':'essai';
+  if(s.status==='cancelled') return 'resilie';
+  if(lxOffreEnCours(s)) return s.modeCaisse==='reel'?'offert':'test';
+  if(s.modeCaisse==='test') return 'test';
+  if(s.stripeSub && (s.status==='active'||s.status==='past_due')) return 'payant';
+  return 'autre';
 }
+function lxEstOffert(s){ return lxCategorie(s)==='offert'; }
+function lxEstTestStatut(s){ return lxCategorie(s)==='test'; }
+function lxEstTest(s){ return lxCategorie(s)==='test'; }
 // Revenu mensuel d'un établissement : uniquement un abonnement Stripe EN COURS (actif ou impayé), hors test,
 // au vrai montant : prix personnalisé (remise) > tarif Fondateur > tarif du plan. Un plan offert compte 0.
 function mrrOf(s){
   if(!s||!s.stripeSub) return 0;
   if(s.status!=='active'&&s.status!=='past_due') return 0;
   if(s.fermeLe) return 0;
-  if(lxEstTest(s)) return 0;
+  if(lxCategorie(s)!=='payant') return 0; // offerts et tests : 0 €
   if(s.customPrice!=null&&s.customPrice!=='') return Number(s.customPrice)||0;
   if(s.plan==='pro'&&s.isFounder){ var c=window._appConfig||{}; return Number(c.plan_pro_founder_eur!=null?c.plan_pro_founder_eur:14.99); }
   return gPlan(s.plan).prix||0;
@@ -1208,7 +1217,7 @@ function lxTdbLocal(){
   var nc=SALONS.filter(function(s){ return !s.fermeLe&&s.trialEnd&&!s.stripeSub&&s.status!=='active'&&s.status!=='past_due'&&!/^\s*(salon|luxyra)\s+d[eé]mo/i.test(s.nom||'')&&!(s.isFree&&(!s.freeUntil||new Date(s.freeUntil)>new Date())); var t=new Date(s.trialEnd).getTime(); return t<now&&t>now-90*864e5; })
     .map(function(s){ return {id:s.id,nom:s.nom,fin:s.trialEnd,statut:s.status,depuis_jours:Math.floor((now-new Date(s.trialEnd))/864e5)}; });
   return {local:true, mrr:{total:mrrTotal(),variation:null}, essais_non_convertis:nc, abonnes:{payants:SALONS.filter(function(s){return mrrOf(s)>0;}).length, essais:SALONS.filter(function(s){return s.status==='trial'&&!s.fermeLe&&!lxEstTestEssai(s);}).length,
-      actifs:SALONS.filter(function(s){return s.status==='active'&&!s.fermeLe&&!lxEstTest(s);}).length, tests:SALONS.filter(function(s){return s.status!=='cancelled'&&!s.fermeLe&&lxEstTestStatut(s);}).length},
+      actifs:SALONS.filter(function(s){return s.status==='active'&&['payant','offert','autre'].indexOf(lxCategorie(s))>=0;}).length, tests:SALONS.filter(function(s){return lxCategorie(s)==='test';}).length, offerts:SALONS.filter(lxEstOffert).length},
     essais_7j:e7, impayes:imp, support:{non_lus:window.ADMIN_UNREAD_CHAT||0,plus_ancien:null}, bot:null, a_reparer:null, nf525:null, nuit:null, alertes:[], compteurs:{}};
 }
 async function lxTdbCharger(force){
@@ -1276,10 +1285,10 @@ function lxTdbRendu(){
   // 2) LES 4 CARTES CLÉS
   h+='<div class="kpi-row">';
   h+=_tdbCarte({label:'Revenu mensuel',valeur:fmtM(m.total||0),couleur:'var(--gold)',icone:'💰',page:'revenus/mrr',
-    sous:saEsc(ab.payants||0)+' payant(s)'+(ab.actifs!=null&&ab.actifs!==ab.payants?' sur '+saEsc(ab.actifs)+' actif(s)':'')+' · hors offerts et tests · '+(v==null?'pas encore de relevé à 30 j':(v>=0?'+':'')+fmtM(v)+' depuis le relevé du '+fmtD(m.ref_mois))});
+    sous:saEsc(ab.payants||0)+' payant(s)'+(ab.offerts?' · '+saEsc(ab.offerts)+' offert(s)':'')+(ab.actifs!=null&&ab.actifs!==ab.payants?' sur '+saEsc(ab.actifs)+' actif(s)':'')+' · offerts et tests à 0 € · '+(v==null?'pas encore de relevé à 30 j':(v>=0?'+':'')+fmtM(v)+' depuis le relevé du '+fmtD(m.ref_mois))});
   var i7=(d.inscrits_7j!=null?d.inscrits_7j:SALONS.filter(function(s){return !/^\s*(salon|luxyra)\s+d[eé]mo/i.test(s.nom||'')&&(Date.now()-new Date(s.created).getTime())<7*864e5;}).length);
   h+=_tdbCarte({label:'Nouveaux inscrits (7 j)',valeur:saEsc(i7),couleur:i7?'var(--green)':'var(--text2)',icone:'🆕',page:'salons/liste',
-    sous:saEsc(ab.essais||0)+' essai(s) en cours'+(ab.tests?' · '+saEsc(ab.tests)+' compte(s) de test ou offert(s) ouvert(s), exclus des chiffres':'')});
+    sous:saEsc(ab.essais||0)+' essai(s) en cours'+(ab.offerts?' · '+saEsc(ab.offerts)+' offert(s)':'')+(ab.tests?' · '+saEsc(ab.tests)+' compte(s) de test, exclus des chiffres':'')});
   h+=_tdbCarte({label:'Essais : fin sous 7 j / terminés',valeur:'<span style="color:'+(e7.length?'var(--orange)':'var(--text2)')+'">'+saEsc(e7.length)+'</span> <span style="color:var(--text3)">/</span> <span style="color:'+(nc.length?'var(--red)':'var(--text2)')+'">'+saEsc(nc.length)+'</span>',icone:'⏰',page:'revenus/impayes',
     sous:'finissent bientôt / terminés sans abonnement (90 j)'});
   var bsr=bo?(bo.sans_reponse||0):0, sup=(su.non_lus||0)+bsr;
@@ -3169,8 +3178,8 @@ function _esc(s){ return saEsc(s); } // 31/10 audit : échappement unique (apost
 function rAnalytics(sub){
   var totalC=0,totalCollabs=0;SALONS.forEach(function(s){totalC+=s.clients||0;totalCollabs+=s.collabs||0;});
   // 2026-10-31 : seuls les abonnements PAYANTS (mrrOf > 0) comptent par forfait ; offerts et tests à part
-  // 31/10 (nuit) : même règle que le tableau de bord : « tests » = TOUS les comptes de test ou offerts encore ouverts (dont offerts)
-  var byPlan={essential:0,pro:0},nOff=0,nTest=0;SALONS.forEach(function(s){ if(s.fermeLe) return; if(mrrOf(s)>0) byPlan[s.plan]=(byPlan[s.plan]||0)+1; if(s.status!=='cancelled'&&lxEstTestStatut(s)){ nTest++; if(s.isFree&&(!s.freeUntil||new Date(s.freeUntil)>new Date())) nOff++; } });
+  // 31/10 : même règle que le tableau de bord : offerts (caisse réelle) et comptes de test comptés à part
+  var byPlan={essential:0,pro:0},nOff=0,nTest=0;SALONS.forEach(function(s){ if(s.fermeLe) return; if(mrrOf(s)>0) byPlan[s.plan]=(byPlan[s.plan]||0)+1; var _c=lxCategorie(s); if(_c==='test') nTest++; else if(_c==='offert') nOff++; });
   var byMetier={};SALONS.forEach(function(s){if(s.fermeLe)return;byMetier[s.metier]=(byMetier[s.metier]||0)+1;});
   var h='<div class="topbar"><h1>'+({cohorts:'Cohortes',funnel:'Entonnoir'}[sub]||'Chiffres clés')+' <span>'+({cohorts:'Rétention des établissements',funnel:'De l’inscription à l’abonnement'}[sub]||'Vue d’ensemble')+'</span></h1></div>';
   if(sub==='cohorts'){return rAnalyticsCohorts(h);}
@@ -3179,7 +3188,7 @@ function rAnalytics(sub){
   h+='<div class="kpi"><div class="kpi-label">Total clients</div><div class="kpi-value" style="color:var(--blue)">'+totalC+'</div><div class="kpi-sub">Tous établissements confondus</div></div>';
   h+='<div class="kpi"><div class="kpi-label">Total collaborateurs</div><div class="kpi-value" style="color:var(--gold)">'+totalCollabs+'</div></div>';
   h+='<div class="kpi"><div class="kpi-label">Essentiel payants</div><div class="kpi-value" style="color:var(--green)">'+(byPlan.essential||0)+'</div><div class="kpi-sub">abonnement Stripe en cours</div></div>';
-  h+='<div class="kpi"><div class="kpi-label">Pro payants</div><div class="kpi-value" style="color:var(--purple)">'+(byPlan.pro||0)+'</div><div class="kpi-sub">hors comptes de test ou offerts ouverts : '+nTest+(nOff?' (dont '+nOff+' offert'+(nOff>1?'s':'')+')':'')+'</div></div>';
+  h+='<div class="kpi"><div class="kpi-label">Pro payants</div><div class="kpi-value" style="color:var(--purple)">'+(byPlan.pro||0)+'</div><div class="kpi-sub">offerts : '+nOff+' · comptes de test : '+nTest+'</div></div>';
   h+='</div>';
   h+='<div class="card"><h3>📊 Répartition par métier</h3>';
   Object.keys(byMetier).forEach(function(k){
@@ -3483,7 +3492,7 @@ function asFiltrer(){
     if(F.statut==="pending"){ if(s.verif==="verified") return false; }
     else if(F.statut==="risk"){ if(!_salonRisk(s).risk) return false; }
     else if(F.statut!=="all" && F.statut!=="ferme" && s.status!==F.statut) return false;
-    if(F.forfait==="offert"){ if(!s.isFree) return false; } else if(F.forfait!=="all" && (s.plan!==F.forfait || s.isFree)) return false;
+    if(F.forfait==="offert"){ if(!lxEstOffert(s)) return false; } else if(F.forfait==="test"){ if(!lxEstTest(s)) return false; } else if(F.forfait!=="all" && (s.plan!==F.forfait || s.isFree)) return false;
     var su=asSuivi(s.id);
     if(F.etape!=="all" && su.etape!==F.etape) return false;
     if(F.etiquette && (su.etiquettes||[]).indexOf(F.etiquette)<0) return false;
@@ -3522,7 +3531,7 @@ function rSalons(){
   h+='<details class="lx-filtres"'+((window.innerWidth>=900||window._asFiltresOuverts)?' open':'')+' ontoggle="window._asFiltresOuverts=this.open"><summary>⚙️ Filtres et tri'+(_nbF?' <span class="badge badge-gold" style="margin-left:6px">'+_nbF+' actif(s)</span>':'')+'</summary>';
   h+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin:10px 0">';
   h+=asSelect("statut",[["all","Tous statuts"],["active","Actifs"],["trial","Essai"],["past_due","Impayés"],["suspended","Suspendus"],["cancelled","Résiliés"],["ferme","🔒 Fermés"],["pending","⏳ Non vérifiés"],["risk","⚠️ Inactifs ≥ 7 j"]]);
-  h+=asSelect("forfait",[["all","Tous forfaits"],["essential","Essentiel"],["pro","Pro"],["offert","🎁 Offerts"]]);
+  h+=asSelect("forfait",[["all","Tous forfaits"],["essential","Essentiel"],["pro","Pro"],["offert","🎁 Offerts"],["test","🧪 Comptes de test"]]);
   h+=asSelect("etape",[["all","Toutes étapes"]].concat(Object.keys(ETAPES).map(function(k){return [k,ETAPES[k]];})));
   h+=asSelect("etiquette",[["","Toutes étiquettes"]].concat(asToutesEtiquettes().map(function(e){return [e,"🏷 "+e];})));
   h+=asSelect("metier",[["all","Tous métiers"],["coiffure","Coiffure"],["barbier","Barbier"],["esthetique","Esthétique"],["ongles","Ongles"],["regard","Cils & sourcils"],["maquillage","Maquillage"],["tatouage","Tatouage & piercing"],["spa","Spa & massages"],["bien_etre","Bien-être"]]);
@@ -3542,7 +3551,7 @@ function asLignes(L){
     var su=asSuivi(s.id), j=asJoursEssai(s);
     h+='<tr><td><input type="checkbox" '+(window._ASEL[s.id]?'checked':'')+' onchange="asSel(\''+s.id+'\',this.checked)"></td>';
     h+='<td style="cursor:pointer" onclick="openD(\''+s.id+'\')"><div class="td-salon"><div class="td-avatar" style="background:'+s.color+'">'+saAvatar(s)+'</div><div><div class="td-name">'+saEsc(s.nom)+(s.siretAlerte?' <span title="'+saEsc(s.siretAlerte)+'" style="color:var(--orange);font-size:12px">⚠️ SIRET</span>':'')+'</div><div class="td-city">'+(mI[s.metier]||"✂️")+' '+saEsc(s.ville)+' · '+saModeCourt(s)+((su.etiquettes||[]).length?' · '+su.etiquettes.map(function(e){return '<span class="badge" style="font-size:9px">'+saEsc(e)+'</span>';}).join(" "):'')+'</div></div></div></td>';
-    h+='<td>'+planB(s.plan)+(s.isFree?' <span class="badge badge-green" style="font-size:9px">🎁</span>':'')+'</td>';
+    h+='<td>'+planB(s.plan)+(lxEstOffert(s)?' <span class="badge badge-gold" style="font-size:9px">🎁 Offert</span>':(lxEstTest(s)?' <span class="badge" style="font-size:9px;background:var(--bg3);color:var(--text3)">🧪 Test</span>':''))+'</td>';
     h+='<td>'+statusB(s.fermeLe?"ferme":s.status)+(j!==null?'<div style="font-size:10px;color:'+(j<=3?'var(--red)':'var(--text3)')+'">'+(j>0?j+' j restants':'essai fini')+'</div>':'')+'</td>';
     h+='<td style="font-size:11px">'+(ETAPES[su.etape]||su.etape)+'</td><td>'+asScoreBadge(s.id)+'</td><td>'+((_salonHealthOf(s.id)||{}).clients!=null?_salonHealthOf(s.id).clients:s.clients)+'</td><td style="font-size:12px">'+(function(){var d=asDemarrageScore(s.id);return d==null?'…':'<span style="color:'+(d>=6?'var(--green)':d>=3?'var(--orange)':'var(--red)')+'">'+d+'/7</span>';})()+'</td><td style="font-size:12px;color:var(--text3)">'+fmtD(s.created)+'</td>'+_salonActivityCell(s);
     h+='<td style="font-size:11px">'+(su.rappel_le?'<span style="color:'+(su.rappel_le<=new Date().toISOString().slice(0,10)?'var(--red)':'var(--text2)')+'">📞 '+fmtD(su.rappel_le)+'</span>':'—')+'</td>';
