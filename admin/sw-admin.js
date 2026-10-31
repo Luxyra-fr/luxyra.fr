@@ -49,13 +49,16 @@ self.addEventListener('notificationclick', function(event) {
   event.notification.close();
   var targetUrl = (event.notification.data && event.notification.data.url) || '/admin';
   try { targetUrl = new URL(targetUrl, self.location.origin).href; } catch (_) {}
+  // 31/10/2026 : une URL d'admin absolue sur luxyra.fr est ramenée sur l'origine de ce service worker (admin.luxyra.fr),
+  // sinon l'appli Luxyra Pro (TWA, propriétaire de luxyra.fr) l'intercepterait.
+  try { var _t = new URL(targetUrl); if (_t.origin !== self.location.origin && /(^|\.)luxyra\.fr$/.test(_t.hostname) && /^\/admin/.test(_t.pathname)) targetUrl = self.location.origin + (self.location.hostname === 'admin.luxyra.fr' ? '/' : _t.pathname) + _t.search + _t.hash; } catch (_) {}
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(clientList) {
       for (var i = 0; i < clientList.length; i++) {
         var c = clientList[i];
         var u = '';
         try { u = new URL(c.url).pathname; } catch (_) {}
-        if ((u === '/admin' || u === '/admin.html' || u.indexOf('/admin/') === 0) && 'focus' in c) {
+        if ((u === '/admin' || u === '/admin.html' || u.indexOf('/admin/') === 0 || (u === '/' && self.location.hostname === 'admin.luxyra.fr')) && 'focus' in c) {
           c.postMessage({ type: 'lx-notif-click', url: targetUrl, payload: event.notification.data });
           return c.focus();
         }
