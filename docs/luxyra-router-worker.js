@@ -3328,6 +3328,8 @@ async function handlePixelOuverture(request, env, url) {
 // - Vérification automatique de l'intégrité de la chaîne
 // - Métadonnées salon (nom, SIRET, période)
 // Format : JSON pur exploitable Excel/comptable
+// Version du logiciel en service (aligner sur LX_VERSION d'app.html à chaque version)
+const LX_VERSION_LOGICIEL = "6.8.7";
 async function handleExportNF525(request, env) {
   try {
     const { salon_id, date_from, date_to, jwt } = await request.json();
@@ -3347,31 +3349,54 @@ async function handleExportNF525(request, env) {
     if (!Array.isArray(salonRows) || !salonRows[0]) return jsonResponse({ error: "Salon introuvable" }, 404);
     const salon = salonRows[0];
 
+    // 2026-10-31 : export COMPLET, sans plafond. Lecture par pages de 1000 lignes (limite de l'API) jusqu'à la dernière ;
+    // une page en erreur = export refusé (jamais de fichier incomplet présenté comme complet).
+    const lxToutLire = async (baseUrl) => {
+      const out = []; const PAGE = 1000;
+      for (let debut = 0; ; debut += PAGE) {
+        const r = await fetch(`${baseUrl}&limit=${PAGE}&offset=${debut}`, { headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` } });
+        if (!r.ok) throw new Error("lecture incomplète (" + r.status + ")");
+        const rows = await r.json();
+        if (!Array.isArray(rows)) throw new Error("réponse inattendue");
+        out.push(...rows);
+        if (rows.length < PAGE) break;
+        if (debut > 5000000) throw new Error("volume anormal");
+      }
+      return out;
+    };
+
     // 2. Tickets (filtre période si fournie)
-    let tkUrl = `${sbUrl}/rest/v1/tickets?salon_id=eq.${encodeURIComponent(salon_id)}&order=num.asc&limit=10000`;
+    let tkUrl = `${sbUrl}/rest/v1/tickets?salon_id=eq.${encodeURIComponent(salon_id)}&order=num.asc,id.asc`;
     if (date_from) tkUrl += `&date_ticket=gte.${date_from}`;
     if (date_to) tkUrl += `&date_ticket=lte.${date_to}`;
-    const tkRes = await fetch(tkUrl, { headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` } });
-    const tickets = await tkRes.json();
+    const tickets = await lxToutLire(tkUrl);
 
     // 3. Clôtures
-    let clUrl = `${sbUrl}/rest/v1/clotures?salon_id=eq.${encodeURIComponent(salon_id)}&order=num.asc&limit=10000`;
+    let clUrl = `${sbUrl}/rest/v1/clotures?salon_id=eq.${encodeURIComponent(salon_id)}&order=num.asc,id.asc`;
     if (date_from) clUrl += `&date_cloture=gte.${date_from}`;
     if (date_to) clUrl += `&date_cloture=lte.${date_to}`;
-    const clRes = await fetch(clUrl, { headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` } });
-    const clotures = await clRes.json();
+    const clotures = await lxToutLire(clUrl);
 
     // 4. Vérification intégrité chaîne
     let chainBreaks = 0;
     let lastHash = "";
+    let numGaps = 0, prevNum = null;
     for (const tk of (tickets || [])) {
       if (tk.hash_prev && tk.hash_prev !== lastHash && lastHash !== "") chainBreaks++;
       lastHash = tk.hash || "";
+      if (prevNum !== null && Number(tk.num) !== prevNum + 1) numGaps++;
+      prevNum = Number(tk.num);
     }
+    const nbTest = tickets.filter(t => t.mode_caisse === "test").length;
+    // Version du logiciel : la plus récente inscrite dans les tickets exportés (raw_data.lxVersion), sinon la version en service.
+    const lxVer = (v) => String(v || "").split(".").map(n => parseInt(n, 10) || 0);
+    const lxVerSup = (a, b) => { const x = lxVer(a), y = lxVer(b); for (let i = 0; i < 3; i++) { if ((x[i]||0) !== (y[i]||0)) return (x[i]||0) > (y[i]||0); } return false; };
+    let versionLogiciel = LX_VERSION_LOGICIEL;
+    for (const t of tickets) { const v = t.raw_data && t.raw_data.lxVersion; if (v && /^\d+\.\d+\.\d+$/.test(v) && lxVerSup(v, versionLogiciel)) versionLogiciel = v; }
 
     const exportData = {
       norme: "NF525",
-      version_logiciel: "Luxyra 1.0",
+      version_logiciel: "Luxyra " + versionLogiciel,
       export_timestamp: new Date().toISOString(),
       salon: {
         id: salon.id,
@@ -3389,7 +3414,13 @@ async function handleExportNF525(request, env) {
         clotures_total: clotures.length,
         clotures_sha256: clotures.filter(c => c.hash_algo === "SHA-256").length,
         chaine_integre: chainBreaks === 0,
-        chain_breaks: chainBreaks
+        chain_breaks: chainBreaks,
+        numerotation_continue: numGaps === 0,
+        numerotation_sauts: numGaps,
+        export_complet: true,
+        tickets_caisse_reelle: tickets.length - nbTest,
+        tickets_mode_test: nbTest,
+        note_mode_test: nbTest ? "Les tickets mode_caisse = \"test\" datent de la période d'essai : sans valeur fiscale. Ils restent dans l'export car ils font partie de la même chaîne d'empreintes." : undefined
       },
       tickets: tickets,
       clotures: clotures
@@ -3406,7 +3437,7 @@ async function handleExportNF525(request, env) {
     });
   } catch (e) {
     console.error("export-nf525 error:", e);
-    return jsonResponse({ error: "Export error: " + e.message }, 500);
+    return jsonResponse({ error: "Export impossible : la lecture des tickets n'a pas pu aller jusqu'au bout. Réessayez dans un instant." }, 500);
   }
 }
 

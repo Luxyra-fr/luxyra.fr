@@ -927,3 +927,10 @@ Aucune table, fonction ni déclencheur fiscal modifié ; lecture seule de `carte
 - Nature : journal d'administration et compteurs du tableau de bord uniquement. Aucune table ni fonction de caisse, clôture, signature, facture ou bon cadeau modifiée.
 - `purge_salon_6ans` (fonction qui appelle la suppression à 6 ans, liée à la conservation) : SEULE la ligne d'INSERT dans admin_log change (identifiant au lieu du nom et du SIRET). Conditions de conservation 6 ans, préavis et appel à `admin_delete_salon_cascade` inchangés.
 - Fichier : docs/migrations_1031_audit_final/f7_journal_rgpd_regle_test.sql (rejouable).
+
+### 31/10/2026 — Export NF525 (worker /api/admin/export-nf525) : export complet sans plafond (validé par Alexandre)
+- Nature : LECTURE seule. Aucun ticket, clôture, empreinte, signature ni JET modifié ; formats inchangés.
+- Avant : lecture plafonnée (limit=10000, et 1000 lignes max par requête côté API) : un gros historique pouvait être exporté incomplet sans avertissement.
+- Après : lecture par pages de 1000 jusqu'à la dernière ligne ; une page en erreur = export refusé (jamais de fichier partiel).
+- Ajouts dans `verification` : continuité de la numérotation, `export_complet`, nombre de tickets caisse réelle / mode test (les tickets de la période d'essai restent dans le fichier car ils font partie de la même chaîne, signalés « sans valeur fiscale »).
+- `version_logiciel` : « Luxyra 1.0 » codé en dur remplacé par la version réelle (la plus récente inscrite dans les tickets, sinon 6.8.7).
