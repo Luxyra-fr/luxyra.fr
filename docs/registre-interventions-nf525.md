@@ -852,3 +852,10 @@ secours, deux appareils), aucune application du SQL, aucune publication.
 - Aucune table, fonction ni déclencheur fiscal touché. Nouvelles tables `clients_signup_codes`, `clients_signup_ip` + 3 fonctions (service_role) : docs/migrations_1031_code/code_inscription.sql (appliqué).
 - lx-signup v14 (verify_jwt false) : code à 6 chiffres envoyé avant la création du compte ; compte créé confirmé. Invitation du worker inchangée. lx-client.js v=20261031-2 (fenêtre de saisie).
 - Bancs : /tmp/em/code_test.mjs 24/24 (limites, brute force, expiration, autre adresse, course, réponse neutre, rattachement des fiches, invitation), UI téléphone 8/8.
+
+### 2026-10-31 (après-midi) — Code d'inscription v2, contre-audit (hors périmètre fiscal)
+- Aucune table, fonction ni déclencheur fiscal touché. SQL docs/migrations_1031_code/code_inscription_v2.sql (appliqué, md5 vérifié) : plafond global d'envois de codes/h (app_config.signup_codes_max_heure, défaut 200, alerte `signup_code_plafond`), échecs glissants 24 h par adresse (15 -> blocage 24 h), code précédent gardé valable, ménage pg_cron `lx_signup_code_menage` (toutes les heures), fonction `lx_est_role_service()` (service_role seul).
+- lx-signup v16 (verify_jwt false) : IPv6 comptée par /64, échec d'envoi Brevo -> 502, clé interne = clé service de l'environnement OU jeton service confirmé par la base (la clé du worker diffère de celle injectée dans les edges : vérifié, verif_interne -> 200 avec la clé du worker, 403 sinon), plus d'e-mail de confirmation inutile à l'invitation.
+- Worker : **Brevo refusait tout e-mail dont le nom du destinataire est vide** (« name is missing in to ») -> nom omis s'il est vide. Effet : les e-mails sans prénom (code d'inscription depuis ~11 h, confirmation d'adresse et mot de passe oublié depuis le 30/10 ~23 h) n'étaient pas envoyés ; corrigé, envoi réel vérifié vers luxyra.dev@gmail.com.
+- lx-client.js v=20261031-3 (fenêtre ouverte aussi sur 429 + code_requis ; texte « Le code sera envoyé à »), politique de confidentialité, fiche bot.
+- Bancs : code_test_v2 38/38, code_ui_v2 12/12.

@@ -2,7 +2,7 @@
 insert into public.support_bot_kb (cle, titre, ordre, contenu, actif, maj_le)
 values ('code_inscription_1031', 'Client : code à 6 chiffres à l''inscription', 1312,
 'Depuis le 31/10/2026, quand un client crée son compte Luxyra (page de réservation de l''établissement, luxyra.fr/compte ou application Luxyra), il reçoit un code à 6 chiffres par e-mail (« Votre code de confirmation Luxyra », valable 15 minutes). Il le saisit dans la fenêtre « Vérifiez votre e-mail » puis touche « Valider et créer mon compte » : le compte est créé avec son adresse déjà confirmée. Une adresse mal tapée ne reçoit pas le code : aucun compte n''est créé avec une adresse fausse.
-- Il ne reçoit pas le code : regarder les courriers indésirables (spams), puis « Renvoyer le code » (possible après 60 secondes, 3 fois par heure).
+- Il ne reçoit pas le code : regarder les courriers indésirables (spams), puis « Renvoyer le code » (possible après 60 secondes, 3 fois par heure). Un code déjà reçu reste valable ses 15 minutes même si un autre est demandé : le client peut saisir l''un ou l''autre. Après 15 codes faux en 24 h, l''adresse est bloquée 24 h (message « Réessayez demain »).
 - Adresse mal tapée : « Modifier l''adresse » ferme la fenêtre pour la corriger.
 - 5 codes faux de suite : demander un nouveau code.
 - L''adresse a déjà un compte Luxyra : le client reçoit à la place un e-mail « Vous avez déjà un compte » ; il se connecte avec son mot de passe ou « Mot de passe oublié ».
