@@ -75,6 +75,17 @@ a{color:var(--gold);text-decoration:none}
 .topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;flex-wrap:wrap;gap:12px}
 .topbar h1{font-size:22px;font-weight:800}
 .topbar h1 span{font-size:13px;font-weight:500;color:var(--text3);margin-left:8px}
+/* 2026-10-31 (I8) : .btn était utilisé sans être défini */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:40px;padding:8px 16px;border-radius:10px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px;font-weight:600;cursor:pointer;font-family:var(--f1);transition:all .15s;text-decoration:none}
+.btn:hover{border-color:var(--gold);color:var(--gold)}
+.btn.gold,.btn.primary{background:var(--gold);color:#0a0a0a;border-color:var(--gold)}
+.btn.gold:hover,.btn.primary:hover{filter:brightness(1.08);color:#0a0a0a}
+.btn.ghost{background:transparent}
+.btn.danger{border-color:#ef5350;color:#ef5350;background:transparent}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+#lxToasts{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:100000;display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none;width:min(92vw,420px)}
+.lx-toast{background:#1b1b1f;color:#f0e6c8;border:1px solid rgba(212,168,67,.45);border-radius:10px;padding:10px 16px;font-size:13px;box-shadow:0 6px 24px rgba(0,0,0,.45);transition:opacity .3s;pointer-events:auto;text-align:center}
+.lx-toast.ok{border-color:#66bb6a}.lx-toast.err{border-color:#ef5350;color:#ffcdd2}
 .tb-btn{padding:8px 16px;border-radius:10px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px;font-weight:600;cursor:pointer;font-family:var(--f1);transition:all .15s}
 .tb-btn:hover{border-color:var(--gold);color:var(--gold)}
 .tb-btn.primary{background:var(--gold);color:#0a0a0a;border-color:var(--gold)}
@@ -537,10 +548,11 @@ async function lxAttListeCharger(){
 }
 async function lxAttRelanceBasculer(on){
   if(!confirm(on?"Activer l’email de rappel ? Chaque établissement ABONNÉ (pas en essai) qui a déjà encaissé et n’a pas signé recevra UN seul email, demain matin.":"Couper l’email de rappel ?")) return;
-  var cur=await _sb.from("app_config").select("config").eq("id",1).maybeSingle();
-  if(cur.error||!cur.data||!cur.data.config){ alert("❌ Lecture de la configuration impossible : rien n'a été modifié."); return; }
-  var merged=Object.assign({},cur.data.config,{relance_attestation_active:on});
-  var r=await _sb.from("app_config").update({config:merged,updated_at:new Date().toISOString(),updated_by:"admin (attestation)"}).eq("id",1);
+  // 2026-10-31 (I7) : écriture atomique côté serveur, seules ces clés changent
+  var _patch={relance_attestation_active:on};
+  var r=await _sb.rpc("admin_config_maj",{p_cles:_patch,p_auteur:"admin (attestation)"});
+  var merged=Object.assign({},window._appConfig||{},_patch);
+  var cur={data:{config:Object.assign({},(r.data&&r.data.avant)||{})}};
   if(r.error){ alert("❌ "+r.error.message); return; } window._appConfig=merged;
   try{ await lxJournal(on?"RELANCE_ATTESTATION_ON":"RELANCE_ATTESTATION_OFF",{cible:"app_config:relance_attestation_active",avant:{relance_attestation_active:!on},apres:{relance_attestation_active:on}}); }catch(e){}
   lxAttListeCharger();
@@ -1037,7 +1049,7 @@ async function loadShortcuts(){
     if(r.data&&r.data.length){window.ADMIN_SHORTCUTS=r.data;return;}
     // Seed initial
     var seed=[
-      {label:'Nouveau salon',icon:'➕',action_url:'#new-salon',position:0},
+      {label:'Lien d’inscription',icon:'✉️',action_url:'#new-salon',position:0},
       {label:'Demandes en attente',icon:'📋',action_url:'?tab=salons&sub=inscriptions&filter=pending',position:1},
       {label:'Essais expirant <7j',icon:'⏰',action_url:'?tab=salons&sub=liste&filter=trial-expiring',position:2},
       {label:'Support non lu',icon:'💬',action_url:'?tab=communication&sub=chat&filter=unread',position:3},
@@ -1062,7 +1074,8 @@ function shortcutClick(url){
   q.split('&').forEach(function(kv){var a=kv.split('=');p[a[0]]=decodeURIComponent(a[1]||'');});
   // 2026-10-09 : les filtres des raccourcis sont appliqués
   if(p.filter==='trial-expiring'){ window._AF=Object.assign(window._AF||{}, {statut:'trial',essai:'3'}); }
-  if(p.filter==='pending'){ window._AF=Object.assign(window._AF||{}, {statut:'pending'}); }
+  // 2026-10-31 (I11) : « Demandes en attente » ouvre les demandes d'essai à traiter (avant : la liste filtrée sur un statut inexistant)
+  if(p.filter==='pending'){ nav('salons','demandes'); return; }
   if(p.filter==='unpaid'){ window._AF=Object.assign(window._AF||{}, {statut:'past_due'}); }
   // 2026-10-15 : « non lus » filtre vraiment la boîte de réception (avant : variable _chatFiltre lue par personne)
   if(p.filter==='unread'){ window._chatNonLus=true; }
@@ -1952,10 +1965,11 @@ async function emCharger(){
 }
 async function emBasculer(on){
   if(!confirm(on?"Activer les relances automatiques ? Les salons en essai concernés recevront le prochain email demain matin.":"Désactiver les relances automatiques ?")) return;
-  var cur=await _sb.from("app_config").select("config").eq("id",1).maybeSingle();
-  if(cur.error||!cur.data||!cur.data.config){ alert("❌ Lecture de la configuration impossible : rien n'a été modifié. Réessaie."); return; }
-  var merged=Object.assign({},cur.data.config,{relances_essai_actives:on});
-  var r=await _sb.from("app_config").update({config:merged,updated_at:new Date().toISOString(),updated_by:"admin (relances)"}).eq("id",1);
+  // 2026-10-31 (I7) : écriture atomique côté serveur, seules ces clés changent
+  var _patch={relances_essai_actives:on};
+  var r=await _sb.rpc("admin_config_maj",{p_cles:_patch,p_auteur:"admin (relances)"});
+  var merged=Object.assign({},window._appConfig||{},_patch);
+  var cur={data:{config:Object.assign({},(r.data&&r.data.avant)||{})}};
   if(r.error){ alert("❌ "+r.error.message); return; } window._appConfig=merged;
   try{ await lxJournal(on?"RELANCES_ESSAI_ON":"RELANCES_ESSAI_OFF",{cible:"app_config:relances_essai_actives",avant:{relances_essai_actives:!on},apres:{relances_essai_actives:on}}); }catch(e){}
   emCharger();
@@ -2107,19 +2121,9 @@ window._lxCdTick=function(){ try{ if(_online && _sb){ _sb.from('claude_demandes'
 setInterval(window._lxCdTick, 30000);
 document.addEventListener('visibilitychange', function(){ if(!document.hidden) window._lxCdTick(); });
 function rMonitoring(){
-  var notifPerm = (typeof Notification !== 'undefined') ? Notification.permission : 'unsupported';
-  var hasNotif = (typeof Notification !== 'undefined');
-  var btnLabel = '🔔 Notifications locales (admin ouverte)';
-  var btnColor = 'var(--gold)';
-  if(!hasNotif) { btnLabel = '⚠️ Notifications non compatibles'; btnColor = 'var(--text3)'; }
-  else if(notifPerm === 'granted') { btnLabel = '✅ Notifications locales autorisées'; btnColor = '#66bb6a'; }
-  else if(notifPerm === 'denied') { btnLabel = '🚫 Notifications bloquées (Paramètres)'; btnColor = '#ef5350'; }
-  var hasSW = (typeof navigator !== 'undefined') && ('serviceWorker' in navigator);
-
-  var h='<div class="topbar"><h1>Monitoring <span>JS Errors</span> '
-    + '<button onclick="rMonitoringRefresh()" style="margin-left:12px;padding:6px 14px;border-radius:8px;border:1px solid var(--gold);background:var(--gold-bg);color:var(--gold);font-weight:700;cursor:pointer;font-size:12px">⟳ Rafraîchir</button>'
-    + '<button onclick="lxRequestMonitoringNotif()" style="margin-left:8px;padding:6px 14px;border-radius:8px;border:1px solid '+btnColor+';background:transparent;color:'+btnColor+';font-weight:700;cursor:pointer;font-size:12px" id="lxNotifBtn"'+(!hasSW||notifPerm==='denied'?' disabled':'')+'>'+btnLabel+'</button>'
-    + '</h1></div>';
+  // 2026-10-31 (I6) : plus de notifications « locales » ici (doublon du push). Les alertes arrivent par les
+  // notifications PUSH (Croissance & réglages › Réglages & notifications).
+  var h='<div class="topbar"><h1>Monitoring <span>Erreurs et santé technique</span></h1><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="tb-btn" onclick="rMonitoringRefresh()">⟳ Rafraîchir</button><button class="tb-btn" onclick="nav(\'croissance\',\'reglages\')">🔔 Notifications push</button></div></div>';
   h+='<style>#monitoringContent table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%}#monitoringContent td,#monitoringContent th{word-break:break-word}#monitoringContent pre,#monitoringContent code{white-space:pre-wrap;word-break:break-all}@media(max-width:700px){#monitoringContent{padding:8px!important}#monitoringContent>div{padding-left:10px!important;padding-right:10px!important}.topbar h1{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:18px}.topbar h1 button{margin-left:0!important}#monitoringContent [style*="grid-template-columns"]{grid-template-columns:1fr 1fr!important}}</style>';
   // 2026-10-15 : « À réparer » et NF525 ont chacun UNE page (Qualité & conformité) ; l'état des intégrations est
   // dans Croissance & réglages › Système (plus de doublons ici).
@@ -2140,7 +2144,7 @@ function rMonitoring(){
       }
     } catch(_) {}
   }, 800);
-  // Auto-refresh toutes les 15 secondes (réduit de 30s pour notifs plus rapides)
+  // 2026-10-31 (I10) : rafraîchi toutes les 60 s, seulement si l'onglet est visible et la page ouverte
   if(window._monitoringRefreshTimer) clearInterval(window._monitoringRefreshTimer);
   window._monitoringRefreshTimer = setInterval(function(){
     if(window._currentSub !== 'monitoring'){
@@ -2148,65 +2152,15 @@ function rMonitoring(){
       window._monitoringRefreshTimer = null;
       return;
     }
+    if(document.visibilityState !== 'visible') return;
     rMonitoringRefresh();
-  }, 15000);
-  // Démarre le watcher de nouvelles erreurs (qui tourne MÊME quand on n'est pas
-  // sur la page monitoring, tant que l'admin est ouvert dans l'onglet)
-  lxStartErrorWatcher();
+  }, 60000);
   return h;
 }
 
-// ====================================================================
-// Notifications : CE QUI MARCHE VRAIMENT (vérifié le 15/10/2026)
-// ====================================================================
-// 1. Notifications PUSH (principal, admin fermée comprise) : appareils enregistrés dans push_subscriptions
-//    (target_type='admin', service /admin/sw-admin.js), envoyées par l'edge function send-push, appelée par
-//    public.notify_admins() (base et worker : litiges, SMS, parrainage, RGPD…) et par le chat. 2 appareils
-//    enregistrés au 15/10 (Android + Windows). Gestion : Croissance & réglages › Réglages & notifications.
-// 2. Notifications LOCALES (secours, admin ouverte) : le watcher ci-dessous interroge les erreurs toutes les
-//    15 s et les affiche via le service /admin-sw.js. Cette fonction demande seulement la permission.
-// (L'ancienne mention « Web Push abandonné » datait de mai 2026 et n'est plus vraie.)
-window.lxRequestMonitoringNotif = async function(){
-  if(typeof Notification === 'undefined'){
-    alert('❌ Votre navigateur ne supporte pas les notifications.');
-    return;
-  }
-  if(Notification.permission === 'denied'){
-    alert('❌ Notifications BLOQUÉES par votre navigateur.\n\nCadenas à gauche de l\'URL → Notifications → Autoriser, puis recharger.');
-    return;
-  }
-  try {
-    if(Notification.permission !== 'granted'){
-      var perm = await Notification.requestPermission();
-      if(perm !== 'granted'){ alert('❌ Permission refusée.'); return; }
-    }
-    // S'assure que le SW est prêt pour pouvoir utiliser reg.showNotification
-    // (background-friendly). Fallback Notification() si SW indisponible.
-    var sent = false;
-    try {
-      if(navigator.serviceWorker){
-        var reg = await navigator.serviceWorker.ready;
-        await reg.showNotification('✅ Notifications activées', {
-          body: 'Vous recevrez les alertes erreur Luxyra tant que l\'admin est ouvert.',
-          icon: '/icon-192.png',
-          badge: '/icon-192.png',
-          tag: 'lx-confirm-'+Date.now(),
-          data: { url: '/admin?tab=monitoring' }
-        });
-        sent = true;
-      }
-    } catch(_){}
-    if(!sent){
-      try { new Notification('✅ Notifications activées', { body: 'Test OK.' }); } catch(_){}
-    }
-    var btn = document.getElementById('lxNotifBtn');
-    if(btn){ btn.textContent = '✅ Notifications activées'; btn.style.color = '#66bb6a'; btn.style.borderColor = '#66bb6a'; }
-  } catch(e) {
-    console.error('[lxNotif] error', e);
-    alert('❌ Erreur : '+(e.message || e));
-  }
-};
-
+// Notifications de l'admin (2026-10-31, I6) : UNIQUEMENT les notifications PUSH (appareils de push_subscriptions,
+// service /admin/sw-admin.js, envoyées par send-push / notify_admins). Les anciennes notifications « locales »
+// (sondage des erreurs toutes les 15 s + /admin-sw.js) sont retirées : doublon, et elles ne marchaient qu'admin ouverte.
 // Si l'utilisateur vient du SW (clic sur notif), on navigue vers monitoring
 if (typeof navigator !== 'undefined' && navigator.serviceWorker) {
   navigator.serviceWorker.addEventListener('message', function(event){
@@ -2218,126 +2172,15 @@ if (typeof navigator !== 'undefined' && navigator.serviceWorker) {
       nav('qualite', 'monitoring'); // 2026-10-15 : go() n'existait plus
     }
   });
-  // Enregistrement silencieux du Service Worker dès l'ouverture de l'admin —
-  // nécessaire pour que `lxStartErrorWatcher` puisse appeler `reg.showNotification()`
-  // (notifs visibles même onglet en arrière-plan / PWA en veille). Aucun Push externe
-  // n'est utilisé : c'est juste le canal d'affichage local.
   try {
-    // 2026-10-12 : portée limitée à /admin. Avant, la portée « / » était la même que celle
-    // du service worker de la caisse (sw.js) : sur un téléphone qui ouvre l'admin ET l'appli,
-    // les deux se remplaçaient à tour de rôle. On retire aussi l'ancien enregistrement
-    // admin-sw.js sur « / » s'il existe encore (jamais celui de la caisse).
-    // 2026-10-12 : forcer la mise à jour du service des notifications (/admin/sw-admin.js)
     navigator.serviceWorker.getRegistration('/admin/').then(function(r){ if(r) r.update(); }).catch(function(){});
-    navigator.serviceWorker.register('/admin-sw.js', { scope: '/admin' })
-      .catch(function(e){ console.warn('[admin-sw auto-register]', e); });
-    navigator.serviceWorker.getRegistration('/').then(function(r){
-      try{
-        var w = r && (r.active || r.waiting || r.installing);
-        if (r && r.scope === location.origin + '/' && w && /\/admin-sw\.js$/.test(w.scriptURL)) { r.unregister(); }
-      }catch(_){}
+    // Nettoyage : retire l'ancien service des notifications locales (/admin-sw.js), jamais celui de la caisse ni du push
+    if(navigator.serviceWorker.getRegistrations) navigator.serviceWorker.getRegistrations().then(function(L){
+      (L||[]).forEach(function(r){ try{ var w=r.active||r.waiting||r.installing; if(w && /\/admin-sw\.js$/.test(w.scriptURL)) r.unregister(); }catch(_){} });
     }).catch(function(){});
   } catch(_) {}
 }
 
-// Watcher : poll toutes les 15s sur les NOUVELLES erreurs depuis la dernière vérif
-// Tourne en arrière-plan tant que l'admin est ouvert dans un onglet.
-window.lxStartErrorWatcher = function(){
-  if(window._lxErrorWatcherTimer) return; // déjà lancé
-  // Init : ne pas alerter sur les erreurs déjà présentes au boot
-  window._lxLastErrorCheckTs = new Date().toISOString();
-  window._lxLastServerErrTs = window._lxLastErrorCheckTs;
-  window._lxNotifiedIds = new Set();
-
-  function notify(title, body, severity){
-    if(typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
-    var opts = {
-      body: body,
-      icon: '/icon-192.png',
-      badge: '/icon-192.png',
-      tag: severity === 'critical' ? 'lx-critical-'+Date.now() : 'lx-error-'+Date.now(),
-      requireInteraction: severity === 'critical', // notif critical reste affichée
-      silent: false,
-      vibrate: severity === 'critical' ? [200,100,200,100,200] : [120,60,120],
-      data: { url: '/admin?tab=monitoring', severity: severity, ts: Date.now() }
-    };
-    // PRIORITÉ 1 : Service Worker showNotification — fonctionne même onglet en arrière-plan / PWA en veille
-    // (le clic est géré par le listener 'notificationclick' dans /admin-sw.js)
-    try {
-      if(navigator.serviceWorker && navigator.serviceWorker.ready){
-        navigator.serviceWorker.ready.then(function(reg){
-          try { reg.showNotification(title, opts); }
-          catch(e){ _fallbackNotify(title, opts); }
-        }).catch(function(){ _fallbackNotify(title, opts); });
-        return;
-      }
-    } catch(_){}
-    // PRIORITÉ 2 (fallback) : Notification API directe — uniquement onglet actif
-    _fallbackNotify(title, opts);
-  }
-  function _fallbackNotify(title, opts){
-    try {
-      var n = new Notification(title, opts);
-      n.onclick = function(){
-        window.focus();
-        if(typeof nav === 'function') nav('qualite','monitoring');
-        n.close();
-      };
-    } catch(e){ console.warn('[lxNotif] failed:', e); }
-  }
-
-  async function checkNewErrors(){
-    try {
-      var lastTs = window._lxLastErrorCheckTs;
-      // 1) Nouvelles erreurs audit_log (JS_ERROR, DB_ERROR, NF525_SEAL_TRIGGER_FAIL)
-      var r = await _sb.from('audit_log')
-        .select('id, action, details, salon_id, timestamp_action')
-        .in('action', ['JS_ERROR','DB_ERROR','NF525_SEAL_TRIGGER_FAIL','JS_ERROR_PUBLIC'])
-        .gt('timestamp_action', lastTs)
-        .order('timestamp_action', { ascending: false })
-        .limit(10);
-      if(r.data && r.data.length > 0){
-        for(var i=0; i<r.data.length; i++){
-          var row = r.data[i];
-          var key = 'audit_'+row.id;
-          if(window._lxNotifiedIds.has(key)) continue;
-          window._lxNotifiedIds.add(key);
-          var severity = (row.action === 'DB_ERROR' || row.action === 'NF525_SEAL_TRIGGER_FAIL') ? 'critical' : 'high';
-          var msg = '';
-          try { msg = (JSON.parse(row.details||'{}').msg) || row.details || '(sans détail)'; }
-          catch(_){ msg = String(row.details||'').slice(0,150); }
-          notify('⚠️ '+row.action+' Luxyra', msg.slice(0, 200), severity);
-        }
-        // Met à jour le timestamp
-        window._lxLastErrorCheckTs = r.data[0].timestamp_action;
-      }
-
-      // 2) Nouvelles erreurs server_errors (worker, edge functions)
-      var s = await _sb.from('server_errors')
-        .select('id, source, severity, message, reported_at')
-        .gt('reported_at', window._lxLastServerErrTs)
-        .in('severity', ['critical','error'])
-        .order('reported_at', { ascending: false })
-        .limit(10);
-      if(s.data && s.data.length > 0){
-        for(var j=0; j<s.data.length; j++){
-          var row2 = s.data[j];
-          var key2 = 'server_'+row2.id;
-          if(window._lxNotifiedIds.has(key2)) continue;
-          window._lxNotifiedIds.add(key2);
-          var sev = row2.severity === 'critical' ? 'critical' : 'high';
-          notify('🚨 '+(row2.severity === 'critical' ? 'Erreur CRITIQUE' : 'Erreur serveur'),
-                 '['+row2.source+'] '+ String(row2.message||'').slice(0,200), sev);
-        }
-        window._lxLastServerErrTs = s.data[0].reported_at;
-      }
-    } catch(e){ console.warn('[lxWatcher] tick error:', e); }
-  }
-
-  // Premier check immédiat puis toutes les 15s
-  setTimeout(checkNewErrors, 1000);
-  window._lxErrorWatcherTimer = setInterval(checkNewErrors, 15000);
-};
 async function rMonitoringRefresh(){
   var container = document.getElementById('monitoringContent');
   if(!container) return;
@@ -3538,7 +3381,7 @@ function asRafraichir(){ var tb=document.getElementById("sTbody"); var L=asFiltr
 function asSelect(k,opts){ var v=window._AF[k]; return '<select onchange="asSet(\''+k+'\',this.value)" style="padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:12px">'+opts.map(function(o){return '<option value="'+o[0]+'"'+(String(v)===String(o[0])?' selected':'')+'>'+o[1]+'</option>';}).join("")+'</select>'; }
 function rSalons(){
   setTimeout(function(){ asChargerSuivi().then(asRafraichir); lxLoadSalonHealth(); asChargerDemarrage().then(asRafraichir); },30);
-  var h='<div class="topbar"><h1>Établissements <span id="asCompte">'+SALONS.filter(function(x){return !x.fermeLe;}).length+'</span></h1><div style="display:flex;gap:6px"><button class="tb-btn" onclick="asExport(false)">⬇️ Export CSV</button><button class="tb-btn primary" onclick="addModal()">+ Nouvel établissement</button></div></div>';
+  var h='<div class="topbar"><h1>Établissements <span id="asCompte">'+SALONS.filter(function(x){return !x.fermeLe;}).length+'</span></h1><div style="display:flex;gap:6px"><button class="tb-btn" onclick="asExport(false)">⬇️ Export CSV</button><button class="tb-btn primary" onclick="addModal()">✉️ Envoyer un lien d’inscription</button></div></div>';
   h+='<div class="search-box"><span>🔍</span><input id="sSearch" value="'+saEsc(window._AF.q)+'" placeholder="Nom, ville, email, SIRET, gérant, téléphone…" oninput="window._AF.q=this.value;asRafraichir()"></div>';
   h+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin:10px 0">';
   h+=asSelect("statut",[["all","Tous statuts"],["active","Actifs"],["trial","Essai"],["past_due","Impayés"],["suspended","Suspendus"],["cancelled","Résiliés"],["ferme","🔒 Fermés"],["pending","⏳ Non vérifiés"],["risk","⚠️ Inactifs ≥ 7 j"]]);
@@ -3991,14 +3834,11 @@ async function deleteSalonCascade(id){
     }else{steps.push({name:'storage',ok:true,count:0});}
   }catch(e){failed.push('storage:'+(e.message||'err'));steps.push({name:'storage',ok:false,err:e.message});}
 
-  // 5. auth.admin.deleteUser via Worker (service_role côté serveur)   (inchangé)
-  if(s&&s.userId){
-    try{
-      var r=await fetch('/api/admin/delete-user',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:s.userId})});
-      steps.push({name:'auth.deleteUser',ok:r.ok});
-      if(!r.ok)failed.push('auth.deleteUser:'+r.status);
-    }catch(e){failed.push('auth.deleteUser:'+(e.message||'err'));steps.push({name:'auth.deleteUser',ok:false});}
-  }
+  // 5. (2026-10-31, I5) Le compte de connexion n'est PAS supprimé d'ici : la route /api/admin/delete-user n'a jamais
+  //    existé (l'appel échouait toujours). Choix le plus sûr : ne pas supprimer d'identifiant depuis le navigateur.
+  //    Sans établissement, le compte ne donne accès à aucune donnée ; il peut être retiré à la main dans
+  //    Supabase › Authentication › Users si besoin.
+  if(s&&s.userId) steps.push({name:'compte_connexion',ok:true,info:'conservé (aucune donnée accessible), à retirer à la main si besoin'});
 
   // 6. Log final SALON_DELETED_CASCADE   (inchangé — pas de salon_id : la ligne survit)
   try{
@@ -4080,95 +3920,55 @@ async function actS(id,act){
   await loadData();render();if(act!=="delete")openD(id);
 }
 
-// ===== CRÉER COMPTE =====
-function genPwd(){var c="abcdefghjkmnpqrstuvwxyz23456789",p="";for(var i=0;i<8;i++)p+=c.charAt(Math.floor(Math.random()*c.length));return p;}
-
-function addModal(){
+// ===== LIEN D'INSCRIPTION (2026-10-31, I4) =====
+// Remplace « + Nouvel établissement » (création d'un compte avec mot de passe envoyé en clair par e-mail).
+// L'établissement s'inscrit lui-même sur inscription.html (pré-remplie) : il choisit son mot de passe,
+// accepte les CGV et vérifie son e-mail. Aucun mot de passe ne transite par l'admin.
+var LX_METIERS=[["coiffure","Coiffure"],["barbier","Barbier"],["esthetique","Esthétique"],["ongles","Ongles"],["regard","Cils & sourcils"],["maquillage","Maquillage"],["tatouage","Tatouage & piercing"],["spa","Spa & bien-être"]];
+function addModal(pre){
+  pre=pre||{};
+  var inp='width:100%;padding:10px 12px;min-height:40px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:14px;outline:none;box-sizing:border-box';
   var h='<div class="mbg" onclick="closeMod()"><div class="mbox" onclick="event.stopPropagation()">';
-  h+='<div style="display:flex;justify-content:space-between;margin-bottom:20px"><h2 style="font-size:18px">+ Nouvel établissement</h2><button onclick="closeMod()" style="background:none;border:none;color:var(--text);font-size:20px;cursor:pointer">✕</button></div>';
-  h+='<div id="addErr" style="display:none;background:var(--red-bg);color:var(--red);padding:10px;border-radius:8px;font-size:13px;margin-bottom:12px"></div>';
-  var fields=[["nNom","Nom de l\u2019établissement *","Nom commercial","text"],["nGerant","Nom du gérant","Nom et prénom du gérant","text"],["nSiret","SIRET","14 chiffres","text"],["nAdresse","Adresse","Numéro et rue","text"],["nCpVille","Code postal / Ville","Code postal et ville","text"],["nEmail","Email (identifiant) *","contact@monactivite.fr","email"],["nPass","Mot de passe *","Min 6 caractères","text"],["nTel","Téléphone","Numéro de téléphone","text"]];
-  fields.forEach(function(f){
-    h+='<div style="margin-bottom:12px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">'+f[1]+'</label>';
-    h+='<input id="'+f[0]+'" type="'+f[3]+'" style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:14px;outline:none'+(f[0]==="nPass"?";font-family:var(--mono)":"")+'" placeholder="'+f[2]+'"'+(f[0]==="nPass"?' value="'+genPwd()+'"':'')+'></div>';
-  });
-  h+='<div style="margin-bottom:12px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Métier *</label><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">';
-  [["coiffure","Coiffure","✂️"],["barbier","Barbier","💈"],["esthetique","Esthétique","💆"],["ongles","Ongles","💅"],["regard","Cils & sourcils","👁️"],["maquillage","Maquillage","💄"],["tatouage","Tatouage & piercing","🖋️"],["spa","Spa & massages","🌿"],["bien_etre","Bien-être","🧘"]].forEach(function(m,i){
-    h+='<button type="button" onclick="pickM(this,&#39;'+m[0]+'&#39;)" data-m="'+m[0]+'" class="mbtn" style="padding:10px 6px;border-radius:10px;border:1.5px solid '+(i===0?"var(--gold)":"var(--border)")+';background:'+(i===0?"rgba(200,168,78,.1)":"var(--bg3)")+';cursor:pointer;text-align:center"><div style="font-size:20px">'+m[2]+'</div><div style="font-size:11px;font-weight:700;color:var(--text)">'+m[1]+'</div></button>';
-  });
-  h+='</div><input type="hidden" id="nMetier" value="coiffure"></div>';
-  // Mode activite
-  h+='<div style="margin-bottom:12px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Mode d\u0027activit\u00e9</label><select id="nMode" style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:14px"><option value="salon">\ud83c\udfe0 En \u00e9tablissement</option><option value="domicile">\ud83d\ude97 \u00c0 domicile</option><option value="mixte">\ud83d\udd00 Mixte</option></select></div>';
-  h+='<div style="display:flex;gap:10px;margin-bottom:16px"><div style="flex:1"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Plan</label><select id="nPlan" style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:14px"><option value="essential">Essentiel (14,99€)</option><option value="pro" selected>Pro (24,99€)</option></select></div>';
-  h+='<div style="flex:1"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Statut</label><select id="nStatus" style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:14px"><option value="trial">Essai 14j</option><option value="active">Actif</option></select></div></div>';
-  h+='<button onclick="doCreate()" style="width:100%;padding:12px;border-radius:10px;background:var(--gold);color:#000;font-weight:700;font-size:15px;border:none;cursor:pointer">Créer le compte</button>';
-  h+='<div style="margin-top:12px;font-size:11px;color:var(--text3);text-align:center">Le professionnel recevra un email avec ses identifiants.</div>';
+  h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><h2 style="font-size:18px">✉️ Envoyer un lien d’inscription</h2><button onclick="closeMod()" aria-label="Fermer" style="background:none;border:none;color:var(--text);font-size:20px;cursor:pointer;min-width:40px;min-height:40px">✕</button></div>';
+  h+='<div style="font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:14px">L’établissement s’inscrit lui-même : il choisit son mot de passe, accepte les CGV et vérifie son e-mail. Les champs ci-dessous pré-remplissent la page d’inscription (tous facultatifs).</div>';
+  h+='<div style="margin-bottom:12px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Nom de l’établissement</label><input id="liNom" oninput="lxLienMaj()" value="'+saEsc(pre.nom||'')+'" style="'+inp+'"></div>';
+  h+='<div style="margin-bottom:12px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">E-mail du gérant</label><input id="liEmail" type="email" oninput="lxLienMaj()" value="'+saEsc(pre.email||'')+'" style="'+inp+'"></div>';
+  h+='<div style="margin-bottom:12px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">SIRET (14 chiffres)</label><input id="liSiret" inputmode="numeric" oninput="lxLienMaj()" value="'+saEsc(pre.siret||'')+'" style="'+inp+'"></div>';
+  h+='<div style="margin-bottom:12px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Métier</label><select id="liMetier" onchange="lxLienMaj()" style="'+inp+'">'+LX_METIERS.map(function(m){return '<option value="'+m[0]+'"'+(pre.metier===m[0]?' selected':'')+'>'+m[1]+'</option>';}).join('')+'</select></div>';
+  h+='<div style="margin-bottom:12px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Lien à envoyer</label><input id="liLien" readonly onclick="this.select()" style="'+inp+';font-family:var(--mono);font-size:12px"></div>';
+  h+='<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn gold" style="flex:1;min-height:44px" onclick="lxLienCopier()">📋 Copier le lien</button><button class="btn" style="flex:1;min-height:44px" onclick="lxLienMail()">✉️ Préparer l’e-mail</button></div>';
+  h+='<div style="margin-top:10px;font-size:11px;color:var(--text3)">« Préparer l’e-mail » ouvre votre messagerie avec le message pré-rempli : rien n’est envoyé sans votre clic.</div>';
   h+='</div></div>';
-  lxOpenModal(h); // 01/11 (audit B1) : conteneur séparé, la fiche (detailPanel) n'est plus écrasée
+  lxOpenModal(h);
+  lxLienMaj();
+}
+function lxLienUrl(){
+  var g=function(id){ var e=document.getElementById(id); return e?String(e.value||'').trim():''; };
+  var q=[], nom=g('liNom').slice(0,80), si=g('liSiret').replace(/\D/g,''), me=g('liMetier'), em=g('liEmail');
+  if(nom) q.push('nom='+encodeURIComponent(nom));
+  if(si.length===14) q.push('siret='+si);
+  if(me) q.push('metier='+encodeURIComponent(me));
+  if(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) q.push('email='+encodeURIComponent(em));
+  return 'https://luxyra.fr/inscription.html'+(q.length?'?'+q.join('&'):'');
+}
+function lxLienMaj(){ var l=document.getElementById('liLien'); if(l) l.value=lxLienUrl(); }
+async function lxLienCopier(){
+  var u=lxLienUrl();
+  try{ await navigator.clipboard.writeText(u); toast('Lien copié.'); }
+  catch(e){ var l=document.getElementById('liLien'); if(l){ l.focus(); l.select(); } toast('Sélectionnez le lien et copiez-le.'); }
+  try{ await lxJournal('LIEN_INSCRIPTION',{cible:'inscription',details:(document.getElementById('liNom')||{}).value||''}); }catch(_){}
+}
+function lxLienMail(){
+  var em=(document.getElementById('liEmail')||{}).value||'', nom=(document.getElementById('liNom')||{}).value||'';
+  var corps="Bonjour,\n\nVoici le lien pour créer l’espace Luxyra"+(nom?" de "+nom:"")+" : "+lxLienUrl()+"\n\nVous choisirez votre mot de passe vous-même. L’essai est gratuit pendant 14 jours, sans carte bancaire.\n\nÀ bientôt,\nAlexandre — Luxyra\nhttps://luxyra.fr";
+  window.open('mailto:'+encodeURIComponent(em)+'?subject='+encodeURIComponent('Votre inscription à Luxyra')+'&body='+encodeURIComponent(corps));
+  try{ lxJournal('LIEN_INSCRIPTION',{cible:'inscription',details:nom}); }catch(_){}
 }
 
-function pickM(el,k){document.querySelectorAll(".mbtn").forEach(function(b){b.style.borderColor="var(--border)";b.style.background="var(--bg3)";});el.style.borderColor="var(--gold)";el.style.background="rgba(200,168,78,.1)";document.getElementById("nMetier").value=k;}
 // 01/11 (audit B1) : fenêtres dans un conteneur à part (#lxModalArea) — avant, elles remplaçaient #detailOverlay et
 // détruisaient #detailPanel : plus aucune fiche ne s'ouvrait jusqu'au rechargement.
 function lxOpenModal(h){ var a=document.getElementById("lxModalArea"); if(!a){ a=document.createElement("div"); a.id="lxModalArea"; document.body.appendChild(a); } a.innerHTML=h; }
 function closeMod(){ var a=document.getElementById("lxModalArea"); if(a) a.innerHTML=""; }
-
-async function doCreate(){
-  var btn=event.target;btn.disabled=true;btn.textContent="\u23f3 Cr\u00e9ation en cours...";
-  try{
-  var nom=document.getElementById("nNom").value.trim(),email=document.getElementById("nEmail").value.trim(),pass=document.getElementById("nPass").value,tel=(document.getElementById("nTel").value||"").trim(),plan=document.getElementById("nPlan").value,status=document.getElementById("nStatus").value,metier=document.getElementById("nMetier").value;
-  var modeAct=(document.getElementById("nMode")||{value:"salon"}).value;
-  var gerant=(document.getElementById("nGerant")||{value:""}).value.trim();
-  var siret=(document.getElementById("nSiret")||{value:""}).value.trim();
-  var adresse=(document.getElementById("nAdresse")||{value:""}).value.trim();
-  var cpVille=(document.getElementById("nCpVille")||{value:""}).value.trim();
-  var cp="",ville="";if(cpVille){var _m=cpVille.match(/^(\d{5})\s*(.*)$/);if(_m){cp=_m[1];ville=_m[2];}else{ville=cpVille;}}
-  var gNom="",gPrenom="";if(gerant){var _g=gerant.split(" ");gNom=_g[0]||"";gPrenom=_g.slice(1).join(" ")||"";}
-  if(!nom||!email||!pass){alert("Nom, email et mot de passe obligatoires.");btn.disabled=false;btn.textContent="Cr\u00e9er le compte";return;}
-  if(pass.length<6){alert("Mot de passe : 6 caract\u00e8res minimum.");btn.disabled=false;btn.textContent="Cr\u00e9er le compte";return;}
-  if(!_sb||!_online){alert("Non connect\u00e9");btn.disabled=false;btn.textContent="Cr\u00e9er le compte";return;}
-  var tmp=supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{auth:{persistSession:false,autoRefreshToken:false}});
-  var ar=await tmp.auth.signUp({email:email,password:pass,options:{data:{role:"salon"}}});
-  if(ar.error){alert("Erreur : "+ar.error.message);btn.disabled=false;btn.textContent="Cr\u00e9er le compte";return;}
-  var uid=ar.data.user.id;
-  var te=status==="trial"?new Date(Date.now()+14*864e5).toISOString():null;
-  var sr=await _sb.from("salons").insert({user_id:uid,nom:nom,ville:ville,cp:cp,adresse:adresse,email:email,tel:tel,siret:siret,gerant_nom:gNom,gerant_prenom:gPrenom,plan:plan,status:status,trial_end:te,metier:metier,mode_activite:modeAct,verification_status:"pending",config_json:JSON.stringify({nom:nom,ville:ville,tel:tel,metier:metier})}).select().single();
-  if(sr.error){alert("Erreur : "+sr.error.message);btn.disabled=false;btn.textContent="Cr\u00e9er le compte";return;}
-  var sid=sr.data.id;
-  var cl={coiffure:["Coiffeur 1","Coiffeur 2"],barbier:["Barbier 1","Barbier 2"],esthetique:["Esth\u00e9ticienne 1","Esth\u00e9ticienne 2"],ongles:["Proth\u00e9siste 1","Proth\u00e9siste 2"],bien_etre:["Praticien 1","Praticien 2"],regard:["Technicienne regard 1","Technicienne regard 2"],maquillage:["Maquilleuse 1","Maquilleuse 2"],tatouage:["Tatoueur 1","Tatoueur 2"],spa:["Praticienne 1","Praticienne 2"]};
-  var c=cl[metier]||cl.coiffure;
-  await _sb.from("collaborateurs").insert([{salon_id:sid,nom:c[0],initiales:c[0].slice(0,2).toUpperCase(),couleur:"#c9a227"},{salon_id:sid,nom:c[1],initiales:c[1].slice(0,2).toUpperCase(),couleur:"#7d3c98"}]);
-  await lxJournal("CREATE_SALON",{salon:sid,cible:"salons:"+sid,details:nom+" - "+plan+" - "+email,apres:{nom:nom,plan:plan,statut:status,email:email}});
-  closeMod();
-  try{navigator.clipboard.writeText(pass);}catch(e){}
-  var trialInfo=status==="trial"?"Vous b\u00e9n\u00e9ficiez d\u2019un essai gratuit de 14 jours. Durant cette p\u00e9riode, vous avez acc\u00e8s \u00e0 toutes les fonctionnalit\u00e9s.\n\n\u00c0 l\u2019issue de l\u2019essai, choisissez la formule qui vous convient :\n\u2022 Essentiel : 14,99\u20ac/mois (planning, encaissement, clients)\n\u2022 Pro : 24,99\u20ac/mois (+ site vitrine, r\u00e9servation en ligne, SMS)\n\n":"";
-  var subject="Bienvenue sur Luxyra \u2014 Vos identifiants de connexion";
-  var body="Bonjour"+(gNom?" "+gPrenom:"")+",\n\n"+
-    "Nous avons le plaisir de vous confirmer la cr\u00e9ation de votre espace Luxyra pour "+nom+" !\n\n"+
-    "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"+
-    "VOS IDENTIFIANTS DE CONNEXION\n"+
-    "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n\n"+
-    "\ud83c\udf10 Adresse : https://luxyra.fr/app\n"+
-    "\ud83d\udce7 Email : "+email+"\n"+
-    "\ud83d\udd11 Mot de passe : "+pass+"\n\n"+
-    "Nous vous recommandons de changer votre mot de passe d\u00e8s votre premi\u00e8re connexion.\n\n"+
-    trialInfo+
-    "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"+
-    "PREMIERS PAS\n"+
-    "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n\n"+
-    "1\ufe0f\u20e3 Connectez-vous sur https://luxyra.fr/app\n"+
-    "2\ufe0f\u20e3 Configurez vos prestations et tarifs\n"+
-    "3\ufe0f\u20e3 Ajoutez vos collaborateurs\n"+
-    "4\ufe0f\u20e3 Commencez \u00e0 g\u00e9rer vos rendez-vous !\n\n"+
-    "Pour toute question :\n"+
-    "\ud83d\udce7 support@luxyra.fr\n\n"+
-    "\u00c0 tr\u00e8s bient\u00f4t,\n"+
-    "L\u2019\u00e9quipe Luxyra\nhttps://luxyra.fr";
-  window.open("mailto:"+email+"?subject="+encodeURIComponent(subject)+"&body="+encodeURIComponent(body));
-  alert("\u2705 \u00c9tablissement " + nom + " cr\u00e9\u00e9 !\n\nIdentifiants :\nEmail : " + email + "\nMot de passe : " + pass + "\n\n\ud83d\udccb Mot de passe copi\u00e9\n\u2709\ufe0f Email pr\u00e9-rempli ouvert");
-  await loadData();await loadDemandes();render();
-  }catch(err){alert("Erreur inattendue : "+err.message);btn.disabled=false;btn.textContent="Cr\u00e9er le compte";}
-}
 
 // ===== INSCRIPTIONS =====
 function rInscriptions(){
@@ -4282,7 +4082,7 @@ function rDemandes(){
     h+='<td><div class="td-actions">';
     if(d.status==="new")h+='<button class="td-btn" onclick="updDem(&#39;'+d.id+'&#39;,&#39;contacted&#39;)" title="Contacté">📞</button>';
     if(d.status!=="done")h+='<button class="td-btn" onclick="updDem(&#39;'+d.id+'&#39;,&#39;done&#39;)" title="Traité">✅</button>';
-    h+='<button class="td-btn" onclick="createFromDem(&#39;'+d.id+'&#39;)" title="Créer compte">➕</button>';
+    h+='<button class="td-btn" onclick="createFromDem(&#39;'+d.id+'&#39;)" title="Envoyer un lien d’inscription" aria-label="Envoyer un lien d’inscription">✉️</button>';
     h+='<button class="td-btn" onclick="delDem(&#39;'+d.id+'&#39;)" title="Supprimer" style="color:var(--red)">🗑️</button>';
     h+='</div></td></tr>';
   });
@@ -4303,7 +4103,8 @@ async function updDem(id,st){
 function escHtml(s){ return saEsc(s); } // 31/10 audit : échappement unique (apostrophe comprise)
 
 // === Helpers modales premium (remplacent alert() et confirm() natifs) ===
-function _lxAdminCloseModal(){var el=document.getElementById("lxAdminModal");if(el)el.remove();}
+// 2026-10-31 (I8) : fermer la fenêtre (fond, Échap) résout la promesse en attente avec « annulé » (avant : promesse jamais résolue)
+function _lxAdminCloseModal(){var el=document.getElementById("lxAdminModal");if(el)el.remove();var f=window._lxDlgAnnule;window._lxDlgAnnule=null;if(typeof f==="function")f();}
 function _lxAdminOpenModal(html){
   _lxAdminCloseModal();
   var wrap=document.createElement("div");
@@ -4353,8 +4154,9 @@ function lxAdminAlert(message, opts){
     _lxAdminOpenModal(_lxAdminShellHtml({surtitle:opts.surtitle||"Luxyra Admin",title:opts.title||"Information",body:body,footer:footer,color:opts.color||"#c8a84e"}));
     setTimeout(function(){
       var b=document.getElementById(btnId);
-      if(b)b.onclick=function(){_lxAdminCloseModal();resolve(true);};
+      if(b){ b.onclick=function(){window._lxDlgAnnule=null;_lxAdminCloseModal();resolve(true);}; try{b.focus();}catch(_){} }
     },10);
+    window._lxDlgAnnule=function(){resolve(true);};
   });
 }
 // lxAdminConfirm : Promise-based, 2 boutons (Annuler / Confirmer)
@@ -4375,13 +4177,48 @@ function lxAdminConfirm(message, opts){
     _lxAdminOpenModal(_lxAdminShellHtml({surtitle:opts.surtitle||"Confirmation requise",title:opts.title||"Action",body:body,footer:footer,color:color}));
     setTimeout(function(){
       var ok=document.getElementById(okId), no=document.getElementById(noId);
-      if(ok)ok.onclick=function(){_lxAdminCloseModal();resolve(true);};
-      if(no)no.onclick=function(){_lxAdminCloseModal();resolve(false);};
+      if(ok)ok.onclick=function(){window._lxDlgAnnule=null;_lxAdminCloseModal();resolve(true);};
+      if(no)no.onclick=function(){window._lxDlgAnnule=null;_lxAdminCloseModal();resolve(false);};
     },10);
+    window._lxDlgAnnule=function(){resolve(false);};
   });
 }
 window.lxAdminAlert = lxAdminAlert;
 window.lxAdminConfirm = lxAdminConfirm;
+
+// ===== Dialogues Luxyra (2026-10-31, I8) : remplacent alert / confirm / prompt du navigateur =====
+// lxAlert(msg[, {titre}])            -> Promise<true>
+// lxConfirm(msg[, {ok, titre, danger}]) -> Promise<boolean>   (fond / Échap = false)
+// lxChoix(msg, [[valeur, libellé], …][, {titre}]) -> Promise<valeur|null>   (remplace les prompt() numériques)
+function lxAlert(msg, o){ o=o||{}; return lxAdminAlert(String(msg==null?'':msg),{title:o.titre||'Information',surtitle:o.surtitre||'Luxyra Admin',color:o.couleur}); }
+function lxConfirm(msg, o){ o=o||{}; return lxAdminConfirm(String(msg==null?'':msg),{title:o.titre||'Confirmation',okLabel:o.ok||'Confirmer',danger:!!o.danger,surtitle:o.surtitre}); }
+function lxChoix(msg, choix, o){
+  o=o||{};
+  return new Promise(function(resolve){
+    var id='lxCh_'+Date.now();
+    var body='<div style="text-align:center;font-size:14px;line-height:1.6;color:#d4d0ca;margin:0 0 12px;white-space:pre-wrap">'+saEsc(msg||'')+'</div>'
+      +'<div id="'+id+'" style="display:flex;flex-direction:column;gap:8px">'
+      +(choix||[]).map(function(c,i){ return '<button data-i="'+i+'" style="min-height:44px;padding:10px 14px;border-radius:8px;border:1px solid rgba(212,168,67,.35);background:rgba(212,168,67,.08);color:#f0e6c8;font-size:14px;text-align:left;cursor:pointer">'+saEsc(c[1])+'</button>'; }).join('')
+      +'<button data-i="-1" style="min-height:44px;padding:10px 14px;border-radius:8px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.05);color:#fff;font-size:13px;cursor:pointer">Annuler</button></div>';
+    _lxAdminOpenModal(_lxAdminShellHtml({surtitle:o.surtitre||'Choisir',title:o.titre||'Choix',body:body,footer:'',color:'#c8a84e'}));
+    window._lxDlgAnnule=function(){resolve(null);};
+    setTimeout(function(){
+      var z=document.getElementById(id); if(!z) return;
+      z.onclick=function(e){ var b=e.target.closest('button'); if(!b) return; var i=Number(b.getAttribute('data-i')); window._lxDlgAnnule=null; _lxAdminCloseModal(); resolve(i>=0&&choix[i]?choix[i][0]:null); };
+    },10);
+  });
+}
+// toast(msg[, 'success'|'error'|'info']) : message bref en bas d'écran, sans bloquer
+function toast(msg, type){
+  try{
+    var z=document.getElementById('lxToasts');
+    if(!z){ z=document.createElement('div'); z.id='lxToasts'; z.setAttribute('role','status'); z.setAttribute('aria-live','polite'); document.body.appendChild(z); }
+    var t=document.createElement('div'); t.className='lx-toast'+(type==='error'?' err':(type==='success'?' ok':''));
+    t.textContent=String(msg==null?'':msg); z.appendChild(t);
+    setTimeout(function(){ t.style.opacity='0'; setTimeout(function(){ if(t.parentNode) t.parentNode.removeChild(t); },300); }, type==='error'?6000:3200);
+  }catch(_){}
+}
+document.addEventListener('keydown',function(e){ if(e.key==='Escape' && document.getElementById('lxAdminModal')) _lxAdminCloseModal(); });
 
 function rMigrations(){
   var h='<div class="topbar" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px"><h1 style="margin:0">Migrations <span>'+MIGRATIONS.length+'</span></h1>';
@@ -4463,33 +4300,17 @@ function showMigrationMessage(id){
   lxAdminAlert(html,{html:true,surtitle:"Message du client",title:"Précisions"});
 }
 
-// Helper interne : nettoie/met à jour le config_json du salon associé à une demande
+// Statut de migration dans config_json de l'établissement. 2026-10-31 (I12) : écriture côté serveur
+// (RPC admin_salon_cfg_migration) qui ne touche QUE les clés migration* — plus de relecture/réécriture
+// de toute la configuration depuis le navigateur (risque d'écraser un réglage fait au même moment dans l'app).
 async function _migSyncSalonConfig(salonId, newStatus){
   // newStatus : "requested" | "completed" | null (= retire les champs migration*)
-  if(!salonId)return {ok:true};
-  try {
-    var sRes=await _sb.from("salons").select("config_json").eq("id",salonId).maybeSingle();
-    if(!sRes.data)return {ok:true,note:"salon introuvable"};
-    var raw=sRes.data.config_json;
-    var cfg={};
-    try {
-      var asString = typeof raw === "string" ? raw : JSON.stringify(raw);
-      try { var parsed = JSON.parse(asString); cfg = (typeof parsed === "string") ? JSON.parse(parsed) : parsed; } catch(_) { cfg = {}; }
-      if(typeof cfg!=="object"||cfg===null)cfg={};
-    } catch(e){ cfg={}; }
-    if(newStatus===null){
-      delete cfg.migrationStatus;
-      delete cfg.migrationRequestedAt;
-      delete cfg.migrationRequestId;
-      delete cfg.migrationCompletedAt;
-    } else {
-      cfg.migrationStatus = newStatus;
-      if(newStatus==="completed") cfg.migrationCompletedAt = new Date().toISOString();
-    }
-    var u=await _sb.from("salons").update({config_json:JSON.stringify(cfg)}).eq("id",salonId);
-    if(u.error)return {ok:false,err:u.error.message};
-    return {ok:true};
-  } catch(e){return {ok:false,err:e.message};}
+  if(!salonId) return {ok:true};
+  try{
+    var r=await _sb.rpc("admin_salon_cfg_migration",{p_salon_id:salonId,p_statut:newStatus});
+    if(r.error) return {ok:false,err:r.error.message};
+    return r.data||{ok:true};
+  }catch(e){ return {ok:false,err:e.message}; }
 }
 
 async function updMig(id,st){
@@ -4609,17 +4430,7 @@ async function delDem(id){
 
 function createFromDem(id){
   var d=DEMANDES.find(function(x){return x.id===id;});if(!d)return;
-  addModal();
-  setTimeout(function(){
-    var el;
-    el=document.getElementById("nNom");if(el)el.value=d.nom_salon||d.nom_etablissement||"";
-    el=document.getElementById("nCpVille");if(el)el.value=(d.cp?d.cp+" ":"")+(d.ville||"");
-    el=document.getElementById("nEmail");if(el)el.value=d.email||"";
-    el=document.getElementById("nTel");if(el)el.value=d.telephone||"";
-    el=document.getElementById("nGerant");if(el)el.value=d.nom_contact||"";
-    if(d.metier){var btn=document.querySelector('[data-m="'+d.metier+'"]');if(btn)pickM(btn,d.metier);}
-    if(d.plan){el=document.getElementById("nPlan");if(el)el.value=d.plan==="pro"?"pro":"essential";}
-  },200);
+  addModal({nom:d.nom_salon||d.nom_etablissement||"",email:d.email||"",metier:d.metier||""});
 }
 
 // ===== ALERTES =====
@@ -4928,10 +4739,11 @@ async function brevoSauverReglages(){
   if(!(isFinite(s1)&&s1>=0)){ alert("Seuil invalide."); return; }
   var patch={brevo_credits_par_sms_fr:r1, brevo_seuil_sms_fr:Math.round(s1)};
   if(!confirm("Enregistrer : "+r1.toLocaleString("fr-FR")+" crédits Brevo par SMS France, alerte sous "+patch.brevo_seuil_sms_fr+" SMS ?")) return;
-  var cur=await _sb.from("app_config").select("config").eq("id",1).maybeSingle();
-  if(cur.error||!cur.data||!cur.data.config){ alert("❌ Lecture de la configuration impossible : rien n'a été modifié. Réessaie."); return; }
-  var merged=Object.assign({},cur.data.config,patch);
-  var r=await _sb.from("app_config").update({config:merged,updated_at:new Date().toISOString(),updated_by:"admin (crédits Brevo)"}).eq("id",1);
+  // 2026-10-31 (I7) : écriture atomique côté serveur, seules ces clés changent
+  var _patch=patch;
+  var r=await _sb.rpc("admin_config_maj",{p_cles:_patch,p_auteur:"admin (crédits Brevo)"});
+  var merged=Object.assign({},window._appConfig||{},_patch);
+  var cur={data:{config:Object.assign({},(r.data&&r.data.avant)||{})}};
   if(r.error){ alert("❌ "+r.error.message); return; }
   window._appConfig=merged; try{ await lxJournal("BREVO_RATIO_SMS",{cible:"app_config",avant:{brevo_credits_par_sms_fr:cur.data.config.brevo_credits_par_sms_fr,brevo_seuil_sms_fr:cur.data.config.brevo_seuil_sms_fr},apres:patch}); }catch(e){}
   brevoRendu();
@@ -4985,10 +4797,11 @@ async function smsSauverReglages(){
   keys.forEach(function(k){ var el=document.getElementById("smsC_"+k); if(!el) return; var v=el.value.trim(); if(v===""){ if(k==="sms_cost_brevo_eur") patch[k]=null; return; } var n=Number(v.replace(",",".")); if(!isFinite(n)||n<0){ err=k; return; } patch[k]=(k==="sms_bonus_first_pay"||k==="sms_seuil_alerte")?Math.round(n):n; });
   if(err){ alert("Valeur invalide : "+err); return; }
   if(!confirm("Enregistrer ces réglages SMS ?")) return;
-  var cur=await _sb.from("app_config").select("config").eq("id",1).maybeSingle();
-  if(cur.error||!cur.data||!cur.data.config){ alert("❌ Lecture de la configuration impossible : rien n'a été modifié. Réessaie."); return; }
-  var merged=Object.assign({},cur.data.config,patch);
-  var r=await _sb.from("app_config").update({config:merged,updated_at:new Date().toISOString(),updated_by:"admin (réglages SMS)"}).eq("id",1);
+  // 2026-10-31 (I7) : écriture atomique côté serveur, seules ces clés changent
+  var _patch=patch;
+  var r=await _sb.rpc("admin_config_maj",{p_cles:_patch,p_auteur:"admin (réglages SMS)"});
+  var merged=Object.assign({},window._appConfig||{},_patch);
+  var cur={data:{config:Object.assign({},(r.data&&r.data.avant)||{})}};
   if(r.error){ alert("❌ "+r.error.message); return; }
   window._appConfig=merged; try{ await lxJournal("SMS_REGLAGES",{cible:"app_config",apres:patch}); }catch(e){}
   alert("✅ Réglages enregistrés"); render();
@@ -5084,16 +4897,15 @@ function lxSmsSimul(){
 }
 // Active/désactive le Pack 1000 côté salon (flag sms_pack_1000_enabled). Fusion pour ne rien écraser.
 async function lxToggle1000(on){
-  if(on && !confirm('Activer le Pack 1000 côté salon ?\n\nAssure-toi d\'avoir redéployé le worker Cloudflare AVANT, sinon l\'achat du pack 1000 échouera pour les salons.')) return;
+  if(on && !(await lxConfirm("Activer le Pack 1000 SMS pour les établissements ?",{ok:"Activer"}))) return;
   try{
-    var cur = await _sb.from('app_config').select('config').eq('id',1).maybeSingle();
-    var merged = Object.assign({}, (cur.data&&cur.data.config)||{}, {sms_pack_1000_enabled: !!on});
-    var r = await _sb.from('app_config').update({config:merged}).eq('id',1);
-    if(r.error){ alert('Erreur : '+r.error.message); return; }
-    window._appConfig = merged;
-    try{ await lxJournal('TOGGLE_PACK_1000',{cible:'app_config:sms_pack_1000_enabled',avant:{enabled:!on},apres:{enabled:!!on}}); }catch(_){}
+    var r = await _sb.rpc('admin_config_maj',{p_cles:{sms_pack_1000_enabled: !!on}});
+    if(r.error){ await lxAlert('Erreur, rien n\'a été modifié : '+r.error.message); return; }
+    window._appConfig = Object.assign({}, window._appConfig||{}, {sms_pack_1000_enabled: !!on});
+    try{ await lxJournal('TOGGLE_PACK_1000',{cible:'app_config:sms_pack_1000_enabled',avant:(r.data&&r.data.avant)||{},apres:{sms_pack_1000_enabled:!!on}}); }catch(_){}
+    toast(on?'Pack 1000 activé.':'Pack 1000 désactivé.');
     if(typeof render==='function') render();
-  }catch(e){ alert('Erreur : '+e.message); }
+  }catch(e){ await lxAlert('Erreur : '+(e&&e.message||e)); }
 }
 
 // ===== PARAMÈTRES =====
@@ -5166,7 +4978,7 @@ async function loadAppConfigEditor(){
   try{
     var r = await _sb.from("app_config").select("config, updated_at, updated_by").eq("id", 1).maybeSingle();
     if(r.error){ box.innerHTML = '<div style="color:var(--red)">Erreur : '+saEsc(r.error.message)+'</div>'; return; }
-    var cfg = (r.data && r.data.config) || {};
+    var cfg = (r.data && r.data.config) || {}; window._appCfgEditeur = cfg; window._appConfig = Object.assign({}, window._appConfig||{}, cfg);
     var updatedAt = r.data && r.data.updated_at ? new Date(r.data.updated_at).toLocaleString("fr-FR") : "?";
     var updatedBy = r.data && r.data.updated_by || "?";
     var fields = [
@@ -5196,6 +5008,7 @@ async function loadAppConfigEditor(){
       {section:"💎 Tarifs Luxyra (AFFICHAGE uniquement)"},
       {key:"plan_essential_eur", label:"Prix abonnement Essentiel (€/mois HT)", val:cfg.plan_essential_eur, step:0.01, hint:"⚠️ AFFICHAGE seulement. Pour Stripe, voir procédure ci-dessous"},
       {key:"plan_pro_eur", label:"Prix abonnement Pro (€/mois HT)", val:cfg.plan_pro_eur, step:0.01, hint:"⚠️ AFFICHAGE seulement. Pour Stripe, voir procédure ci-dessous"},
+      {key:"plan_pro_founder_eur", label:"Prix Pro Fondateur (€/mois HT)", val:cfg.plan_pro_founder_eur, step:0.01, hint:"Sert au calcul du revenu mensuel (tableau de bord). Vide = 14,99 € par défaut. La facturation reste celle de Stripe"},
       {section:"🏢 Identité éditeur Luxyra (TVA + forme juridique)"},
       {key:"luxyra_tva_pct", label:"Taux TVA Luxyra (%)", val:cfg.luxyra_tva_pct, step:0.5, hint:"0 = franchise micro art. 293B (actuel) — 20 = SAS assujettie. Bascule auto factures + affichage"},
       {key:"luxyra_forme_juridique", label:"Forme juridique éditeur", val:cfg.luxyra_forme_juridique, type:"text", hint:"Ex. Entreprise individuelle (micro-entrepreneur) — SAS au capital de 1 000 €"},
@@ -5254,37 +5067,44 @@ async function loadAppConfigEditor(){
 
 async function saveAppConfig(){
   // Champs numériques (validés positifs)
-  var numKeys = ["stripe_fee_pct","stripe_fee_fixed","stripe_fee_uk_pct","stripe_fee_intl_pct","stripe_fee_sepa_pct","stripe_fee_sepa_max","sms_bonus_first_pay","sms_price_ttc","sms_cost_brevo_eur","sms_pack_100_eur","sms_pack_250_eur","sms_pack_500_eur","sms_pack_1000_eur","urssaf_services_pct","urssaf_ventes_pct","micro_seuil_ca_services","micro_seuil_ca_ventes","micro_seuil_tva_services","micro_seuil_tva_ventes","plan_essential_eur","plan_pro_eur","luxyra_tva_pct"];
+  var numKeys = ["stripe_fee_pct","stripe_fee_fixed","stripe_fee_uk_pct","stripe_fee_intl_pct","stripe_fee_sepa_pct","stripe_fee_sepa_max","sms_bonus_first_pay","sms_price_ttc","sms_cost_brevo_eur","sms_pack_100_eur","sms_pack_250_eur","sms_pack_500_eur","sms_pack_1000_eur","urssaf_services_pct","urssaf_ventes_pct","micro_seuil_ca_services","micro_seuil_ca_ventes","micro_seuil_tva_services","micro_seuil_tva_ventes","plan_essential_eur","plan_pro_eur","plan_pro_founder_eur","luxyra_tva_pct"];
   // Champs texte (forme juridique, SIRET, n° TVA intra, capital social)
   var textKeys = ["luxyra_forme_juridique","luxyra_siret_editeur","luxyra_adresse","luxyra_tva_intra","luxyra_capital_social"];
-  var newConfig = {};
+  // 2026-10-31 (I7) : un champ VIDE = valeur inchangée (on n'envoie que les champs remplis).
+  // Écriture ATOMIQUE côté serveur (RPC admin_config_maj : seules ces clés changent, le reste est conservé).
+  var newConfig = {}, cur = window._appCfgEditeur || window._appConfig || {};
   for(var i=0;i<numKeys.length;i++){
     var el = document.getElementById("ac_"+numKeys[i]);
     if(!el) continue;
-    var v = parseFloat(el.value);
-    if(isNaN(v)){ alert("Valeur invalide pour "+numKeys[i]); el.focus(); return; }
-    if(v < 0){ alert("Valeur négative interdite pour "+numKeys[i]); el.focus(); return; }
-    newConfig[numKeys[i]] = v;
+    var raw = String(el.value||"").trim().replace(",",".");
+    if(raw==="") continue;
+    var v = parseFloat(raw);
+    if(isNaN(v)){ await lxAlert("Valeur invalide pour « "+numKeys[i]+" »."); el.focus(); return; }
+    if(v < 0){ await lxAlert("Valeur négative interdite pour « "+numKeys[i]+" »."); el.focus(); return; }
+    if(String(cur[numKeys[i]])!==String(v)) newConfig[numKeys[i]] = v;
   }
   for(var j=0;j<textKeys.length;j++){
     var elt = document.getElementById("ac_"+textKeys[j]);
     if(!elt) continue;
-    newConfig[textKeys[j]] = (elt.value||"").trim();
+    var tv=(elt.value||"").trim();
+    if(tv==="" && (cur[textKeys[j]]==null || cur[textKeys[j]]==="")) continue;
+    if(tv===""){
+      // Vider un champ texte doit être explicite (ex. n° de TVA intra en franchise)
+      if(!(await lxConfirm("Le champ « "+textKeys[j]+" » est vide.\n\nVoulez-vous VRAIMENT effacer la valeur actuelle (« "+cur[textKeys[j]]+" ») ?\n\nAnnuler = garder la valeur actuelle.",{ok:"Effacer la valeur",danger:true}))) continue;
+    }
+    if(String(cur[textKeys[j]]==null?"":cur[textKeys[j]])!==tv) newConfig[textKeys[j]] = tv;
   }
-  if(!confirm("Enregistrer ces modifications ?\n\nElles seront immédiatement appliquées :\n• App salon (exports comptables, calculs frais)\n• Site public (tarifs.html, aide.html)\n• Edge function emails onboarding\n• Bordereau Stripe / pack ZIP comptable\n\nContinuer ?")) return;
+  var nb=Object.keys(newConfig).length;
+  if(!nb){ toast("Aucune modification à enregistrer."); return; }
+  if(!(await lxConfirm("Enregistrer "+nb+" modification(s) ?\n\n"+Object.keys(newConfig).map(function(k){return "• "+k+" : "+(cur[k]==null?"(vide)":cur[k])+" → "+newConfig[k];}).join("\n")+"\n\nElles s'appliquent tout de suite : app des établissements, site public, e-mails, exports comptables.",{ok:"Enregistrer"}))) return;
   try{
-    // FUSION (et non remplacement) : on relit la config existante et on n'écrase QUE
-    // les clés éditées. Indispensable pour préserver les clés hors éditeur
-    // (cron_empreinte_secret, trial_days, app_version, sms_pack_1000_enabled, etc.).
-    var curCfg = await _sb.from("app_config").select("config").eq("id",1).maybeSingle();
-    var merged = Object.assign({}, (curCfg.data && curCfg.data.config) || {}, newConfig);
-    var r = await _sb.from("app_config").update({config:merged}).eq("id",1);
-    if(r.error){ alert("Erreur : "+r.error.message); return; }
-    var _avCfg={}; Object.keys(newConfig).forEach(function(k){ var o=(curCfg.data&&curCfg.data.config)||{}; if(String(o[k])!==String(newConfig[k])) _avCfg[k]=o[k]; });
-    await lxJournal("EDIT_APP_CONFIG",{cible:"app_config",avant:_avCfg,apres:newConfig});
-    alert("✅ Configuration mise à jour. Les modifs sont actives partout.");
+    var r = await _sb.rpc("admin_config_maj",{p_cles:newConfig});
+    if(r.error){ await lxAlert("Enregistrement refusé, rien n'a été modifié : "+r.error.message); return; }
+    window._appConfig = Object.assign({}, cur, newConfig);
+    await lxJournal("EDIT_APP_CONFIG",{cible:"app_config",avant:(r.data&&r.data.avant)||{},apres:newConfig});
+    toast("✅ Configuration enregistrée ("+nb+" modification(s)).");
     loadAppConfigEditor();
-  }catch(e){ alert("Erreur : "+e.message); }
+  }catch(e){ await lxAlert("Enregistrement impossible, rien n'a été modifié : "+(e&&e.message||e)); }
 }
 
 // ===== NF525 (2026-10-15 : UNE seule page, source de vérité = RPC admin_nf525_etat) =====
