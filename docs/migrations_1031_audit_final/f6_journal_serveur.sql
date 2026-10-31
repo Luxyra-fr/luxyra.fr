@@ -16,6 +16,7 @@ declare d text := pg_get_functiondef('lx_prive.admin_journal_auto'::regproc);
   a3 text := $q$coalesce(v_new, v_old) ->> 'cle', coalesce(v_new, v_old) ->> 'salon_id');$q$;
   b3 text := $q$coalesce(v_new, v_old) ->> 'cle', coalesce(v_new, v_old) ->> 'siret', coalesce(v_new, v_old) ->> 'signature', coalesce(v_new, v_old) ->> 'salon_id');$q$;
 begin
+  if position(b1 in d) > 0 then return; end if;  -- déjà appliqué : script rejouable
   if position(a1 in d)=0 or position(a2 in d)=0 or position(a3 in d)=0 then raise exception 'motif introuvable'; end if;
   d := replace(replace(replace(d, a1, b1), a2, b2), a3, b3);
   execute d;

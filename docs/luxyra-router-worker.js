@@ -255,7 +255,8 @@ async function __wrappedApiHandler(request, url, env) {
       return jsonResponse({ error: "Not found" }, 404);
     } catch (err) {
       console.error("Worker error:", err);
-      return jsonResponse({ error: err.message }, 500);
+      // 2026-10-31 audit final : jamais le détail technique au navigateur (il reste dans les journaux du worker)
+      return jsonResponse({ error: "Erreur interne" }, 500);
     }
 }
 
@@ -283,7 +284,7 @@ function lxEntetesAdmin(resp) {
     h.set("Referrer-Policy", "no-referrer");
     h.set("X-Robots-Tag", "noindex, nofollow");
     h.set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()");
-    h.set("Strict-Transport-Security", "max-age=31536000");
+    h.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
     h.set("Cross-Origin-Opener-Policy", "same-origin");
     h.delete("Access-Control-Allow-Origin");
     return new Response(resp.body, { status: resp.status, statusText: resp.statusText, headers: h });
@@ -662,14 +663,15 @@ async function lxGuardSalon(request, env, salonId) {
     // 2026-10-31 audit final I5 : l'admin ne peut plus AGIR à la place d'un établissement (SMS, paiements, remboursements,
     // invitations, envoi au comptable, réponses aux demandes…) : seules les lectures dont le panneau a besoin restent permises.
     // Garantie serveur de la « vue admin lecture seule », même si le filtre du navigateur était contourné.
-    if (!LX_ROUTES_SALON_ADMIN_LECTURE.has(_p)) return jsonResponse({ error: "Administration : lecture seule sur les établissements" }, 403);
-    // 2026-10-31 audit final F6 : l'admin agissant sur une route d'établissement laisse une trace serveur
-    // (route + établissement, jamais le contenu de la demande)
+    const _refus = !LX_ROUTES_SALON_ADMIN_LECTURE.has(_p);
+    // 2026-10-31 audit final F6 : l'admin sur une route d'établissement laisse une trace serveur, y compris quand
+    // il est refusé (route + établissement + compte, jamais le contenu de la demande)
     try {
       const _sid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(salonId || "")) ? String(salonId) : null;
       await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/admin_log`, { method: "POST", headers: _sbHeaders(env, { Prefer: "return=minimal" }),
-        body: JSON.stringify({ action: "ADMIN_ROUTE_ETABLISSEMENT", admin_email: String(u.email || "admin"), salon_id: _sid, cible: _p.slice(0, 200), details: "Accès admin via " + _p.slice(0, 200), origine: "auto" }) });
+        body: JSON.stringify({ action: _refus ? "ADMIN_ROUTE_REFUSEE" : "ADMIN_ROUTE_ETABLISSEMENT", admin_user_id: u.id || null, admin_email: String(u.email || "admin"), salon_id: _sid, cible: _p.slice(0, 200), details: (_refus ? "Refusé (lecture seule) : " : "Accès admin via ") + _p.slice(0, 200), origine: "auto" }) });
     } catch (_) {}
+    if (_refus) return jsonResponse({ error: "Administration : lecture seule sur les établissements" }, 403);
     return null;
   }
   if (!(await lxOwnsSalon(env, u.id, salonId))) return jsonResponse({ error: "Accès refusé" }, 403);
@@ -691,7 +693,9 @@ const LX_ROUTES_SALON = new Set([
   "/api/compta/envoi" // 2026-10-27 : envoi au comptable (propriétaire du salon)
 ]);
 // 2026-10-31 audit final I5 : routes d'établissement que l'admin peut encore appeler (lecture / lien de consultation)
-const LX_ROUTES_SALON_ADMIN_LECTURE = new Set(["/api/admin/export-nf525", "/api/stripe/portal", "/api/stripe/connect-status"]);
+// (2026-10-31 contre-audit : /api/stripe/portal retiré — le portail permet de résilier ou de changer la carte ;
+//  le panneau ouvre à la place la fiche client dans le tableau de bord Stripe)
+const LX_ROUTES_SALON_ADMIN_LECTURE = new Set(["/api/admin/export-nf525", "/api/stripe/connect-status"]);
 function lxUrlLuxyra(u) {
   try { const x = new URL(String(u)); return x.protocol === "https:" && (x.hostname === "luxyra.fr" || x.hostname.endsWith(".luxyra.fr")); } catch (e) { return false; }
 }

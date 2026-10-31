@@ -916,3 +916,9 @@ Aucune table, fonction ni déclencheur fiscal modifié ; lecture seule de `carte
 - Essai en transaction annulée : admin aal2 lit (5 prestations, 6 clients) mais UPDATE = 0 ligne, INSERT refusé (42501) ; propriétaire UPDATE = 1 ligne, INSERT accepté par la RLS. Retour arrière vérifié identique au texte d'origine des policies.
 - Fichiers : docs/migrations_1031_i3/i3_admin_ecriture_metier.sql (md5 2c325633…), retour arrière exact i3_retour_arriere.sql.
 - 31/10/2026 (nuit, hors périmètre fiscal) : admin_tableau_de_bord v3 en lecture seule (docs/migrations_1031_i3/tdb_compteurs_v3.sql, retour exact tdb_compteurs_v3_retour.sql, vérifié en transaction annulée) : « essais » et « actifs » hors comptes de test/offerts, « tests » = tous les comptes de test ou offerts ouverts. admin.html : bandeau d'attestation repliable (sous la fiche et les fenêtres, place réservée en bas de page), en-tête de fiche sans débordement sur téléphone, libellés des compteurs clarifiés, lien Mentions légales canonique.
+
+### 31/10/2026 (nuit, suite) — Lot sécurité admin 2 (hors périmètre fiscal)
+- Nature : droits d'accès de l'administration et journal admin uniquement. Aucune fonction de caisse, de clôture, de bon cadeau, de facture ni de signature modifiée ; aucune donnée fiscale lue en écriture.
+- `admin_delete_salon_cascade` : seule la liste des tables change (admin_log conservé) ; garde-fous fiscaux (refus si historique fiscal) inchangés.
+- Fonctions de caisse qui acceptent encore l'admin (à décider par Alexandre, non modifiées) : creer_ticket_avoir, consommer_bon_cadeau, recrediter_bon_cadeau, lx_pack_consommer, cloturer_exercice, cloturer_mois, lx_facture_emettre, lx_z_forcer_admin, edge rdv-empreinte-capture.
+- Fichier : docs/migrations_1031_audit_final/securite_admin_2.sql (rejouable).
