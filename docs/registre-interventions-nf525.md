@@ -989,3 +989,8 @@ Aucune table, fonction ni déclencheur fiscal modifié ; lecture seule de `carte
 - RGPD : les lignes JET 410 contiennent l'ancienne et la nouvelle adresse, conservées 6 ans avec le JET (obligation fiscale) ; mention ajoutée sur securite-rgpd.html.
 - Banc : docs/migrations_1031_audit_final/tests_acces_admin_caisse.sql relancé le 31/10 (transaction annulée) : 11/11 REFUSÉ, historique=f, hist_jet_signe=f, hist_tk_signe=t, trace_admin=1, trace_proprio=0, tva_admin=1, cfg_admin=REFUSÉ, cfg_migration=passe, cfg_proprio=passe, cfg_serveur=passe, insert/update admin propriétaire=REFUSÉ, proprio_reset=passe.
 - Fichiers : nf525_admin_sans_ecriture_caisse_3.sql (aller, rejouable) / nf525_admin_sans_ecriture_caisse_avant_3.sql (retour exact, md5 vérifiés).
+
+### 31/10/2026 — Banc d'accès rejoué après correction (vérification finale indépendante)
+- Correction du banc uniquement (aucune fonction modifiée) : la contre-épreuve « signature de ticket » est faite dans un sous-bloc annulé par exception (la table des signatures est inaltérable : l'ancien DELETE annulait toute la simulation, d'où hist_jet_signe=NULL lors d'un passage précédent).
+- Résultat obtenu (transaction annulée) : is_admin=t, historique=f, hist_jet_signe=f, hist_tk_signe=t, trace_admin=1, trace_proprio=0, proprio_reset=passe, tva_admin=1, cfg_admin=REFUSÉ, cfg_migration/cfg_proprio/cfg_serveur=passe, insert/update admin propriétaire=REFUSÉ ; 11/11 opérations de caisse REFUSÉES à l'éditeur (lx_pack_consommer : « Pack introuvable », aucun forfait en base).
+- Verdict de la vérification indépendante : droits de l'éditeur sur la caisse prêts pour un audit NF525.

@@ -26,10 +26,14 @@ begin
     values (v_id, 'JET', 1, 'nf525_jet', v_jet, 1, 'banc', 'banc', null, 'ES256', (select key_id from nf525_cles where active limit 1));
     hist2 := public.salon_a_historique_fiscal(v_id);
     -- contre-épreuve : une signature de ticket rend l'historique fiscal vrai
-    insert into nf525_signatures(salon_id, type, seq, source_table, source_id, source_num, data_to_sign, signature, prev_signature, algo, key_id)
-    values (v_id, 'TK', 1, 'tickets', gen_random_uuid(), 1, 'banc', 'banc', null, 'ES256', (select key_id from nf525_cles where active limit 1));
-    hist3 := public.salon_a_historique_fiscal(v_id);
-    delete from nf525_signatures where salon_id = v_id and type = 'TK';
+    -- (sous-bloc annulé par exception : la table de signatures est inaltérable, aucun DELETE possible)
+    begin
+      insert into nf525_signatures(salon_id, type, seq, source_table, source_id, source_num, data_to_sign, signature, prev_signature, algo, key_id)
+      values (v_id, 'TK', 1, 'tickets', gen_random_uuid(), 1, 'banc', 'banc', null, 'ES256', (select key_id from nf525_cles where active limit 1));
+      hist3 := public.salon_a_historique_fiscal(v_id);
+      raise exception 'lx_banc_annule';
+    exception when others then if sqlerrm <> 'lx_banc_annule' then raise; end if;
+    end;
   exception when others then hist2 := null; v_res := v_res || E'\nsimulation signature JET : ' || left(sqlerrm, 80); end;
   -- objets RÉELS d'un autre établissement (le contrôle d'accès doit refuser AVANT toute écriture ; tout est annulé à la fin)
   select id into v_tk from tickets order by created_at desc limit 1;
