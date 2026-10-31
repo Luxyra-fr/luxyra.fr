@@ -876,3 +876,10 @@ secours, deux appareils), aucune application du SQL, aucune publication.
 
 ### 31/10/2026 — Quotas d'envoi, campagnes e-mail en série, jetons QR (hors périmètre fiscal)
 Aucune table, fonction ni déclencheur fiscal modifié ; lecture seule de `cartes_cadeaux`. SQL `docs/migrations_1031_quota/quota_qr.sql` appliqué (lx_envoi_quota_rendre, lx_qr_resoudre restreint aux bons actifs, lx_qr_jetons_menage + cron quotidien, FK qr_jetons → salons ON DELETE CASCADE). Worker : quota décompté après validation et anti-doublon, rendu si Brevo refuse. App (garde 20261031-9) : e-mails en série espacés (3,1 s) avec nouvelle tentative sur 429, progression et « limite du jour ». Bancs : campagne 8/8, worker bons v3 40/40, app bons 26/26, sur mesure 37/37.
+
+### 31/10/2026 — Notifications push de l'admin (hors périmètre fiscal)
+- Constat : l'abonnement push du téléphone Android de l'admin était bien créé (journal PUSH_APPAREIL_AJOUTE, envoi accepté à 09:25 UTC) puis déclaré expiré (HTTP 410) par le service de push ; send-push le supprimait en silence et rien ne le recréait (2 lignes 57/58 dues à un double appui).
+- admin.html : anti double appui sur « Activer » ; réparation automatique à chaque ouverture (permission accordée + abonnement absent ou absent de la base -> recréé et enregistré sans message ; désactivation explicite mémorisée) ; état « cet appareil est inscrit depuis… » et marque « cet appareil » ; résultat du test explicite.
+- admin/sw-admin.js : pushsubscriptionchange -> ré-abonnement immédiat avec la même clé + message à l'admin ouverte.
+- send-push v22 (verify_jwt TRUE inchangé ; code déployé = docs/edge_1031_push/send-push/index.ts) : résumé de chaque envoi dans les journaux de la fonction ; abonnement ADMIN expiré retiré -> avertissement server_errors (type d'appareil seulement, aucune adresse).
+- Table héritée admin_push_subscriptions (mai 2026) : plus utilisée par le code, laissée en place (aucune suppression).
