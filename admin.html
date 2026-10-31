@@ -661,7 +661,7 @@ async function loadData(){
           documents_locked:!!s.documents_locked,
           verifiedAt:s.verified_at,notesAdmin:s.notes_admin||"",
           userId:s.user_id||"",
-          stripeCust:s.stripe_customer_id||"",stripeSub:s.stripe_subscription_id||"",
+          stripeCust:s.stripe_customer_id||"",stripeSub:s.stripe_subscription_id||"",modeCaisse:s.mode_caisse||"",
           connectId:s.stripe_connect_id||"",connectStatus:s.stripe_connect_status||"not_started",
           plan:s.plan||"essential",status:s.status||"active",metier:cfg.metier||s.metier||"coiffure",metiersAutres:Array.isArray(s.metiers_autres)?s.metiers_autres:[],modeActivite:s.mode_activite||"salon",zoneKm:s.zone_deplacement_km,tauxTva:s.taux_tva,
           subdomain:s.subdomain||"",clients:0,collabs:0,ca:0,
@@ -942,15 +942,23 @@ function render(){
 
 // ===== DASHBOARD =====
 // ===== COCKPIT HELPERS =====
-// MRR par salon — logique : is_free actif → 0 ; sinon customPrice si non null sinon PLANS[plan].prix
+// Compte de test (exclu des chiffres) : caisse en mode test, « Salon Démo » / « Luxyra Démo », offert en cours.
+// Même règle que lx_prive.salon_est_test() côté serveur (admin_tableau_de_bord).
+function lxEstTest(s){
+  if(!s) return true;
+  if(s.modeCaisse==='test') return true;
+  if(/^\s*(salon|luxyra)\s+d[eé]mo/i.test(s.nom||'')) return true;
+  if(s.isFree && (!s.freeUntil || new Date(s.freeUntil)>new Date())) return true;
+  return false;
+}
+// Revenu mensuel d'un établissement : uniquement un abonnement Stripe EN COURS (actif ou impayé), hors test,
+// au vrai montant : prix personnalisé (remise) > tarif Fondateur > tarif du plan. Un plan offert compte 0.
 function mrrOf(s){
-  if(s.status!=='active'&&s.status!=='past_due')return 0;
-  if(s.isFree){
-    if(!s.freeUntil)return 0;
-    if(new Date(s.freeUntil)>new Date())return 0;
-  }
-  if(s.customPrice!=null&&s.customPrice!=='')return Number(s.customPrice)||0;
-  // 2026-10-09 : un Pro Fondateur paie le tarif Fondateur
+  if(!s||!s.stripeSub) return 0;
+  if(s.status!=='active'&&s.status!=='past_due') return 0;
+  if(s.fermeLe) return 0;
+  if(lxEstTest(s)) return 0;
+  if(s.customPrice!=null&&s.customPrice!=='') return Number(s.customPrice)||0;
   if(s.plan==='pro'&&s.isFounder){ var c=window._appConfig||{}; return Number(c.plan_pro_founder_eur!=null?c.plan_pro_founder_eur:14.99); }
   return gPlan(s.plan).prix||0;
 }
@@ -1063,7 +1071,7 @@ function shortcutClick(url){
 }
 
 // ===== TABLEAU DE BORD (2026-10-15) =====
-// Les 10 chiffres + « Alertes du jour », calculés côté serveur en UN appel (RPC admin_tableau_de_bord).
+// Tableau de bord : alertes du jour, 4 cartes clés, essais non convertis, puis le reste (repliable). Calcul serveur en UN appel (RPC admin_tableau_de_bord v2, règle « abonnement Stripe en cours, hors test »).
 // Crédits Brevo et sauvegarde GitHub : routes admin du worker (mises en cache côté serveur).
 window._TDB=null; window._TDBt=0; window._TDBerr=null; window._TDBbrevo=null; window._TDBgh=null;
 function lxAller(page, extra){
@@ -1077,7 +1085,9 @@ function lxTdbLocal(){
   var e7=SALONS.filter(function(s){ if(s.status!=='trial'||!s.trialEnd||s.fermeLe) return false; var d=(new Date(s.trialEnd)-now)/864e5; return d>=0&&d<7; })
     .map(function(s){ return {id:s.id,nom:s.nom,fin:s.trialEnd,jours:Math.max(0,Math.ceil((new Date(s.trialEnd)-now)/864e5))}; });
   var imp=SALONS.filter(function(s){return s.status==='past_due'&&!s.fermeLe;}).map(function(s){return {id:s.id,nom:s.nom,stripe_customer:s.stripeCust};});
-  return {local:true, mrr:{total:mrrTotal(),variation:null}, abonnes:{payants:SALONS.filter(function(s){return mrrOf(s)>0;}).length, essais:SALONS.filter(function(s){return s.status==='trial'&&!s.fermeLe;}).length},
+  var nc=SALONS.filter(function(s){ return !s.fermeLe&&s.trialEnd&&!s.stripeSub&&s.status!=='active'&&s.status!=='past_due'&&!/^\s*(salon|luxyra)\s+d[eé]mo/i.test(s.nom||'')&&!(s.isFree&&(!s.freeUntil||new Date(s.freeUntil)>new Date())); var t=new Date(s.trialEnd).getTime(); return t<now&&t>now-90*864e5; })
+    .map(function(s){ return {id:s.id,nom:s.nom,fin:s.trialEnd,statut:s.status,depuis_jours:Math.floor((now-new Date(s.trialEnd))/864e5)}; });
+  return {local:true, mrr:{total:mrrTotal(),variation:null}, essais_non_convertis:nc, abonnes:{payants:SALONS.filter(function(s){return mrrOf(s)>0;}).length, essais:SALONS.filter(function(s){return s.status==='trial'&&!s.fermeLe&&!/^\s*(salon|luxyra)\s+d[eé]mo/i.test(s.nom||'');}).length},
     essais_7j:e7, impayes:imp, support:{non_lus:window.ADMIN_UNREAD_CHAT||0,plus_ancien:null}, bot:null, a_reparer:null, nf525:null, nuit:null, alertes:[], compteurs:{}};
 }
 async function lxTdbCharger(force){
@@ -1111,61 +1121,22 @@ function lxTdbRendu(){
   if(!d){ el.innerHTML='<div class="card" style="text-align:center;color:var(--text3)">Chargement du tableau de bord…</div>'; return; }
   var nom=function(id){ var s=gSalon(id); return s?s.nom:'?'; };
   var h='';
-  if(window._TDBerr) h+='<div class="card" style="border-left:4px solid var(--orange);font-size:12px;color:var(--text2)">⚠️ Calcul serveur indisponible ('+saEsc(window._TDBerr)+'). Chiffres partiels calculés dans le navigateur. Appliquer <code>docs/migrations_1015/admin_structure.sql</code>.</div>';
-  h+='<div class="kpi-row">';
-  // 1. Revenu mensuel
-  var m=d.mrr||{}, v=m.variation;
-  h+=_tdbCarte({label:'Revenu mensuel (MRR)',valeur:fmtM(m.total||0),couleur:'var(--gold)',icone:'💰',page:'revenus/mrr',
-    sous:(v==null?'variation 30 j : pas encore de relevé':(v>=0?'+':'')+fmtM(v)+' depuis le relevé du '+fmtD(m.ref_mois))});
-  // 2. Payants / essais
-  var ab=d.abonnes||{};
-  h+=_tdbCarte({label:'Payants / en essai',valeur:saEsc(ab.payants||0)+' <span style="color:var(--text3)">/</span> <span style="color:var(--orange)">'+saEsc(ab.essais||0)+'</span>',icone:'🏠',page:'salons/liste',sous:'établissements payants / essais en cours'});
-  // 3. Essais < 7 j
-  var e7=d.essais_7j||[];
-  h+=_tdbCarte({label:'Essais finissant sous 7 j',valeur:saEsc(e7.length),couleur:e7.length?'var(--orange)':'var(--text2)',icone:'⏰',page:'revenus/impayes',
-    liste:e7.map(function(x){return saEsc(x.nom)+' — '+saEsc(x.jours)+' j';})});
-  // 4. Impayés
-  var imp=d.impayes||[];
-  h+=_tdbCarte({label:'Paiements échoués / impayés',valeur:saEsc(imp.length),couleur:imp.length?'var(--red)':'var(--green)',icone:'💳',page:'revenus/impayes',
-    liste:imp.map(function(x){return saEsc(x.nom)+(x.depuis?' depuis le '+fmtD(x.depuis):'');})});
-  // 5. Support
-  var su=d.support||{}, pa=su.plus_ancien;
-  h+=_tdbCarte({label:'Messages support non lus',valeur:saEsc(su.non_lus||0),couleur:su.non_lus?'var(--red)':'var(--text2)',icone:'💬',page:'communication/chat',extra:su.non_lus?'nonlus':null,
-    sous:pa?'plus ancien : il y a '+saEsc(pa.heures)+' h ('+saEsc(nom(pa.salon_id))+')':'aucun message en attente'});
-  // 6. Bot
-  var bo=d.bot;
-  h+=_tdbCarte({label:'Questions transmises par le bot',valeur:bo?saEsc(bo.sans_reponse||0):'?',couleur:bo&&bo.sans_reponse?'var(--orange)':'var(--text2)',icone:'🤖',page:'communication/chat',
-    sous:bo?'sans réponse humaine · '+saEsc(bo.total_30j||0)+' escalade(s) sur 30 j':'données indisponibles'});
-  // 7. À réparer
-  var ar=d.a_reparer;
-  h+=_tdbCarte({label:'« À réparer » graves',valeur:ar&&ar.graves!=null?saEsc(ar.graves):'?',couleur:ar&&ar.graves?'var(--red)':'var(--green)',icone:'🔧',page:'qualite/areparer',
-    sous:ar&&ar.total!=null?saEsc(ar.total)+' point(s) au total sur 72 h':(ar&&ar.erreur?'erreur : '+saEsc(ar.erreur):'—')});
-  // 8. NF525
-  var nf=d.nf525;
-  var nfLib={ok:'Conforme',attention:'À surveiller',ko:'Problème'};
-  h+=_tdbCarte({label:'État NF525',valeur:nf&&nf.verdict?saEsc(nf.icone||'')+' '+saEsc(nfLib[nf.verdict]||nf.verdict):'?',petit:true,couleur:nf&&nf.verdict==='ok'?'var(--green)':(nf&&nf.verdict==='attention'?'var(--orange)':'var(--red)'),icone:'🧾',page:'qualite/nf525',
-    sous:nf&&nf.problemes!=null?saEsc(nf.problemes)+' contrôle(s) non conforme(s)':(nf&&nf.erreur?'erreur : '+saEsc(nf.erreur):'—')});
-  // 9. Sauvegarde de nuit
+  if(window._TDBerr) h+='<div class="card" style="border-left:4px solid var(--orange);font-size:12px;color:var(--text2)">⚠️ Calcul serveur indisponible ('+saEsc(window._TDBerr)+'). Chiffres partiels calculés dans le navigateur.</div>';
+
+  // Données partagées
+  var m=d.mrr||{}, v=m.variation, ab=d.abonnes||{}, e7=d.essais_7j||[], nc=d.essais_non_convertis||[], imp=d.impayes||[];
+  var su=d.support||{}, pa=su.plus_ancien, bo=d.bot, ar=d.a_reparer, nf=d.nf525;
   var gh=window._TDBgh||{}, nuit=d.nuit||{};
   var sv=null; if(gh.connecte && gh.workflows) sv=gh.workflows.find(function(w){return w.fichier==='sauvegarde-nuit.yml';});
-  var svVal, svSous, svCol;
-  if(sv && !sv.erreur){ svVal=sv.ok?'✅ OK':'❌ Échec'; svCol=sv.ok?'var(--green)':'var(--red)'; svSous=sv.dernier_termine?'dernière : '+saEsc(new Date(sv.dernier_termine.debut).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}))+(sv.en_retard?' (en retard)':''):'aucune exécution'; }
-  else if(sv && sv.erreur){ svVal='⚠️ ?'; svCol='var(--orange)'; svSous=saEsc(sv.erreur); }
-  else { svVal='GitHub non connecté'; svCol='var(--text3)'; svSous='tâches de nuit de la base : '+(nuit.ok===true?'<span style="color:var(--green)">OK</span>':(nuit.ok===false?'<span style="color:var(--orange)">à vérifier</span>':'?')); }
-  h+=_tdbCarte({label:'Sauvegarde de nuit',valeur:svVal,petit:true,couleur:svCol,icone:'💾',page:'qualite/sauvegardes',sous:svSous});
-  // 10. Brevo
   var bv=window._TDBbrevo||{}, C=brevoCfg();
   var cr=bv.smsCredits, smsFr=cr!=null?Math.floor(cr/C.ratio):null;
-  h+=_tdbCarte({label:'Crédits Brevo',valeur:bv.error?'?':(cr==null?'?':saEsc(Number(cr).toLocaleString('fr-FR'))),couleur:smsFr!=null&&smsFr<C.seuil?'var(--red)':'var(--text)',icone:'📱',page:'diffusion/sms',
-    sous:bv.error?saEsc(bv.error):(smsFr!=null?'≈ '+saEsc(smsFr.toLocaleString('fr-FR'))+' SMS France (estimation)':'—')});
-  h+='</div>';
 
-  // ALERTES DU JOUR : serveur + quelques points calculés ici (suivi commercial, santé, Brevo, GitHub)
+  // 1) ALERTES DU JOUR (en premier) : serveur + points calculés ici
   var A=(d.alertes||[]).slice();
   var auj=new Date().toISOString().slice(0,10);
-  var nouveaux=SALONS.filter(function(s){ return asSuivi(s.id).etape==='nouveau' && !s.fermeLe && (Date.now()-new Date(s.created).getTime())<30*864e5; });
+  var nouveaux=SALONS.filter(function(s){ return asSuivi(s.id).etape==='nouveau' && !s.fermeLe && !lxEstTest(s) && (Date.now()-new Date(s.created).getTime())<30*864e5; });
   if(nouveaux.length) A.push({niveau:'info',texte:nouveaux.length+' nouvel(aux) établissement(s) à accueillir (étape « Nouveau »)',page:'salons/liste',af:{etape:'nouveau'}});
-  if(window._SALON_HEALTH){ var sf=SALONS.filter(function(s){var hh=_salonHealthOf(s.id);return hh&&hh.score!=null&&hh.score<40&&(s.status==='active'||s.status==='past_due')&&(Date.now()-new Date(s.created).getTime())>14*864e5;}); if(sf.length) A.push({niveau:'attention',texte:sf.length+' client(s) avec une santé faible (< 40) : '+sf.map(function(x){return x.nom;}).join(', '),page:'salons/liste',af:{tri:'sante'}}); }
+  if(window._SALON_HEALTH){ var sf=SALONS.filter(function(s){var hh=_salonHealthOf(s.id);return hh&&hh.score!=null&&hh.score<40&&mrrOf(s)>0&&(Date.now()-new Date(s.created).getTime())>14*864e5;}); if(sf.length) A.push({niveau:'attention',texte:sf.length+' client(s) avec une santé faible (< 40) : '+sf.map(function(x){return x.nom;}).join(', '),page:'salons/liste',af:{tri:'sante'}}); }
   if(d.local){ var rp=SALONS.filter(function(s){var su2=asSuivi(s.id);return su2.rappel_le&&su2.rappel_le<=auj;}); if(rp.length) A.push({niveau:'info',texte:rp.length+' rappel(s) prévu(s)',page:'salons/liste',af:{rappel:'1',tri:'rappel'}}); }
   if(smsFr!=null && smsFr<C.seuil) A.push({niveau:'attention',texte:'Crédits Brevo bas : ≈ '+smsFr+' SMS restants',page:'diffusion/sms'});
   if(sv && !sv.erreur && !sv.ok) A.push({niveau:'grave',texte:'Sauvegarde de nuit en échec ou en retard',page:'qualite/sauvegardes'});
@@ -1175,11 +1146,61 @@ function lxTdbRendu(){
   h+='<div class="card"><h3>🎯 Alertes du jour <span style="color:var(--text3);font-weight:500">('+A.length+')</span></h3>';
   if(!A.length) h+='<div style="padding:14px;text-align:center;color:#66bb6a;font-weight:700">✨ Rien à signaler aujourd’hui.</div>';
   A.forEach(function(a,i){
-    h+='<div onclick="lxAlerteOuvrir('+i+')" style="display:flex;gap:10px;align-items:center;padding:9px 4px;border-top:1px solid var(--border);cursor:pointer">'+
+    h+='<div class="lx-ligne-alerte" onclick="lxAlerteOuvrir('+i+')" style="display:flex;gap:10px;align-items:center;padding:10px 4px;min-height:40px;border-top:1px solid var(--border);cursor:pointer">'+
       '<span style="font-size:10px;font-weight:800;padding:2px 7px;border-radius:5px;background:'+col[a.niveau]+'22;color:'+col[a.niveau]+';white-space:nowrap">'+lib[a.niveau]+'</span>'+
       '<span style="flex:1;font-size:13px">'+saEsc(a.texte)+'</span><span style="color:var(--text3)">→</span></div>';
   });
   h+='<div style="font-size:11px;color:var(--text3);margin-top:8px">Calculé le '+(d.genere_le?saEsc(new Date(d.genere_le).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})):'—')+'.</div></div>';
+
+  // 2) LES 4 CARTES CLÉS
+  h+='<div class="kpi-row">';
+  h+=_tdbCarte({label:'Revenu mensuel',valeur:fmtM(m.total||0),couleur:'var(--gold)',icone:'💰',page:'revenus/mrr',
+    sous:saEsc(ab.payants||0)+' client(s) payant(s) · '+(v==null?'pas encore de relevé à 30 j':(v>=0?'+':'')+fmtM(v)+' depuis le relevé du '+fmtD(m.ref_mois))});
+  var i7=(d.inscrits_7j!=null?d.inscrits_7j:SALONS.filter(function(s){return !/^\s*(salon|luxyra)\s+d[eé]mo/i.test(s.nom||'')&&(Date.now()-new Date(s.created).getTime())<7*864e5;}).length);
+  h+=_tdbCarte({label:'Nouveaux inscrits (7 j)',valeur:saEsc(i7),couleur:i7?'var(--green)':'var(--text2)',icone:'🆕',page:'salons/liste',
+    sous:saEsc(ab.essais||0)+' essai(s) en cours'});
+  h+=_tdbCarte({label:'Essais : fin sous 7 j / terminés',valeur:'<span style="color:'+(e7.length?'var(--orange)':'var(--text2)')+'">'+saEsc(e7.length)+'</span> <span style="color:var(--text3)">/</span> <span style="color:'+(nc.length?'var(--red)':'var(--text2)')+'">'+saEsc(nc.length)+'</span>',icone:'⏰',page:'revenus/impayes',
+    sous:'finissent bientôt / terminés sans abonnement (90 j)'});
+  var bsr=bo?(bo.sans_reponse||0):0, sup=(su.non_lus||0)+bsr;
+  h+=_tdbCarte({label:'Support en attente',valeur:saEsc(sup),couleur:sup?'var(--red)':'var(--text2)',icone:'💬',page:'communication/chat',extra:su.non_lus?'nonlus':null,
+    sous:saEsc(su.non_lus||0)+' non lu(s) · '+saEsc(bsr)+' transmis par le bot'+(pa?' · plus ancien : '+saEsc(pa.heures)+' h':'')});
+  h+='</div>';
+
+  // 3) ESSAIS TERMINÉS NON CONVERTIS
+  h+='<div class="card"><h3>🧭 Essais terminés non convertis <span style="color:var(--text3);font-weight:500">('+nc.length+')</span></h3>';
+  if(!nc.length) h+='<div style="padding:10px;color:var(--text3);font-size:13px">Aucun essai terminé sans abonnement sur les 90 derniers jours.</div>';
+  var stLib={trial:'essai',suspended:'suspendu',cancelled:'résilié',expired:'expiré'};
+  nc.slice(0,8).forEach(function(x){
+    h+='<div onclick="openD(\''+saJs(x.id)+'\')" style="display:flex;gap:10px;align-items:center;padding:10px 4px;min-height:40px;border-top:1px solid var(--border);cursor:pointer">'+
+      '<span style="flex:1;font-size:13px;font-weight:600">'+saEsc(x.nom)+'</span>'+
+      '<span style="font-size:12px;color:var(--text3)">'+saEsc(stLib[x.statut]||x.statut||'')+' · fini il y a '+saEsc(x.depuis_jours)+' j</span><span style="color:var(--text3)">→</span></div>';
+  });
+  if(nc.length>8) h+='<div style="font-size:12px;color:var(--text3);padding-top:6px">… et '+(nc.length-8)+' autre(s)</div>';
+  h+='</div>';
+
+  // 4) LE RESTE, REPLIABLE
+  var r='<div class="kpi-row">';
+  r+=_tdbCarte({label:'Essais finissant sous 7 j',valeur:saEsc(e7.length),couleur:e7.length?'var(--orange)':'var(--text2)',icone:'⏰',page:'revenus/impayes',
+    liste:e7.map(function(x){return saEsc(x.nom)+' — '+saEsc(x.jours)+' j';})});
+  r+=_tdbCarte({label:'Paiements échoués / impayés',valeur:saEsc(imp.length),couleur:imp.length?'var(--red)':'var(--green)',icone:'💳',page:'revenus/impayes',
+    liste:imp.map(function(x){return saEsc(x.nom)+(x.depuis?' depuis le '+fmtD(x.depuis):'');})});
+  r+=_tdbCarte({label:'Questions transmises par le bot',valeur:bo?saEsc(bo.sans_reponse||0):'?',couleur:bo&&bo.sans_reponse?'var(--orange)':'var(--text2)',icone:'🤖',page:'communication/chat',
+    sous:bo?'sans réponse humaine · '+saEsc(bo.total_30j||0)+' sur 30 j':'données indisponibles'});
+  r+=_tdbCarte({label:'« À réparer » graves',valeur:ar&&ar.graves!=null?saEsc(ar.graves):'?',couleur:ar&&ar.graves?'var(--red)':'var(--green)',icone:'🔧',page:'qualite/areparer',
+    sous:ar&&ar.total!=null?saEsc(ar.total)+' point(s) au total sur 72 h':(ar&&ar.erreur?'erreur : '+saEsc(ar.erreur):'—')});
+  var nfLib={ok:'Conforme',attention:'À surveiller',ko:'Problème'};
+  r+=_tdbCarte({label:'État NF525',valeur:nf&&nf.verdict?saEsc(nf.icone||'')+' '+saEsc(nfLib[nf.verdict]||nf.verdict):'?',petit:true,couleur:nf&&nf.verdict==='ok'?'var(--green)':(nf&&nf.verdict==='attention'?'var(--orange)':'var(--red)'),icone:'🧾',page:'qualite/nf525',
+    sous:nf&&nf.problemes!=null?saEsc(nf.problemes)+' contrôle(s) non conforme(s)':(nf&&nf.erreur?'erreur : '+saEsc(nf.erreur):'—')});
+  var svVal, svSous, svCol;
+  if(sv && !sv.erreur){ svVal=sv.ok?'✅ OK':'❌ Échec'; svCol=sv.ok?'var(--green)':'var(--red)'; svSous=sv.dernier_termine?'dernière : '+saEsc(new Date(sv.dernier_termine.debut).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}))+(sv.en_retard?' (en retard)':''):'aucune exécution'; }
+  else if(sv && sv.erreur){ svVal='⚠️ ?'; svCol='var(--orange)'; svSous=saEsc(sv.erreur); }
+  else { svVal='GitHub non connecté'; svCol='var(--text3)'; svSous='tâches de nuit de la base : '+(nuit.ok===true?'<span style="color:var(--green)">OK</span>':(nuit.ok===false?'<span style="color:var(--orange)">à vérifier</span>':'?')); }
+  r+=_tdbCarte({label:'Sauvegarde de nuit',valeur:svVal,petit:true,couleur:svCol,icone:'💾',page:'qualite/sauvegardes',sous:svSous});
+  r+=_tdbCarte({label:'Crédits Brevo',valeur:bv.error?'?':(cr==null?'?':saEsc(Number(cr).toLocaleString('fr-FR'))),couleur:smsFr!=null&&smsFr<C.seuil?'var(--red)':'var(--text)',icone:'📱',page:'diffusion/sms',
+    sous:bv.error?saEsc(bv.error):(smsFr!=null?'≈ '+saEsc(smsFr.toLocaleString('fr-FR'))+' SMS France (estimation)':'—')});
+  r+='</div>';
+  var ouvert=false; try{ ouvert=localStorage.getItem('lx_tdb_plus')==='1'; }catch(e){}
+  h+='<details class="card lx-replie"'+(ouvert?' open':'')+' ontoggle="try{localStorage.setItem(\'lx_tdb_plus\',this.open?\'1\':\'0\')}catch(e){}"><summary style="cursor:pointer;font-weight:700;min-height:40px;display:flex;align-items:center">📊 Autres indicateurs (impayés, bot, à réparer, NF525, sauvegarde, Brevo)</summary><div style="margin-top:10px">'+r+'</div></details>';
   el.innerHTML=h;
 }
 function lxAlerteOuvrir(i){
