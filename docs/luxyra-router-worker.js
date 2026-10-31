@@ -270,6 +270,24 @@ export default {
           && (url.hostname === "www.luxyra.fr" || (url.protocol === "http:" && url.hostname === "luxyra.fr"))) {
         return Response.redirect("https://luxyra.fr" + url.pathname + url.search, 301);
       }
+      // 2026-10-31 : administration sur son propre sous-domaine admin.luxyra.fr, HORS du périmètre des applis Play (TWA)
+      // déclarées pour luxyra.fr dans assetlinks.json -> les notifications admin restent dans Chrome.
+      // Sur ce sous-domaine : jamais de .well-known (aucune appli ne peut le revendiquer), « / » et « /admin » = admin.html,
+      // les fichiers (js, css, icônes, polices, service worker) et /api/* passent normalement, toute autre page HTML -> luxyra.fr.
+      if (url.hostname === "admin.luxyra.fr") {
+        if (url.pathname.startsWith("/.well-known/")) return new Response("Not found", { status: 404, headers: { "Cache-Control": "no-store" } });
+        if (!url.pathname.startsWith("/api/") && (request.method === "GET" || request.method === "HEAD")) {
+          const _p = url.pathname;
+          if (_p === "/" || _p === "/index.html" || _p === "/admin" || _p === "/admin/") {
+            const _u = new URL(url); _u.pathname = "/admin.html";
+            return await handleExistingRoutes(new Request(_u.toString(), request), _u, env);
+          }
+          const _estPage = /\.html?$/i.test(_p) || !/\.[a-z0-9]{1,8}$/i.test(_p);
+          if (_estPage && !/^\/(admin|admin-twa)\.html$/i.test(_p) && !_p.startsWith("/admin/")) {
+            return Response.redirect("https://luxyra.fr" + _p + url.search, 302);
+          }
+        }
+      }
       // /health (et /api/health) — monitoring externe (UptimeRobot, Better Stack, etc.)
       // Capté AVANT le routing normal pour répondre vite (pas de DOM/HTML).
       if (url.pathname === "/health" || url.pathname === "/api/health") {
@@ -8189,7 +8207,7 @@ Sitemap: https://luxyra.fr/sitemap.xml
     });
   }
 
-  if (host !== "luxyra.fr" && host !== "www.luxyra.fr" && host.endsWith(".luxyra.fr")) {
+  if (host !== "luxyra.fr" && host !== "www.luxyra.fr" && host !== "admin.luxyra.fr" && host.endsWith(".luxyra.fr")) { // 31/10 : admin.luxyra.fr = administration, pas un site d'établissement
     const subdomain = host.replace(".luxyra.fr", "");
     if (url.pathname !== "/" && url.pathname !== "/index.html" && url.pathname !== "/site.html") {
       return Response.redirect(`https://luxyra.fr${url.pathname}${url.search}`, 302);
