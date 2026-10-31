@@ -407,19 +407,19 @@ if(window._lxDemo && !window._lxDemoTables){
 }
 </script>
 <script src="lx-qrcode.js"></script>
-<script src="lx-bon-cadeau.js?v=20261031-3"></script>
+<script src="lx-bon-cadeau.js?v=20261031-4"></script>
 <script src="lx-nf525-attestation.js?v=20261010-06"></script>
 <!-- luxyra-supabase.js : tag <script src> classique qui bloque nativement le parsing
      HTML (nécessaire pour que checkSession() soit défini AVANT tout inline script de
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261031-7"></script>
+<script src="luxyra-supabase.js?v=20261031-8"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261031-7";
+  var attendu="20261031-8";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -24104,7 +24104,8 @@ function lxBonModele(){ var m=(window.SALON_CONFIG&&SALON_CONFIG.bonModele)||"";
 function _lxBonEtab(){
   var S=window.SALON_CONFIG||{};
   var logo=S.logo||"";
-  return {nom:S.nom||"", sous:S.sousTitre||"", adresse:S.adresse||"", cpv:[S.cp,S.ville].filter(Boolean).join(" "), tel:S.tel||"", logo:logo, couleur:S.couleurPrimaire||"#c8a84e"};
+  var pal=(window.LXBon&&LXBon.paletteValide)?LXBon.paletteValide(S.bonPalette):""; // 31/10 (-2) : palette au choix (vide = couleur de l'établissement)
+  return {nom:S.nom||"", sous:S.sousTitre||"", adresse:S.adresse||"", cpv:[S.cp,S.ville].filter(Boolean).join(" "), tel:S.tel||"", logo:logo, couleur:S.couleurPrimaire||"#c8a84e", palette:pal};
 }
 function _lxBonMentionTva(g){
   var _txB=(g&&g.tvaRate!=null&&!isNaN(Number(g.tvaRate)))?Number(g.tvaRate)*100:lxTauxTVA();
@@ -24131,16 +24132,77 @@ function lxBonImprimerModele(gcId, format){
   if(typeof cM==="function")cM();
   if(!LXBon.imprimer(m,_lxBonPourRendu(g),_lxBonEtab(),format)){ if(typeof toast==="function")toast("Autorisez les fenêtres pop-up pour imprimer","warning"); }
 }
+// 31/10 (-2) : e-carte depuis la caisse (même e-mail que la vente en ligne) — jamais pour un bon annulé, utilisé, épuisé ou non payé
+function _lxBonEcarteAutorise(g){
+  if(!g) return {ok:false,raison:"Bon introuvable."};
+  if(window._lxVueAdmin) return {ok:false,raison:"Vue admin : lecture seule."};
+  if(g.st!=="active") return {ok:false,raison:"Ce bon n’est plus actif (annulé ou utilisé) : l’e-carte ne peut pas être envoyée."};
+  if(!(Number(g.rem)>0.004)) return {ok:false,raison:"Ce bon est entièrement utilisé."};
+  if(g.paymentStatus && g.paymentStatus!=="paid") return {ok:false,raison:"Ce bon n’est pas payé."};
+  if(g.exp && new Date(g.exp)<new Date(new Date().toDateString())) return {ok:false,raison:"Ce bon est expiré."};
+  return {ok:true};
+}
+function _lxBonEcarteDonnees(g){
+  var e=_lxBonEtab(), b=_lxBonPourRendu(g);
+  var adr=[e.adresse,e.cpv].filter(Boolean).join(" ");
+  return {nom:e.nom, sous:e.sous, logo:(/^https:\/\//i.test(e.logo||"")?e.logo:""), occasion:b.occasion, pour:b.pour, de:b.de, msg:b.msg, valeur:b.val, code:b.code,
+    dateExp:b.exp, perimetre:(b.scope==="Prestations uniquement"?"Prestations":(b.scope==="Produits uniquement"?"Produits":"Prestations et produits")), mentionTva:b.tva, tkNum:b.tk||null,
+    couleur:e.couleur, palette:e.palette, adresse:adr, tel:e.tel, siret:(SALON_CONFIG&&SALON_CONFIG.siret)||"",
+    intro:"Bonjour,\nvoici votre carte cadeau "+(e.nom||"")+". Présentez-la sur place, sur papier ou sur votre téléphone."};
+}
+function lxBonEcarte(gcId){
+  var g=null;for(var i=0;i<GC.length;i++){if(GC[i].id===gcId){g=GC[i];break;}}
+  var a=_lxBonEcarteAutorise(g); if(!a.ok){ showAlert(a.raison,"warning"); return; }
+  if(!window.LXBon||!LXBon.emailDocument){ showAlert("Module des bons cadeaux non chargé : rechargez la page.","error"); return; }
+  var def=String(g.buyerEmail||"").trim();
+  var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="max-width:440px">';
+  h+='<h2 style="text-align:center">Envoyer l’e-carte</h2><div style="font-size:12.5px;color:var(--text3);text-align:center;margin-bottom:12px">Bon '+LXBon.esc(g.code)+' · '+LXBon.esc(String(Number(g.val).toFixed(2)).replace(".",","))+' €. Le client reçoit la carte au modèle de vos bons, avec le code et le QR code.</div>';
+  h+='<label style="font-size:12px;font-weight:700;color:var(--text2)">E-mail du destinataire</label><input id="lxEcMail" type="email" autocomplete="off" value="'+LXBon.esc(def)+'" placeholder="client@exemple.fr" style="width:100%;margin:6px 0 12px;padding:11px;border-radius:10px">';
+  h+='<div style="display:flex;gap:8px"><button class="btn" style="flex:1" onclick="cM()">Annuler</button><button class="btn bg" style="flex:2" id="lxEcBtn" onclick="lxBonEcarteEnvoyer(\''+g.id+'\')">Envoyer</button></div></div></div>';
+  document.getElementById("modal").innerHTML=h;
+  setTimeout(function(){ var i=document.getElementById("lxEcMail"); if(i) i.focus(); },50);
+}
+async function lxBonEcarteEnvoyer(gcId){
+  var g=null;for(var i=0;i<GC.length;i++){if(GC[i].id===gcId){g=GC[i];break;}}
+  var a=_lxBonEcarteAutorise(g); if(!a.ok){ showAlert(a.raison,"warning"); return; }
+  var to=String((document.getElementById("lxEcMail")||{}).value||"").trim().toLowerCase();
+  if(!/^[a-z0-9._%+'-]+@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,24}$/.test(to)){ showAlert("Adresse e-mail invalide.","warning"); return; }
+  if(window._lxDemo){ showAlert("Démonstration : l’e-carte n’est pas envoyée (rien ne part en mode démo).","info"); return; }
+  var bt=document.getElementById("lxEcBtn"); if(bt){ bt.disabled=true; bt.textContent="Envoi…"; }
+  var m=lxBonModele()||"maison", o=_lxBonEcarteDonnees(g);
+  var html=LXBon.emailDocument(m,o);
+  // anti-doublon : un même bon n'est envoyé qu'une fois par adresse et par jour (multi-appareils)
+  var r=await sendEmailViaWorker(to,"", "Votre carte cadeau "+(SALON_CONFIG.nom||"")+" — "+String(Number(g.val).toFixed(2)).replace(".",",")+" €", html, {context:"bon_ecarte", dedupKey:(_salonId||"")+"|ecarte|"+g.code+"|"+to+"|"+new Date().toISOString().slice(0,10)});
+  if(r&&r.ok){
+    try{ if(typeof auditLog==="function") auditLog("BON_ECARTE","E-carte du bon "+g.code+" envoyée à "+to.replace(/^(.).*(@.*)$/,"$1***$2")); }catch(_){}
+    if(typeof cM==="function") cM();
+    showAlert(r.deduplique?"Cette e-carte a déjà été envoyée aujourd’hui à cette adresse.":"E-carte envoyée à "+to+".", r.deduplique?"info":"success");
+  } else {
+    if(bt){ bt.disabled=false; bt.textContent="Envoyer"; }
+    showAlert("Envoi impossible : "+((r&&r.error)||"erreur réseau")+".","error");
+  }
+}
+function lxBonPartager(gcId){
+  var g=null;for(var i=0;i<GC.length;i++){if(GC[i].id===gcId){g=GC[i];break;}}
+  if(!g) return;
+  var b=_lxBonPourRendu(g), S=window.SALON_CONFIG||{};
+  var t="Carte cadeau "+(S.nom||"")+"\n"+(b.pour?"Pour "+b.pour+(b.de?", de la part de "+b.de:"")+"\n":(b.de?"De la part de "+b.de+"\n":""))+
+    "Valeur : "+String(Number(b.val).toFixed(2)).replace(".",",")+" €\nCode : "+b.code+(b.exp?"\nValable jusqu’au "+b.exp:"")+"\nÀ présenter sur place"+([S.adresse,S.cp,S.ville].filter(Boolean).length?" : "+[S.adresse,[S.cp,S.ville].filter(Boolean).join(" ")].filter(Boolean).join(", "):"")+".";
+  if(navigator.share){ navigator.share({title:"Carte cadeau",text:t}).catch(function(){}); return; }
+  try{ navigator.clipboard.writeText(t).then(function(){ showAlert("Texte copié : collez-le dans un SMS, WhatsApp ou un e-mail.","success"); },function(){ prompt("Copiez ce texte :",t); }); }catch(_){ prompt("Copiez ce texte :",t); }
+}
 // Réglage : fenêtre de choix du modèle avec aperçu en direct (recto / verso) aux couleurs et au logo de l'établissement
 function lxBonChoisirModele(){
   if(!window.LXBon){ showAlert("Module des bons cadeaux non chargé : rechargez la page.","error"); return; }
   if(typeof hasPermission==="function" && !hasPermission("settings")){ showAlert("Réservé au responsable de l’établissement.","warning"); return; }
   LXBon.poserCss();
   window._lxBonModeleChoix = lxBonModele();
+  window._lxBonPaletteChoix = (LXBon.paletteValide?LXBon.paletteValide(SALON_CONFIG.bonPalette):"");
   _lxBonRendreChoix();
 }
 function _lxBonRendreChoix(){
   var cur=window._lxBonModeleChoix||"", etab=_lxBonEtab(), bon=_lxBonExemple();
+  var palC=window._lxBonPaletteChoix||""; etab.palette=palC;
   var opts=[{id:"",t:"Modèle actuel",d:"Le rendu que vous utilisez aujourd’hui (10 thèmes au choix à l’impression). Rien ne change."},
             {id:"maison",t:"Maison",d:"Papeterie sobre : papier ivoire, double liseré à votre couleur. S’imprime parfaitement sur une imprimante de bureau."},
             {id:"ecrin",t:"Écrin",d:"Graphique : aplat profond de votre couleur, grande initiale, montant en grand. Idéal à l’écran et chez un imprimeur."}];
@@ -24153,6 +24215,13 @@ function _lxBonRendreChoix(){
     h+='<div style="width:100%;text-align:left"><div style="font-weight:800;font-size:14px;color:'+(on?'var(--gold)':'var(--text)')+'">'+(on?'● ':'○ ')+o.t+'</div><div style="font-size:11.5px;color:var(--text3);margin-top:4px;line-height:1.4;white-space:normal;font-family:Nunito,Inter,sans-serif;font-weight:400;letter-spacing:0">'+o.d+'</div></div></button>';
   });
   h+='</div>';
+  if(cur && LXBon.PALETTES){
+    h+='<div style="font-size:12px;font-weight:800;color:var(--text2);margin:0 0 6px">Couleurs</div><div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">';
+    Object.keys(LXBon.PALETTES).forEach(function(k){ var cle=(k==="etab")?"":k, on=(cle===palC), pp=LXBon.palette(etab.couleur,cle);
+      h+='<button class="btn" onclick="window._lxBonPaletteChoix=\''+cle+'\';_lxBonRendreChoix()" style="display:inline-flex;align-items:center;gap:7px;padding:7px 11px;border-radius:999px;font-size:12px;border:2px solid '+(on?'var(--gold)':'transparent')+' !important;background:'+(on?'rgba(200,168,78,.18)':'transparent')+';color:'+(on?'var(--gold)':'inherit')+'">'+(on?'✓ ':'')+'<span style="display:inline-flex;border-radius:50%;overflow:hidden;width:18px;height:18px;border:1px solid rgba(255,255,255,.25)"><i style="width:9px;background:'+pp.deep+'"></i><i style="width:9px;background:'+pp.accent+'"></i></span>'+LXBon.esc(LXBon.PALETTES[k].nom)+'</button>';
+    });
+    h+='</div>';
+  }
   h+='<div style="background:#ECE8E0;border-radius:14px;padding:18px;display:flex;gap:16px;flex-wrap:wrap;justify-content:center;align-items:center;min-height:200px">';
   if(cur){ h+='<div>'+LXBon.carte(cur,"recto",bon,etab,{mm:3.6})+'</div><div>'+LXBon.carte(cur,"verso",bon,etab,{mm:3.6})+'</div>'; }
   else { h+='<div style="color:#5E5850;font-size:13px;text-align:center;max-width:380px">Rendu historique conservé : à l’impression, vous choisissez un des 10 thèmes (Luxe noir et or, Noël, Saint-Valentin…).</div>'; }
@@ -24165,14 +24234,15 @@ function _lxBonRendreChoix(){
 async function lxBonEnregistrerModele(){
   var v=window._lxBonModeleChoix||""; if(v!=="maison"&&v!=="ecrin") v="";
   if(window._lxVueAdmin){ showAlert("Vue admin : lecture seule, le modèle n’est pas modifiable ici.","info"); return; } // 31/10 (R4)
-  var avant=lxBonModele();
-  SALON_CONFIG.bonModele=v;
+  var avant=lxBonModele(), avantPal=SALON_CONFIG.bonPalette||"";
+  var pal=(LXBon.paletteValide?LXBon.paletteValide(window._lxBonPaletteChoix||""):""); if(!v) pal=avantPal; // modèle historique : palette inchangée
+  SALON_CONFIG.bonModele=v; SALON_CONFIG.bonPalette=pal;
   var ok=true;
   // 31/10 (R1) : écriture FORCÉE de la section (même si la valeur locale n'a pas changé : un autre appareil a pu en enregistrer une autre)
-  try{ if(typeof lxCfgEcrireSections==="function"){ var r1=await lxCfgEcrireSections({bonModele:v}); if(r1===false) ok=false; } else { var r=await saveSalonConfig(); if(r===false) ok=false; } }catch(e){ ok=false; }
-  if(!ok){ SALON_CONFIG.bonModele=avant; showAlert("Modèle non enregistré. Vérifiez la connexion et réessayez.","error"); return; }
+  try{ if(typeof lxCfgEcrireSections==="function"){ var r1=await lxCfgEcrireSections({bonModele:v, bonPalette:pal}); if(r1===false) ok=false; } else { var r=await saveSalonConfig(); if(r===false) ok=false; } }catch(e){ ok=false; }
+  if(!ok){ SALON_CONFIG.bonModele=avant; SALON_CONFIG.bonPalette=avantPal; showAlert("Modèle non enregistré. Vérifiez la connexion et réessayez.","error"); return; }
   if((SALON_CONFIG.bonModele||"")!==v){ showAlert("Un autre appareil a enregistré un autre modèle entre-temps. Rouvrez le choix du modèle pour vérifier.","warning"); return; }
-  try{ if(typeof auditLog==="function") auditLog("BON_MODELE", "Modèle des bons cadeaux : "+(v?LXBon.MODELES[v]:"actuel (historique)")); }catch(_){}
+  try{ if(typeof auditLog==="function") auditLog("BON_MODELE", "Modèle des bons cadeaux : "+(v?LXBon.MODELES[v]+" · couleurs : "+((LXBon.PALETTES[pal||"etab"]||{}).nom||"établissement"):"actuel (historique)")); }catch(_){}
   if(typeof cM==="function")cM();
   showAlert("Modèle des bons cadeaux enregistré : "+(v?LXBon.MODELES[v]:"modèle actuel")+".","success");
   try{ if(typeof go==="function") go(window._currentPage||"gifts"); }catch(_){}
@@ -24188,9 +24258,21 @@ function _lxBonChoixImpression(g){
     h+='<div onclick="printGiftTexteSeul(\''+g.id+'\')" style="cursor:pointer;border-radius:12px;border:1.5px solid var(--gold);background:rgba(200,168,78,.12);padding:12px 14px;margin-bottom:12px"><div style="font-weight:800;color:var(--gold);font-size:13px">Mes bons pré-imprimés (texte seul)</div><div style="font-size:11.5px;color:var(--text3)">Imprime seulement les informations, calées sur vos bons papier.</div></div>';
   }
   h+='<div style="background:#ECE8E0;border-radius:14px;padding:16px;display:flex;gap:12px;flex-wrap:wrap;justify-content:center">'+LXBon.carte(m,"recto",bon,etab,{mm:3.2})+LXBon.carte(m,"verso",bon,etab,{mm:3.2})+'</div>';
-  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px">';
-  h+='<button class="btn bg" style="padding:12px;white-space:normal" onclick="lxBonImprimerModele(\''+g.id+'\',\'carte\')"><div style="width:100%;text-align:center"><div style="font-weight:800">Carte 85 × 55 mm</div><div style="font-size:11px;font-weight:400;font-family:Nunito,Inter,sans-serif;letter-spacing:0;margin-top:2px">recto et verso, à découper et plier</div></div></button>';
-  h+='<button class="btn bg" style="padding:12px;white-space:normal" onclick="lxBonImprimerModele(\''+g.id+'\',\'a6\')"><div style="width:100%;text-align:center"><div style="font-weight:800">Carte A6</div><div style="font-size:11px;font-weight:400;font-family:Nunito,Inter,sans-serif;letter-spacing:0;margin-top:2px">avec le message, pour une enveloppe</div></div></button>';
+  // 31/10 (-2) : formats sur feuille A4 (la plupart des établissements n'ont que de l'A4) + e-carte par e-mail
+  var _bt=function(f,t,d,prim){ return '<button class="btn'+(prim?' bg':'')+'" style="padding:11px;white-space:normal" onclick="lxBonImprimerModele(\''+g.id+'\',\''+f+'\')"><div style="width:100%;text-align:center"><div style="font-weight:800">'+t+'</div><div style="font-size:11px;font-weight:400;font-family:Nunito,Inter,sans-serif;letter-spacing:0;margin-top:2px">'+d+'</div></div></button>'; };
+  h+='<div style="font-size:12px;font-weight:800;color:var(--text2);margin:12px 0 6px">Imprimer sur une feuille A4</div>';
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+  h+=_bt("plie","Carte pliée en deux","recto simple : on plie, on découpe (178 × 115 mm)",true);
+  h+=_bt("carte","Carte 85 × 55 mm","format carte de visite, à découper et plier",true);
+  h+=_bt("a6a4","Carte A6 avec message","centrée sur A4, traits de coupe",false);
+  h+=_bt("pleine","Bon pleine page","une page A4 entière",false);
+  h+='</div>';
+  h+='<div style="font-size:11px;color:var(--text3);margin-top:6px;text-align:center">Papier A6 dans l’imprimante ? <a href="javascript:void 0" style="color:var(--gold)" onclick="lxBonImprimerModele(\''+g.id+'\',\'a6\')">Imprimer au format A6</a></div>';
+  var _ecOk=_lxBonEcarteAutorise(g);
+  h+='<div style="font-size:12px;font-weight:800;color:var(--text2);margin:14px 0 6px">Sans imprimer</div>';
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+  h+='<button class="btn bg" style="padding:11px;white-space:normal'+(_ecOk.ok?'':';opacity:.5')+'" onclick="lxBonEcarte(\''+g.id+'\')"><div style="width:100%;text-align:center"><div style="font-weight:800">Envoyer l’e-carte</div><div style="font-size:11px;font-weight:400;font-family:Nunito,Inter,sans-serif;letter-spacing:0;margin-top:2px">par e-mail, au modèle de vos bons</div></div></button>';
+  h+='<button class="btn" style="padding:11px;white-space:normal" onclick="lxBonPartager(\''+g.id+'\')"><div style="width:100%;text-align:center"><div style="font-weight:800">Partager</div><div style="font-size:11px;font-weight:400;font-family:Nunito,Inter,sans-serif;letter-spacing:0;margin-top:2px">texte à envoyer par SMS, WhatsApp…</div></div></button>';
   h+='</div>';
   h+='<div style="display:flex;gap:8px;margin-top:10px"><button class="btn" style="flex:1" onclick="cM()">Annuler</button><button class="btn" style="flex:1;font-size:12px" onclick="chooseGiftThemeAncien(\''+g.id+'\')">Anciens thèmes</button>'+((typeof hasPermission!=="function"||hasPermission("settings"))?'<button class="btn" style="flex:1;font-size:12px" onclick="lxBonChoisirModele()">Changer de modèle</button>':'')+'</div>';
   h+='</div></div>';
@@ -32417,7 +32499,9 @@ var LX_CFG_SECTIONS = [
   {k:"app_bg_op", mem:function(){return (window._bgOp!=null && isFinite(+window._bgOp))?Number(window._bgOp):undefined;}, set:function(v){ window._bgOp=Number(v); try{ var b=document.getElementById("appBg"); if(b&&isFinite(+v)) b.style.opacity=(+v)/100; }catch(_e){} }},
   {k:"pcats", mem:function(){return Array.isArray(window.PCATS_EXTRA)?window.PCATS_EXTRA:undefined;}, set:function(v){ window.PCATS_EXTRA=Array.isArray(v)?v.slice():[]; _lxPcatsFusion(); }},
   // 2026-10-31 : modele des bons cadeaux ("maison" | "ecrin" | "" = rendu historique). Valeur vide ecrite elle aussi (retour au rendu historique).
-  {k:"bonModele", mem:function(){ return (SALON_CONFIG && typeof SALON_CONFIG.bonModele==="string") ? SALON_CONFIG.bonModele : undefined; }, set:function(v){ SALON_CONFIG.bonModele=(v==="maison"||v==="ecrin")?v:""; }}
+  {k:"bonModele", mem:function(){ return (SALON_CONFIG && typeof SALON_CONFIG.bonModele==="string") ? SALON_CONFIG.bonModele : undefined; }, set:function(v){ SALON_CONFIG.bonModele=(v==="maison"||v==="ecrin")?v:""; }},
+  // 2026-10-31 (-2) : palette des bons cadeaux ("" = couleur de l'établissement ; sinon clé de LXBon.PALETTES)
+  {k:"bonPalette", mem:function(){ return (SALON_CONFIG && typeof SALON_CONFIG.bonPalette==="string") ? SALON_CONFIG.bonPalette : undefined; }, set:function(v){ SALON_CONFIG.bonPalette=(typeof v==="string"&&/^[a-z_]{0,20}$/.test(v))?v:""; }}
 ].concat(["metier","modeActivite","domicile","migrationStatus","migrationRequestedAt","migrationRequestId","migrationDataScope","migrationSourceSoftware","migrationRgpdSentAt","facebookUrl","instagramUrl","tiktokUrl"].map(function(n){
   var _vide=/Url$/.test(n); // 2026-10-11 : un lien de réseau social effacé ("") doit rester effacé
   return {k:n, mem:function(){ return (SALON_CONFIG && SALON_CONFIG[n]!==undefined && SALON_CONFIG[n]!==null && (_vide || SALON_CONFIG[n]!=="")) ? SALON_CONFIG[n] : undefined; },

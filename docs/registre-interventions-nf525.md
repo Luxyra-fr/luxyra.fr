@@ -859,3 +859,9 @@ secours, deux appareils), aucune application du SQL, aucune publication.
 - Worker : **Brevo refusait tout e-mail dont le nom du destinataire est vide** (« name is missing in to ») -> nom omis s'il est vide. Effet : les e-mails sans prénom (code d'inscription depuis ~11 h, confirmation d'adresse et mot de passe oublié depuis le 30/10 ~23 h) n'étaient pas envoyés ; corrigé, envoi réel vérifié vers luxyra.dev@gmail.com.
 - lx-client.js v=20261031-3 (fenêtre ouverte aussi sur 429 + code_requis ; texte « Le code sera envoyé à »), politique de confidentialité, fiche bot.
 - Bancs : code_test_v2 38/38, code_ui_v2 12/12.
+
+## 31/10/2026 (après-midi) — Bons cadeaux v2 : palettes, e-carte depuis la caisse, formats A4 (présentation uniquement)
+- Demande d'Alexandre (« l'e-carte n'est que par mail après achat sur internet ? beaucoup n'ont que des feuilles A4 ; un seul style de couleur »).
+- Aucune table, fonction, déclencheur ni donnée fiscale touchés : montants, codes, TVA, tickets, BUU/BUM, paiement inchangés. Pas de SQL (hors fiche bot).
+- lx-bon-cadeau.js v20261031-4 (bloc commun LXB-PARTAGE), app.html / luxyra-supabase.js (garde 20261031-8), bons-cadeaux.html, bons-cadeaux-success.html, worker (`carte.palette`, contexte e-mail `bon_ecarte`), edge gc-stripe-webhook v14 (verify_jwt false).
+- Bancs : bons_v2_test 51/51, bons_v2_app 26/26, XSS (anciens + nouveaux rendus) sans exécution, QR décodés (OpenCV) sur e-carte et impressions.

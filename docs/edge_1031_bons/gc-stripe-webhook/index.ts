@@ -1,3 +1,6 @@
+// gc-stripe-webhook v14 — 2026-10-31 (-2) : e-carte = bloc commun de lx-bon-cadeau.js (copie exacte, docs/bons_1031/sync_partage.mjs) :
+//    palettes au choix (config_json.bonPalette), code du bon sur sa propre ligne (jamais coupé), logo sans pastille, échappement
+//    des guillemets (R5), logo https uniquement. Paiement, montants, codes, ticket, mention TVA : INCHANGÉS. verify_jwt = false.
 // gc-stripe-webhook v13 — 2026-10-31 : e-mail de l'acheteur au MODÈLE choisi par l'établissement (config_json.bonModele =
 //    « maison » | « ecrin », réglage Bons cadeaux › Modèle des bons) : gabarit en tableaux (Gmail / Outlook), couleurs dérivées de
 //    la couleur principale de l'établissement (mêmes règles que lx-bon-cadeau.js), pas de police Google, objet sans emoji,
@@ -64,7 +67,7 @@ const CORS = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 function json(s:number,b:unknown){ return new Response(JSON.stringify(b),{status:s,headers:{...CORS,"Content-Type":"application/json"}}); }
-function esc(s:unknown){ return String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+function esc(s:unknown){ return String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;"); } // 31/10 (-2, R5) : guillemets aussi
 
 // 2026-10-28 (-2) : mention TVA du bon selon sa qualification (CGI art. 256 ter). Exportée pour les tests unitaires.
 export function lxBonMentionTva(b: { usage_tva?: string | null; qualif_tva?: any; tva_rate?: number | null }, tauxSalon: number | null | undefined): string {
@@ -151,87 +154,132 @@ const THEMES: Record<string,Theme> = {
 function qrUrl(code:string){ return `https://luxyra.fr/api/qr?d=${encodeURIComponent(code)}&s=160`; }
 
 // ---------------- 2026-10-31 : modèles « Maison » / « Écrin » (présentation seulement) ----------------
-function _h2r(h: string){ const n = parseInt(h.replace("#",""),16); return [(n>>16)&255,(n>>8)&255,n&255]; }
-function _r2h(r:number,g:number,b:number){ return "#"+[r,g,b].map(x=>Math.round(Math.max(0,Math.min(255,x))).toString(16).padStart(2,"0")).join(""); }
-function _r2hsl(c:number[]){ const r=c[0]/255,g=c[1]/255,b=c[2]/255,M=Math.max(r,g,b),m=Math.min(r,g,b); let h=0,s=0; const l=(M+m)/2; if(M!==m){ const d=M-m; s=l>.5?d/(2-M-m):d/(M+m); h=M===r?(g-b)/d+(g<b?6:0):M===g?(b-r)/d+2:(r-g)/d+4; h*=60; } return [h,s,l]; }
-function _hsl2h(h:number,s:number,l:number){ const k=(n:number)=>(n+h/30)%12, a=s*Math.min(l,1-l), f=(n:number)=>l-a*Math.max(-1,Math.min(k(n)-3,Math.min(9-k(n),1))); return _r2h(f(0)*255,f(8)*255,f(4)*255); }
-function _mix(a:string,b:string,t:number){ const A=_h2r(a),B=_h2r(b); return _r2h(A[0]+(B[0]-A[0])*t,A[1]+(B[1]-A[1])*t,A[2]+(B[2]-A[2])*t); }
-function _lin(c:number){ c/=255; return c<=.03928?c/12.92:Math.pow((c+.055)/1.055,2.4); }
-function _lum(h:string){ const c=_h2r(h); return .2126*_lin(c[0])+.7152*_lin(c[1])+.0722*_lin(c[2]); }
-function _ctr(a:string,b:string){ const x=_lum(a),y=_lum(b); return (Math.max(x,y)+.05)/(Math.min(x,y)+.05); }
-export function lxBonPalette(couleur: string | null | undefined){
-  const ok = typeof couleur==="string" && /^#?[0-9a-f]{6}$/i.test(couleur.trim());
-  const acc = ok ? ("#"+String(couleur).trim().replace("#","")).toUpperCase() : "#C8A84E";
-  const [h,s] = _r2hsl(_h2r(acc)); const or = h>=30 && h<=60 && s>.25;
-  let ink = or ? _hsl2h(h,.22,.13) : _hsl2h(h,Math.min(s,.5),.2);
-  if (_ctr(ink,"#F6F1E6") < 7) ink = _hsl2h(h,Math.min(s,.4),.16);
-  const inkSoft = _hsl2h(h,Math.min(s,.18),.36);
-  const deep = or ? "#14120F" : _hsl2h(h,Math.min(s,.4),.14);
-  let foil = or ? acc : _hsl2h(h,Math.min(s,.5),.76);
-  if (_ctr(foil,deep) < 4.5) foil = _hsl2h(h,Math.min(s,.45),.82);
-  return { accent:acc, ink, inkSoft, deep, foil, tint:_mix(acc,"#F6F1E6",.9), line:_mix(acc,"#F6F1E6",.55) };
-}
-export const LX_OCCASIONS: Record<string,string> = { anniversaire:"Joyeux anniversaire", noel:"Joyeux Noël", feteMeres:"Bonne fête maman", stValentin:"Avec tout mon amour", roseGold:"Merci" };
-function _montant(v:number){ const n=Number(v)||0; return Math.round(n*100)%100===0 ? String(Math.round(n)) : n.toFixed(2).replace(".",","); }
-export function buildBonHTMLModele(modele: "maison"|"ecrin", opts: { themeId:string; salonNom:string; salonSous?:string; salonAddr:string; salonTel:string; logoUrl:string|null; couleur?:string|null; valeur:number; code:string; de:string; pour:string; message:string; dateExp:string; siret?:string; mentionTva:string; perimetre:string; tkNum?:number|null; lienSite?:string }): string {
-  const p = lxBonPalette(opts.couleur);
-  const occ = LX_OCCASIONS[opts.themeId] || "";
-  const nom = esc(opts.salonNom || "");
-  const sous = esc(opts.salonSous || "");
-  // logo : seulement une image hébergée (https) ; un logo enregistré en base64 est bloqué par Gmail/Outlook -> marque typographique
-  const logo = opts.logoUrl && /^https:\/\//i.test(opts.logoUrl) ? opts.logoUrl : "";
-  const serif = "'Cormorant Garamond',Georgia,'Times New Roman',serif", sans = (modele==="ecrin" ? "'DM Sans'," : "Inter,") + "Arial,Helvetica,sans-serif";
-  const perim = String(opts.perimetre||"").replace("Services &amp; Produits","Prestations et produits");
-  const msg = opts.message && opts.message !== "Bon offert" ? esc(opts.message) : "";
-  const montant = _montant(opts.valeur);
-  const preheader = `Votre carte cadeau ${opts.salonNom} de ${montant} € — code ${opts.code}`;
-  let carte: string;
-  if (modele === "maison") {
-    carte = `<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;background:#F6F1E6;border:2px solid ${p.accent}">
-<tr><td style="padding:5px"><table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;border:1px solid ${p.accent}"><tr><td align="center" style="padding:30px 22px 26px;font-family:${sans};color:#1C1A17">
-${logo ? `<img src="${esc(logo)}" alt="" height="56" style="display:block;margin:0 auto 14px;height:56px;max-width:180px;border:0">` : ""}
-<div style="font-family:${serif};font-size:22px;letter-spacing:6px;text-transform:uppercase;color:${p.ink};line-height:1.25">${nom}</div>
-${sous ? `<div style="font-size:10px;letter-spacing:4px;text-transform:uppercase;color:${p.inkSoft};margin-top:6px">${sous}</div>` : ""}
-<div style="width:34px;height:1px;background:${p.accent};margin:18px auto 14px;font-size:0;line-height:0">&nbsp;</div>
-<div style="font-family:${serif};font-style:italic;font-size:20px;color:${p.ink}">${occ ? esc(occ) : "Carte cadeau"}</div>
-${opts.pour ? `<div style="font-family:${serif};font-size:30px;color:#1C1A17;margin-top:10px">${esc(opts.pour)},</div>` : ""}
-<div style="font-size:11px;letter-spacing:3px;text-transform:uppercase;color:${p.inkSoft};margin-top:8px">${opts.de ? esc(opts.de) + " vous offre" : "Vous est offert"}</div>
-<div style="font-family:${serif};font-weight:300;font-size:64px;line-height:1.05;color:${p.ink};margin-top:6px">${montant}<span style="font-size:28px">&nbsp;€</span></div>
-<div style="font-size:11px;letter-spacing:3px;text-transform:uppercase;color:${p.inkSoft}">à valoir chez ${nom}</div>
-${msg ? `<div style="font-family:${serif};font-style:italic;font-size:18px;line-height:1.45;color:#3A352E;margin:18px auto 0;max-width:420px">« ${msg} »</div>` : ""}
-</td></tr></table></td></tr></table>`;
-  } else {
-    carte = `<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;background:${p.deep};border-radius:12px">
-<tr><td style="padding:26px 24px 8px;font-family:${sans};color:#F4EFE6">
-<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse"><tr>
-${logo ? `<td style="padding-right:12px"><img src="${esc(logo)}" alt="" height="40" style="display:block;height:40px;max-width:120px;border:0;background:#FBFAF7;border-radius:6px;padding:4px"></td>` : ""}
-<td><div style="font-size:13px;letter-spacing:4px;text-transform:uppercase;color:#F4EFE6">${nom}</div>${sous ? `<div style="font-size:10px;letter-spacing:4px;text-transform:uppercase;color:${p.foil};margin-top:4px">${sous}</div>` : ""}</td></tr></table>
-</td></tr>
-<tr><td style="padding:18px 24px 6px;font-family:${sans};color:#F4EFE6">
-${occ ? `<div style="font-family:${serif};font-style:italic;font-size:22px;color:${p.foil}">${esc(occ)}</div>` : ""}
-<div style="font-size:14px;line-height:1.6;margin-top:6px">${opts.pour ? `Pour <b style="font-weight:600">${esc(opts.pour)}</b>${opts.de ? ", " : ""}` : ""}${opts.de ? `de la part de <b style="font-weight:600">${esc(opts.de)}</b>` : ""}</div>
-${msg ? `<div style="font-family:${serif};font-style:italic;font-size:18px;line-height:1.45;color:#EDE6DA;margin-top:12px">« ${msg} »</div>` : ""}
-</td></tr>
-<tr><td style="padding:10px 24px 24px;font-family:${sans}"><table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse"><tr>
-<td valign="bottom" style="font-size:11px;letter-spacing:4px;text-transform:uppercase;color:${p.foil};padding-bottom:10px"><div style="width:30px;height:1px;background:${p.foil};margin-bottom:10px;font-size:0;line-height:0">&nbsp;</div>Carte cadeau</td>
-<td valign="bottom" align="right" style="font-weight:300;font-size:68px;line-height:1;color:#F4EFE6;letter-spacing:-2px">${montant}<span style="font-size:24px;color:${p.foil};vertical-align:top;letter-spacing:0">€</span></td>
-</tr></table></td></tr></table>`;
+// 31/10 (-2) : couleurs, palettes et e-carte = bloc commun copié à l'identique de lx-bon-cadeau.js (docs/bons_1031/sync_partage.mjs)
+  /*<<LXB-PARTAGE — bloc commun lx-bon-cadeau.js (navigateur) et edge gc-stripe-webhook (e-mail) : NE PAS MODIFIER À UN SEUL
+    ENDROIT. Source : lx-bon-cadeau.js ; copie exacte dans l'edge par docs/bons_1031/sync_partage.mjs (contrôle d'égalité au banc).
+    JavaScript pur (sans types, sans window) : couleurs, palettes, e-mail « e-carte ». Présentation uniquement. */
+  function lxbEsc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+  function lxbHexOk(h) { return typeof h === "string" && /^#?[0-9a-f]{6}$/i.test(h.trim()); }
+  function lxbH2r(h) { h = h.replace("#", ""); var n = parseInt(h, 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
+  function lxbR2h(r, gg, b) { return "#" + [r, gg, b].map(function (x) { return Math.round(Math.max(0, Math.min(255, x))).toString(16).padStart(2, "0"); }).join(""); }
+  function lxbR2hsl(c) { var r = c[0] / 255, gg = c[1] / 255, b = c[2] / 255, M = Math.max(r, gg, b), m = Math.min(r, gg, b), h = 0, s = 0, l = (M + m) / 2; if (M !== m) { var d = M - m; s = l > .5 ? d / (2 - M - m) : d / (M + m); h = M === r ? (gg - b) / d + (gg < b ? 6 : 0) : M === gg ? (b - r) / d + 2 : (r - gg) / d + 4; h *= 60; } return [h, s, l]; }
+  function lxbHsl2h(h, s, l) { var k = function (n) { return (n + h / 30) % 12; }, a = s * Math.min(l, 1 - l), f = function (n) { return l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1))); }; return lxbR2h(f(0) * 255, f(8) * 255, f(4) * 255); }
+  function lxbMix(a, b, t) { var A = lxbH2r(a), B = lxbH2r(b); return lxbR2h(A[0] + (B[0] - A[0]) * t, A[1] + (B[1] - A[1]) * t, A[2] + (B[2] - A[2]) * t); }
+  function lxbLin(c) { c /= 255; return c <= .03928 ? c / 12.92 : Math.pow((c + .055) / 1.055, 2.4); }
+  function lxbLum(h) { var c = lxbH2r(h); return .2126 * lxbLin(c[0]) + .7152 * lxbLin(c[1]) + .0722 * lxbLin(c[2]); }
+  function lxbContraste(a, b) { var x = lxbLum(a), y = lxbLum(b); return (Math.max(x, y) + .05) / (Math.min(x, y) + .05); }
+  var LXB_PAPIER_A = "#F6F1E6", LXB_PAPIER_B = "#FBFAF7";
+  // 2026-10-31 (-2) : palettes au choix de l'établissement (config_json.bonPalette). "" / "etab" = dérivée de sa couleur principale.
+  // accent : liserés, filets (Maison) ; deep : aplat (Écrin) ; foil : dorure sur l'aplat ; ink / inkSoft : textes sur papier.
+  var LXB_PALETTES = {
+    etab:     { nom: "Couleur de l’établissement" },
+    noir_or:  { nom: "Noir & or",        accent: "#C8A84E", deep: "#14120F", foil: "#C8A84E", ink: "#2B2418", inkSoft: "#6A5F4B" },
+    bordeaux: { nom: "Bordeaux & or",    accent: "#8E2B3A", deep: "#3B1219", foil: "#D9B970", ink: "#4A1520", inkSoft: "#7A5A5E" },
+    nuit:     { nom: "Bleu nuit & argent", accent: "#3B4F78", deep: "#121A2B", foil: "#C9D1DE", ink: "#1B2740", inkSoft: "#5A6478" },
+    sauge:    { nom: "Vert sauge",       accent: "#7E9B83", deep: "#24312A", foil: "#CBD8C4", ink: "#23332A", inkSoft: "#5D6B60" },
+    rose:     { nom: "Rose poudré",      accent: "#C98A93", deep: "#4E2C36", foil: "#EBC9CD", ink: "#4A2730", inkSoft: "#7D6064" },
+    taupe:    { nom: "Taupe & or",       accent: "#A88B5C", deep: "#3A322A", foil: "#DCC287", ink: "#3A2E22", inkSoft: "#6E6253" }
+  };
+  function lxbPaletteValide(cle) { return (typeof cle === "string" && cle !== "etab" && Object.prototype.hasOwnProperty.call(LXB_PALETTES, cle)) ? cle : ""; }
+  function lxbPalette(couleur, cle) {
+    var P = LXB_PALETTES[lxbPaletteValide(cle)], acc, ink, inkSoft, deep, foil, h, s;
+    if (P) {
+      acc = P.accent; ink = P.ink; inkSoft = P.inkSoft; deep = P.deep; foil = P.foil;
+      var hs = lxbR2hsl(lxbH2r(acc)); h = hs[0]; s = hs[1];
+    } else {
+      acc = lxbHexOk(couleur) ? ("#" + couleur.trim().replace("#", "")).toUpperCase() : "#C8A84E";
+      var hsl = lxbR2hsl(lxbH2r(acc)); h = hsl[0]; s = hsl[1];
+      var or = h >= 30 && h <= 60 && s > .25;                       // or / jaune : encre bronze, aplat noir chaud
+      ink = or ? lxbHsl2h(h, .22, .13) : lxbHsl2h(h, Math.min(s, .5), .2);
+      inkSoft = lxbHsl2h(h, Math.min(s, .18), .36);
+      deep = or ? "#14120F" : lxbHsl2h(h, Math.min(s, .4), .14);
+      foil = or ? acc : lxbHsl2h(h, Math.min(s, .5), .76);
+    }
+    // garde-fous de contraste (texte) : encre lisible sur le papier, dorure lisible sur l'aplat
+    if (lxbContraste(ink, LXB_PAPIER_A) < 7) ink = lxbHsl2h(h, Math.min(s, .4), .16);
+    if (lxbContraste(foil, deep) < 4.5) foil = lxbHsl2h(h, Math.min(s, .45), .82);
+    // liserés / filets visibles même avec une couleur très claire (sans teinte : gris neutre)
+    var accTrait = lxbContraste(acc, LXB_PAPIER_A) < 1.6 ? (s < .12 ? "#8A857C" : lxbHsl2h(h, Math.max(s, .3), .42)) : acc;
+    var line = lxbMix(accTrait, LXB_PAPIER_A, .55); if (lxbContraste(line, LXB_PAPIER_A) < 1.2) line = lxbMix(accTrait, LXB_PAPIER_A, .3);
+    return { accent: accTrait, accentBrut: acc, ink: ink, inkSoft: inkSoft, deep: deep, foil: foil, tint: lxbMix(acc, LXB_PAPIER_A, .9), line: line, paperA: LXB_PAPIER_A, paperB: LXB_PAPIER_B };
   }
-  const infos = `<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;margin-top:18px;border:1px solid #E6DFD0;background:#FFFFFF">
-<tr><td valign="top" style="padding:18px 18px;font-family:${sans};font-size:13px;line-height:1.6;color:#1C1A17">
-<div style="font-size:10px;letter-spacing:3px;text-transform:uppercase;color:#6A645B">Code de la carte</div>
-<div style="font-size:19px;font-weight:700;letter-spacing:2px;margin:2px 0 10px;color:#1C1A17;white-space:nowrap">${esc(opts.code)}</div>
-<div><b>Valeur :</b> ${(Number(opts.valeur)||0).toFixed(2).replace(".",",")} €</div>
-<div><b>Valable jusqu'au :</b> ${esc(opts.dateExp)}</div>
-<div><b>Utilisable sur :</b> ${perim}, en une ou plusieurs fois</div>
-</td><td valign="top" align="right" width="112" style="padding:16px 14px 16px 0"><img src="${qrUrl(opts.code)}" alt="QR ${esc(opts.code)}" width="96" height="96" style="display:block;border:0;background:#fff"></td></tr>
-<tr><td colspan="2" style="padding:0 18px 16px;font-family:${sans};font-size:11px;line-height:1.6;color:#6A645B;border-top:1px solid #EFE9DC">
-<div style="padding-top:12px">${esc(opts.mentionTva)}${opts.tkNum ? ` — ticket de caisse n°${esc(opts.tkNum)}` : ""}<br>Non remboursable, non échangeable contre espèces.</div></td></tr></table>`;
-  const corps = `<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent">${esc(preheader)}</div>
-<div style="font-family:${sans};font-size:14px;color:#4A453E;margin:0 0 16px;line-height:1.6">Bonjour${opts.de ? " " + esc(opts.de) : ""},<br>merci pour votre achat. Voici votre carte cadeau, à transmettre par e-mail ou à imprimer. Elle se présente sur place, sur papier ou sur téléphone.</div>
-${carte}${infos}
-<div style="font-family:${sans};font-size:12px;color:#6A645B;line-height:1.7;margin-top:16px">${nom}${opts.salonAddr ? " · " + esc(opts.salonAddr) : ""}${opts.salonTel ? " · " + esc(opts.salonTel) : ""}${opts.siret ? "<br>SIRET : " + esc(opts.siret) : ""}</div>`;
-  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>@font-face{font-family:'Cormorant Garamond';font-style:normal;font-weight:300;src:url(https://luxyra.fr/fonts/cormorant-garamond-latin-300-normal.woff2) format('woff2')}@font-face{font-family:'Cormorant Garamond';font-style:italic;font-weight:400;src:url(https://luxyra.fr/fonts/cormorant-garamond-latin-400-italic.woff2) format('woff2')}@font-face{font-family:'Cormorant Garamond';font-style:normal;font-weight:400;src:url(https://luxyra.fr/fonts/cormorant-garamond-latin-400-normal.woff2) format('woff2')}</style></head><body style="margin:0;padding:0">${lxMailLayout(corps, { titre: "Votre carte cadeau", salon: nom || undefined })}</body></html>`;
+  function lxbMontant(v) { var n = Number(v) || 0; return (Math.round(n * 100) % 100 === 0) ? String(Math.round(n)) : n.toFixed(2).replace(".", ","); }
+
+  // E-carte (e-mail) au modèle de l'établissement : tableaux (Gmail / Outlook), sans police Google, QR = image hébergée
+  // (https://luxyra.fr/api/qr, même générateur que l'application : les SVG sont mal affichés par les messageries).
+  // o : {nom, sous, logo (https seulement), occasion, pour, de, msg, valeur, code, dateExp, perimetre, mentionTva, tkNum,
+  //      couleur, palette, adresse, tel, siret, intro (texte, facultatif)} — tous les textes sont échappés ici.
+  function lxbEmailCorps(modele, o) {
+    modele = modele === "ecrin" ? "ecrin" : "maison";
+    var p = lxbPalette(o.couleur, o.palette), E = lxbEsc;
+    var nom = E(o.nom || ""), sous = E(o.sous || "");
+    var logo = (typeof o.logo === "string" && /^https:\/\/[^\s"'<>]+$/i.test(o.logo)) ? o.logo : "";
+    var serif = "'Cormorant Garamond',Georgia,'Times New Roman',serif", sans = (modele === "ecrin" ? "'DM Sans'," : "Inter,") + "Arial,Helvetica,sans-serif";
+    var msg = o.msg && o.msg !== "Bon offert" ? E(o.msg) : "";
+    var mt = lxbMontant(o.valeur), code = String(o.code || "");
+    var qr = "https://luxyra.fr/api/qr?d=" + encodeURIComponent(code) + "&s=160";
+    var carte;
+    if (modele === "maison") {
+      carte = '<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;background:' + p.paperA + ';border:2px solid ' + p.accent + '">' +
+        '<tr><td style="padding:5px"><table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;border:1px solid ' + p.accent + '"><tr><td align="center" style="padding:30px 22px 26px;font-family:' + sans + ';color:#1C1A17">' +
+        (logo ? '<img src="' + E(logo) + '" alt="" height="56" style="display:block;margin:0 auto 14px;height:56px;max-width:180px;border:0;border-radius:6px">' : "") +
+        '<div style="font-family:' + serif + ';font-size:22px;letter-spacing:6px;text-transform:uppercase;color:' + p.ink + ';line-height:1.25">' + nom + "</div>" +
+        (sous ? '<div style="font-size:10px;letter-spacing:4px;text-transform:uppercase;color:' + p.inkSoft + ';margin-top:6px">' + sous + "</div>" : "") +
+        '<div style="width:34px;height:1px;background:' + p.accent + ';margin:18px auto 14px;font-size:0;line-height:0">&nbsp;</div>' +
+        '<div style="font-family:' + serif + ';font-style:italic;font-size:20px;color:' + p.ink + '">' + (o.occasion ? E(o.occasion) : "Carte cadeau") + "</div>" +
+        (o.pour ? '<div style="font-family:' + serif + ';font-size:30px;color:#1C1A17;margin-top:10px">' + E(o.pour) + ",</div>" : "") +
+        '<div style="font-size:11px;letter-spacing:3px;text-transform:uppercase;color:' + p.inkSoft + ';margin-top:8px">' + (o.de ? E(o.de) + " vous offre" : "Vous est offert") + "</div>" +
+        '<div style="font-family:' + serif + ';font-weight:300;font-size:64px;line-height:1.05;color:' + p.ink + ';margin-top:6px">' + mt + '<span style="font-size:28px">&nbsp;€</span></div>' +
+        '<div style="font-size:11px;letter-spacing:3px;text-transform:uppercase;color:' + p.inkSoft + '">à valoir chez ' + nom + "</div>" +
+        (msg ? '<div style="font-family:' + serif + ';font-style:italic;font-size:18px;line-height:1.45;color:#3A352E;margin:18px auto 0;max-width:420px">« ' + msg + " »</div>" : "") +
+        "</td></tr></table></td></tr></table>";
+    } else {
+      carte = '<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;background:' + p.deep + ';border-radius:12px">' +
+        '<tr><td style="padding:26px 24px 8px;font-family:' + sans + ';color:#F4EFE6">' +
+        '<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse"><tr>' +
+        (logo ? '<td style="padding-right:12px"><img src="' + E(logo) + '" alt="" height="40" style="display:block;height:40px;max-width:120px;border:0;border-radius:6px"></td>' : "") +
+        '<td><div style="font-size:13px;letter-spacing:4px;text-transform:uppercase;color:#F4EFE6">' + nom + "</div>" + (sous ? '<div style="font-size:10px;letter-spacing:4px;text-transform:uppercase;color:' + p.foil + ';margin-top:4px">' + sous + "</div>" : "") + "</td></tr></table>" +
+        "</td></tr>" +
+        '<tr><td style="padding:18px 24px 6px;font-family:' + sans + ';color:#F4EFE6">' +
+        (o.occasion ? '<div style="font-family:' + serif + ';font-style:italic;font-size:22px;color:' + p.foil + '">' + E(o.occasion) + "</div>" : "") +
+        '<div style="font-size:14px;line-height:1.6;margin-top:6px">' + (o.pour ? 'Pour <b style="font-weight:600">' + E(o.pour) + "</b>" + (o.de ? ", " : "") : "") + (o.de ? 'de la part de <b style="font-weight:600">' + E(o.de) + "</b>" : "") + "</div>" +
+        (msg ? '<div style="font-family:' + serif + ';font-style:italic;font-size:18px;line-height:1.45;color:#EDE6DA;margin-top:12px">« ' + msg + " »</div>" : "") +
+        "</td></tr>" +
+        '<tr><td style="padding:10px 24px 24px;font-family:' + sans + '"><table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse"><tr>' +
+        '<td valign="bottom" style="font-size:11px;letter-spacing:4px;text-transform:uppercase;color:' + p.foil + ';padding-bottom:10px"><div style="width:30px;height:1px;background:' + p.foil + ';margin-bottom:10px;font-size:0;line-height:0">&nbsp;</div>Carte cadeau</td>' +
+        '<td valign="bottom" align="right" style="font-weight:300;font-size:68px;line-height:1;color:#F4EFE6;letter-spacing:-2px">' + mt + '<span style="font-size:24px;color:' + p.foil + ';vertical-align:top;letter-spacing:0">€</span></td>' +
+        "</tr></table></td></tr></table>";
+    }
+    // 31/10 (-2) : code du bon sur SA PROPRE ligne, pleine largeur, jamais coupé ; QR à côté des informations
+    var infos = '<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;margin-top:18px;border:1px solid #E6DFD0;background:#FFFFFF">' +
+      '<tr><td colspan="2" style="padding:16px 18px 4px;font-family:' + sans + ';color:#1C1A17">' +
+      '<div style="font-size:10px;letter-spacing:3px;text-transform:uppercase;color:#6A645B">Code de la carte</div>' +
+      '<div style="font-size:20px;font-weight:700;letter-spacing:1.5px;margin-top:2px;color:#1C1A17;white-space:nowrap;word-break:keep-all">' + E(code) + "</div></td></tr>" +
+      '<tr><td valign="top" style="padding:8px 18px 16px;font-family:' + sans + ';font-size:13px;line-height:1.6;color:#1C1A17">' +
+      "<div><b>Valeur :</b> " + (Number(o.valeur) || 0).toFixed(2).replace(".", ",") + " €</div>" +
+      "<div><b>Valable jusqu’au :</b> " + E(o.dateExp || "") + "</div>" +
+      "<div><b>Utilisable sur :</b> " + E(o.perimetre || "Prestations et produits") + ", en une ou plusieurs fois</div>" +
+      '</td><td valign="top" align="right" width="112" style="padding:6px 14px 16px 0"><img src="' + E(qr) + '" alt="QR ' + E(code) + '" width="96" height="96" style="display:block;border:0;background:#fff"></td></tr>' +
+      '<tr><td colspan="2" style="padding:0 18px 16px;font-family:' + sans + ';font-size:11px;line-height:1.6;color:#6A645B;border-top:1px solid #EFE9DC">' +
+      '<div style="padding-top:12px">' + E(o.mentionTva || "") + (o.tkNum ? " — ticket de caisse n°" + E(o.tkNum) : "") + "<br>Non remboursable, non échangeable contre espèces.</div></td></tr></table>";
+    var intro = o.intro != null ? E(o.intro).replace(/\n/g, "<br>") : "Bonjour" + (o.de ? " " + E(o.de) : "") + ",<br>merci pour votre achat. Voici votre carte cadeau, à transmettre par e-mail ou à imprimer. Elle se présente sur place, sur papier ou sur téléphone.";
+    var preheader = "Votre carte cadeau " + (o.nom || "") + " de " + mt + " € — code " + code;
+    return '<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent">' + E(preheader) + "</div>" +
+      '<div style="font-family:' + sans + ';font-size:14px;color:#4A453E;margin:0 0 16px;line-height:1.6">' + intro + "</div>" +
+      carte + infos +
+      '<div style="font-family:' + sans + ';font-size:12px;color:#6A645B;line-height:1.7;margin-top:16px">' + nom + (o.adresse ? " · " + E(o.adresse) : "") + (o.tel ? " · " + E(o.tel) : "") + (o.siret ? "<br>SIRET : " + E(o.siret) : "") + "</div>";
+  }
+  var LXB_EMAIL_POLICES = "<style>@font-face{font-family:'Cormorant Garamond';font-style:normal;font-weight:300;src:url(https://luxyra.fr/fonts/cormorant-garamond-latin-300-normal.woff2) format('woff2')}@font-face{font-family:'Cormorant Garamond';font-style:italic;font-weight:400;src:url(https://luxyra.fr/fonts/cormorant-garamond-latin-400-italic.woff2) format('woff2')}@font-face{font-family:'Cormorant Garamond';font-style:normal;font-weight:400;src:url(https://luxyra.fr/fonts/cormorant-garamond-latin-400-normal.woff2) format('woff2')}</style>";
+  /*LXB-PARTAGE>>*/
+export const LX_OCCASIONS: Record<string,string> = { anniversaire:"Joyeux anniversaire", noel:"Joyeux Noël", feteMeres:"Bonne fête maman", stValentin:"Avec tout mon amour", roseGold:"Merci" };
+export function buildBonHTMLModele(modele: "maison"|"ecrin", opts: { themeId:string; salonNom:string; salonSous?:string; salonAddr:string; salonTel:string; logoUrl:string|null; couleur?:string|null; palette?:string|null; valeur:number; code:string; de:string; pour:string; message:string; dateExp:string; siret?:string; mentionTva:string; perimetre:string; tkNum?:number|null }): string {
+  const corps = lxbEmailCorps(modele, {
+    nom: opts.salonNom || "", sous: opts.salonSous || "", logo: opts.logoUrl || "", occasion: LX_OCCASIONS[opts.themeId] || "",
+    pour: opts.pour || "", de: opts.de || "", msg: opts.message || "", valeur: opts.valeur, code: opts.code, dateExp: opts.dateExp,
+    perimetre: opts.perimetre, mentionTva: opts.mentionTva, tkNum: opts.tkNum || null, couleur: opts.couleur || null, palette: opts.palette || "",
+    adresse: opts.salonAddr || "", tel: opts.salonTel || "", siret: opts.siret || ""
+  });
+  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${LXB_EMAIL_POLICES}</head><body style="margin:0;padding:0">${lxMailLayout(corps, { titre: "Votre carte cadeau", salon: esc(opts.salonNom || "") || undefined })}</body></html>`;
 }
 
 function buildBonHTML(opts: { themeId:string; salonNom:string; salonAddr:string; salonTel:string; logoUrl:string|null; valeur:number; code:string; de:string; pour:string; message:string; dateExp:string; siret?:string; mentionTva:string; perimetre:string; tkNum?:number|null }): string {
@@ -366,15 +414,16 @@ Deno.serve(async (req) => {
 
     // 2026-10-31 : modèle choisi par l'établissement (vide = e-mail historique)
     let modele: "maison"|"ecrin"|"" = "";
-    try { let c: any = (salon as any).config_json; if (typeof c === "string") c = JSON.parse(c); if (c && (c.bonModele === "maison" || c.bonModele === "ecrin")) modele = c.bonModele; } catch (_) { modele = ""; }
+    let bonPalette = "";
+    try { let c: any = (salon as any).config_json; if (typeof c === "string") c = JSON.parse(c); if (c && (c.bonModele === "maison" || c.bonModele === "ecrin")) modele = c.bonModele; if (c && typeof c.bonPalette === "string") bonPalette = lxbPaletteValide(c.bonPalette); } catch (_) { modele = ""; }
     const buyerHtml = modele ? buildBonHTMLModele(modele, {
       themeId: b.theme_id || "classique",
       salonNom: salon.nom || "", salonSous: (salon as any).sous_titre || "", salonAddr, salonTel: salon.tel || "",
-      logoUrl: salon.logo || null, couleur: (salon as any).couleur_primaire || null,
+      logoUrl: salon.logo || null, couleur: (salon as any).couleur_primaire || null, palette: bonPalette,
       valeur: Number(b.valeur), code: b.code,
       de: b.de || "", pour: b.pour || "", message: b.message || "",
       dateExp, siret: salon.siret || undefined,
-      mentionTva, perimetre, tkNum: b.tk_num || null
+      mentionTva, perimetre: (b.scope === "prestations" ? "Prestations" : (b.scope === "produits" ? "Produits" : "Prestations et produits")), tkNum: b.tk_num || null
     }) : buildBonHTML({
       themeId: b.theme_id || "classique",
       salonNom: salon.nom || "Salon", salonAddr, salonTel: salon.tel || "",

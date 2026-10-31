@@ -10,40 +10,128 @@
 (function (g) {
   "use strict";
   var MODELES = { maison: "Maison", ecrin: "Écrin" };
-  var PAPIER_A = "#F6F1E6", PAPIER_B = "#FBFAF7";
 
-  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
-  function modeleValide(m) { return m === "maison" || m === "ecrin" ? m : ""; }
-
-  // ---------- couleurs (dérivées de LA couleur de l'établissement) ----------
-  function hexOk(h) { return typeof h === "string" && /^#?[0-9a-f]{6}$/i.test(h.trim()); }
-  function h2r(h) { h = h.replace("#", ""); var n = parseInt(h, 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
-  function r2h(r, gg, b) { return "#" + [r, gg, b].map(function (x) { return Math.round(Math.max(0, Math.min(255, x))).toString(16).padStart(2, "0"); }).join(""); }
-  function r2hsl(c) { var r = c[0] / 255, gg = c[1] / 255, b = c[2] / 255, M = Math.max(r, gg, b), m = Math.min(r, gg, b), h = 0, s = 0, l = (M + m) / 2; if (M !== m) { var d = M - m; s = l > .5 ? d / (2 - M - m) : d / (M + m); h = M === r ? (gg - b) / d + (gg < b ? 6 : 0) : M === gg ? (b - r) / d + 2 : (r - gg) / d + 4; h *= 60; } return [h, s, l]; }
-  function hsl2h(h, s, l) { var k = function (n) { return (n + h / 30) % 12; }, a = s * Math.min(l, 1 - l), f = function (n) { return l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1))); }; return r2h(f(0) * 255, f(8) * 255, f(4) * 255); }
-  function mix(a, b, t) { var A = h2r(a), B = h2r(b); return r2h(A[0] + (B[0] - A[0]) * t, A[1] + (B[1] - A[1]) * t, A[2] + (B[2] - A[2]) * t); }
-  function lin(c) { c /= 255; return c <= .03928 ? c / 12.92 : Math.pow((c + .055) / 1.055, 2.4); }
-  function lum(h) { var c = h2r(h); return .2126 * lin(c[0]) + .7152 * lin(c[1]) + .0722 * lin(c[2]); }
-  function contraste(a, b) { var x = lum(a), y = lum(b); return (Math.max(x, y) + .05) / (Math.min(x, y) + .05); }
-
-  function palette(couleur) {
-    var acc = hexOk(couleur) ? ("#" + couleur.trim().replace("#", "")).toUpperCase() : "#C8A84E";
-    var hsl = r2hsl(h2r(acc)), h = hsl[0], s = hsl[1];
-    var or = h >= 30 && h <= 60 && s > .25;                       // or / jaune : encre bronze, aplat noir chaud
-    var ink = or ? hsl2h(h, .22, .13) : hsl2h(h, Math.min(s, .5), .2);
-    var inkSoft = hsl2h(h, Math.min(s, .18), .36);
-    var deep = or ? "#14120F" : hsl2h(h, Math.min(s, .4), .14);
-    var foil = or ? acc : hsl2h(h, Math.min(s, .5), .76);
-    // garde-fou de contraste (texte) : l'encre doit rester lisible sur le papier, la dorure sur l'aplat
-    if (contraste(ink, PAPIER_A) < 7) ink = hsl2h(h, Math.min(s, .4), .16);
-    if (contraste(foil, deep) < 4.5) foil = hsl2h(h, Math.min(s, .45), .82);
-    // 31/10 (contre-audit R7) : liserés / filets visibles même avec une couleur très claire (blanc, crème…)
-    // seuil bas : l'or Luxyra et les couleurs habituelles ne changent pas ; seules les couleurs presque blanches sont foncées
-    // (sans teinte : gris neutre, pour ne pas inventer une couleur)
-    var accTrait = contraste(acc, PAPIER_A) < 1.6 ? (s < .12 ? "#8A857C" : hsl2h(h, Math.max(s, .3), .42)) : acc;
-    var line = mix(accTrait, PAPIER_A, .55); if (contraste(line, PAPIER_A) < 1.2) line = mix(accTrait, PAPIER_A, .3);
-    return { accent: accTrait, accentBrut: acc, ink: ink, inkSoft: inkSoft, deep: deep, foil: foil, tint: mix(acc, PAPIER_A, .9), line: line, paperA: PAPIER_A, paperB: PAPIER_B };
+  /*<<LXB-PARTAGE — bloc commun lx-bon-cadeau.js (navigateur) et edge gc-stripe-webhook (e-mail) : NE PAS MODIFIER À UN SEUL
+    ENDROIT. Source : lx-bon-cadeau.js ; copie exacte dans l'edge par docs/bons_1031/sync_partage.mjs (contrôle d'égalité au banc).
+    JavaScript pur (sans types, sans window) : couleurs, palettes, e-mail « e-carte ». Présentation uniquement. */
+  function lxbEsc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+  function lxbHexOk(h) { return typeof h === "string" && /^#?[0-9a-f]{6}$/i.test(h.trim()); }
+  function lxbH2r(h) { h = h.replace("#", ""); var n = parseInt(h, 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
+  function lxbR2h(r, gg, b) { return "#" + [r, gg, b].map(function (x) { return Math.round(Math.max(0, Math.min(255, x))).toString(16).padStart(2, "0"); }).join(""); }
+  function lxbR2hsl(c) { var r = c[0] / 255, gg = c[1] / 255, b = c[2] / 255, M = Math.max(r, gg, b), m = Math.min(r, gg, b), h = 0, s = 0, l = (M + m) / 2; if (M !== m) { var d = M - m; s = l > .5 ? d / (2 - M - m) : d / (M + m); h = M === r ? (gg - b) / d + (gg < b ? 6 : 0) : M === gg ? (b - r) / d + 2 : (r - gg) / d + 4; h *= 60; } return [h, s, l]; }
+  function lxbHsl2h(h, s, l) { var k = function (n) { return (n + h / 30) % 12; }, a = s * Math.min(l, 1 - l), f = function (n) { return l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1))); }; return lxbR2h(f(0) * 255, f(8) * 255, f(4) * 255); }
+  function lxbMix(a, b, t) { var A = lxbH2r(a), B = lxbH2r(b); return lxbR2h(A[0] + (B[0] - A[0]) * t, A[1] + (B[1] - A[1]) * t, A[2] + (B[2] - A[2]) * t); }
+  function lxbLin(c) { c /= 255; return c <= .03928 ? c / 12.92 : Math.pow((c + .055) / 1.055, 2.4); }
+  function lxbLum(h) { var c = lxbH2r(h); return .2126 * lxbLin(c[0]) + .7152 * lxbLin(c[1]) + .0722 * lxbLin(c[2]); }
+  function lxbContraste(a, b) { var x = lxbLum(a), y = lxbLum(b); return (Math.max(x, y) + .05) / (Math.min(x, y) + .05); }
+  var LXB_PAPIER_A = "#F6F1E6", LXB_PAPIER_B = "#FBFAF7";
+  // 2026-10-31 (-2) : palettes au choix de l'établissement (config_json.bonPalette). "" / "etab" = dérivée de sa couleur principale.
+  // accent : liserés, filets (Maison) ; deep : aplat (Écrin) ; foil : dorure sur l'aplat ; ink / inkSoft : textes sur papier.
+  var LXB_PALETTES = {
+    etab:     { nom: "Couleur de l’établissement" },
+    noir_or:  { nom: "Noir & or",        accent: "#C8A84E", deep: "#14120F", foil: "#C8A84E", ink: "#2B2418", inkSoft: "#6A5F4B" },
+    bordeaux: { nom: "Bordeaux & or",    accent: "#8E2B3A", deep: "#3B1219", foil: "#D9B970", ink: "#4A1520", inkSoft: "#7A5A5E" },
+    nuit:     { nom: "Bleu nuit & argent", accent: "#3B4F78", deep: "#121A2B", foil: "#C9D1DE", ink: "#1B2740", inkSoft: "#5A6478" },
+    sauge:    { nom: "Vert sauge",       accent: "#7E9B83", deep: "#24312A", foil: "#CBD8C4", ink: "#23332A", inkSoft: "#5D6B60" },
+    rose:     { nom: "Rose poudré",      accent: "#C98A93", deep: "#4E2C36", foil: "#EBC9CD", ink: "#4A2730", inkSoft: "#7D6064" },
+    taupe:    { nom: "Taupe & or",       accent: "#A88B5C", deep: "#3A322A", foil: "#DCC287", ink: "#3A2E22", inkSoft: "#6E6253" }
+  };
+  function lxbPaletteValide(cle) { return (typeof cle === "string" && cle !== "etab" && Object.prototype.hasOwnProperty.call(LXB_PALETTES, cle)) ? cle : ""; }
+  function lxbPalette(couleur, cle) {
+    var P = LXB_PALETTES[lxbPaletteValide(cle)], acc, ink, inkSoft, deep, foil, h, s;
+    if (P) {
+      acc = P.accent; ink = P.ink; inkSoft = P.inkSoft; deep = P.deep; foil = P.foil;
+      var hs = lxbR2hsl(lxbH2r(acc)); h = hs[0]; s = hs[1];
+    } else {
+      acc = lxbHexOk(couleur) ? ("#" + couleur.trim().replace("#", "")).toUpperCase() : "#C8A84E";
+      var hsl = lxbR2hsl(lxbH2r(acc)); h = hsl[0]; s = hsl[1];
+      var or = h >= 30 && h <= 60 && s > .25;                       // or / jaune : encre bronze, aplat noir chaud
+      ink = or ? lxbHsl2h(h, .22, .13) : lxbHsl2h(h, Math.min(s, .5), .2);
+      inkSoft = lxbHsl2h(h, Math.min(s, .18), .36);
+      deep = or ? "#14120F" : lxbHsl2h(h, Math.min(s, .4), .14);
+      foil = or ? acc : lxbHsl2h(h, Math.min(s, .5), .76);
+    }
+    // garde-fous de contraste (texte) : encre lisible sur le papier, dorure lisible sur l'aplat
+    if (lxbContraste(ink, LXB_PAPIER_A) < 7) ink = lxbHsl2h(h, Math.min(s, .4), .16);
+    if (lxbContraste(foil, deep) < 4.5) foil = lxbHsl2h(h, Math.min(s, .45), .82);
+    // liserés / filets visibles même avec une couleur très claire (sans teinte : gris neutre)
+    var accTrait = lxbContraste(acc, LXB_PAPIER_A) < 1.6 ? (s < .12 ? "#8A857C" : lxbHsl2h(h, Math.max(s, .3), .42)) : acc;
+    var line = lxbMix(accTrait, LXB_PAPIER_A, .55); if (lxbContraste(line, LXB_PAPIER_A) < 1.2) line = lxbMix(accTrait, LXB_PAPIER_A, .3);
+    return { accent: accTrait, accentBrut: acc, ink: ink, inkSoft: inkSoft, deep: deep, foil: foil, tint: lxbMix(acc, LXB_PAPIER_A, .9), line: line, paperA: LXB_PAPIER_A, paperB: LXB_PAPIER_B };
   }
+  function lxbMontant(v) { var n = Number(v) || 0; return (Math.round(n * 100) % 100 === 0) ? String(Math.round(n)) : n.toFixed(2).replace(".", ","); }
+
+  // E-carte (e-mail) au modèle de l'établissement : tableaux (Gmail / Outlook), sans police Google, QR = image hébergée
+  // (https://luxyra.fr/api/qr, même générateur que l'application : les SVG sont mal affichés par les messageries).
+  // o : {nom, sous, logo (https seulement), occasion, pour, de, msg, valeur, code, dateExp, perimetre, mentionTva, tkNum,
+  //      couleur, palette, adresse, tel, siret, intro (texte, facultatif)} — tous les textes sont échappés ici.
+  function lxbEmailCorps(modele, o) {
+    modele = modele === "ecrin" ? "ecrin" : "maison";
+    var p = lxbPalette(o.couleur, o.palette), E = lxbEsc;
+    var nom = E(o.nom || ""), sous = E(o.sous || "");
+    var logo = (typeof o.logo === "string" && /^https:\/\/[^\s"'<>]+$/i.test(o.logo)) ? o.logo : "";
+    var serif = "'Cormorant Garamond',Georgia,'Times New Roman',serif", sans = (modele === "ecrin" ? "'DM Sans'," : "Inter,") + "Arial,Helvetica,sans-serif";
+    var msg = o.msg && o.msg !== "Bon offert" ? E(o.msg) : "";
+    var mt = lxbMontant(o.valeur), code = String(o.code || "");
+    var qr = "https://luxyra.fr/api/qr?d=" + encodeURIComponent(code) + "&s=160";
+    var carte;
+    if (modele === "maison") {
+      carte = '<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;background:' + p.paperA + ';border:2px solid ' + p.accent + '">' +
+        '<tr><td style="padding:5px"><table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;border:1px solid ' + p.accent + '"><tr><td align="center" style="padding:30px 22px 26px;font-family:' + sans + ';color:#1C1A17">' +
+        (logo ? '<img src="' + E(logo) + '" alt="" height="56" style="display:block;margin:0 auto 14px;height:56px;max-width:180px;border:0;border-radius:6px">' : "") +
+        '<div style="font-family:' + serif + ';font-size:22px;letter-spacing:6px;text-transform:uppercase;color:' + p.ink + ';line-height:1.25">' + nom + "</div>" +
+        (sous ? '<div style="font-size:10px;letter-spacing:4px;text-transform:uppercase;color:' + p.inkSoft + ';margin-top:6px">' + sous + "</div>" : "") +
+        '<div style="width:34px;height:1px;background:' + p.accent + ';margin:18px auto 14px;font-size:0;line-height:0">&nbsp;</div>' +
+        '<div style="font-family:' + serif + ';font-style:italic;font-size:20px;color:' + p.ink + '">' + (o.occasion ? E(o.occasion) : "Carte cadeau") + "</div>" +
+        (o.pour ? '<div style="font-family:' + serif + ';font-size:30px;color:#1C1A17;margin-top:10px">' + E(o.pour) + ",</div>" : "") +
+        '<div style="font-size:11px;letter-spacing:3px;text-transform:uppercase;color:' + p.inkSoft + ';margin-top:8px">' + (o.de ? E(o.de) + " vous offre" : "Vous est offert") + "</div>" +
+        '<div style="font-family:' + serif + ';font-weight:300;font-size:64px;line-height:1.05;color:' + p.ink + ';margin-top:6px">' + mt + '<span style="font-size:28px">&nbsp;€</span></div>' +
+        '<div style="font-size:11px;letter-spacing:3px;text-transform:uppercase;color:' + p.inkSoft + '">à valoir chez ' + nom + "</div>" +
+        (msg ? '<div style="font-family:' + serif + ';font-style:italic;font-size:18px;line-height:1.45;color:#3A352E;margin:18px auto 0;max-width:420px">« ' + msg + " »</div>" : "") +
+        "</td></tr></table></td></tr></table>";
+    } else {
+      carte = '<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;background:' + p.deep + ';border-radius:12px">' +
+        '<tr><td style="padding:26px 24px 8px;font-family:' + sans + ';color:#F4EFE6">' +
+        '<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse"><tr>' +
+        (logo ? '<td style="padding-right:12px"><img src="' + E(logo) + '" alt="" height="40" style="display:block;height:40px;max-width:120px;border:0;border-radius:6px"></td>' : "") +
+        '<td><div style="font-size:13px;letter-spacing:4px;text-transform:uppercase;color:#F4EFE6">' + nom + "</div>" + (sous ? '<div style="font-size:10px;letter-spacing:4px;text-transform:uppercase;color:' + p.foil + ';margin-top:4px">' + sous + "</div>" : "") + "</td></tr></table>" +
+        "</td></tr>" +
+        '<tr><td style="padding:18px 24px 6px;font-family:' + sans + ';color:#F4EFE6">' +
+        (o.occasion ? '<div style="font-family:' + serif + ';font-style:italic;font-size:22px;color:' + p.foil + '">' + E(o.occasion) + "</div>" : "") +
+        '<div style="font-size:14px;line-height:1.6;margin-top:6px">' + (o.pour ? 'Pour <b style="font-weight:600">' + E(o.pour) + "</b>" + (o.de ? ", " : "") : "") + (o.de ? 'de la part de <b style="font-weight:600">' + E(o.de) + "</b>" : "") + "</div>" +
+        (msg ? '<div style="font-family:' + serif + ';font-style:italic;font-size:18px;line-height:1.45;color:#EDE6DA;margin-top:12px">« ' + msg + " »</div>" : "") +
+        "</td></tr>" +
+        '<tr><td style="padding:10px 24px 24px;font-family:' + sans + '"><table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse"><tr>' +
+        '<td valign="bottom" style="font-size:11px;letter-spacing:4px;text-transform:uppercase;color:' + p.foil + ';padding-bottom:10px"><div style="width:30px;height:1px;background:' + p.foil + ';margin-bottom:10px;font-size:0;line-height:0">&nbsp;</div>Carte cadeau</td>' +
+        '<td valign="bottom" align="right" style="font-weight:300;font-size:68px;line-height:1;color:#F4EFE6;letter-spacing:-2px">' + mt + '<span style="font-size:24px;color:' + p.foil + ';vertical-align:top;letter-spacing:0">€</span></td>' +
+        "</tr></table></td></tr></table>";
+    }
+    // 31/10 (-2) : code du bon sur SA PROPRE ligne, pleine largeur, jamais coupé ; QR à côté des informations
+    var infos = '<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;margin-top:18px;border:1px solid #E6DFD0;background:#FFFFFF">' +
+      '<tr><td colspan="2" style="padding:16px 18px 4px;font-family:' + sans + ';color:#1C1A17">' +
+      '<div style="font-size:10px;letter-spacing:3px;text-transform:uppercase;color:#6A645B">Code de la carte</div>' +
+      '<div style="font-size:20px;font-weight:700;letter-spacing:1.5px;margin-top:2px;color:#1C1A17;white-space:nowrap;word-break:keep-all">' + E(code) + "</div></td></tr>" +
+      '<tr><td valign="top" style="padding:8px 18px 16px;font-family:' + sans + ';font-size:13px;line-height:1.6;color:#1C1A17">' +
+      "<div><b>Valeur :</b> " + (Number(o.valeur) || 0).toFixed(2).replace(".", ",") + " €</div>" +
+      "<div><b>Valable jusqu’au :</b> " + E(o.dateExp || "") + "</div>" +
+      "<div><b>Utilisable sur :</b> " + E(o.perimetre || "Prestations et produits") + ", en une ou plusieurs fois</div>" +
+      '</td><td valign="top" align="right" width="112" style="padding:6px 14px 16px 0"><img src="' + E(qr) + '" alt="QR ' + E(code) + '" width="96" height="96" style="display:block;border:0;background:#fff"></td></tr>' +
+      '<tr><td colspan="2" style="padding:0 18px 16px;font-family:' + sans + ';font-size:11px;line-height:1.6;color:#6A645B;border-top:1px solid #EFE9DC">' +
+      '<div style="padding-top:12px">' + E(o.mentionTva || "") + (o.tkNum ? " — ticket de caisse n°" + E(o.tkNum) : "") + "<br>Non remboursable, non échangeable contre espèces.</div></td></tr></table>";
+    var intro = o.intro != null ? E(o.intro).replace(/\n/g, "<br>") : "Bonjour" + (o.de ? " " + E(o.de) : "") + ",<br>merci pour votre achat. Voici votre carte cadeau, à transmettre par e-mail ou à imprimer. Elle se présente sur place, sur papier ou sur téléphone.";
+    var preheader = "Votre carte cadeau " + (o.nom || "") + " de " + mt + " € — code " + code;
+    return '<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent">' + E(preheader) + "</div>" +
+      '<div style="font-family:' + sans + ';font-size:14px;color:#4A453E;margin:0 0 16px;line-height:1.6">' + intro + "</div>" +
+      carte + infos +
+      '<div style="font-family:' + sans + ';font-size:12px;color:#6A645B;line-height:1.7;margin-top:16px">' + nom + (o.adresse ? " · " + E(o.adresse) : "") + (o.tel ? " · " + E(o.tel) : "") + (o.siret ? "<br>SIRET : " + E(o.siret) : "") + "</div>";
+  }
+  var LXB_EMAIL_POLICES = "<style>@font-face{font-family:'Cormorant Garamond';font-style:normal;font-weight:300;src:url(https://luxyra.fr/fonts/cormorant-garamond-latin-300-normal.woff2) format('woff2')}@font-face{font-family:'Cormorant Garamond';font-style:italic;font-weight:400;src:url(https://luxyra.fr/fonts/cormorant-garamond-latin-400-italic.woff2) format('woff2')}@font-face{font-family:'Cormorant Garamond';font-style:normal;font-weight:400;src:url(https://luxyra.fr/fonts/cormorant-garamond-latin-400-normal.woff2) format('woff2')}</style>";
+  /*LXB-PARTAGE>>*/
+
+  // alias internes (le reste du fichier utilise ces noms)
+  var esc = lxbEsc, contraste = lxbContraste, PAPIER_A = LXB_PAPIER_A, PAPIER_B = LXB_PAPIER_B;
+  function modeleValide(m) { return m === "maison" || m === "ecrin" ? m : ""; }
+  function palette(couleur, cle) { return lxbPalette(couleur, cle); }
 
   // ---------- QR (SVG vectoriel : net à l'impression) ----------
   function qrSvg(texte, couleur) {
@@ -56,7 +144,7 @@
     } catch (e) { return ""; }
   }
 
-  function montant(v) { var n = Number(v) || 0; return (Math.round(n * 100) % 100 === 0) ? String(Math.round(n)) : n.toFixed(2).replace(".", ","); }
+  function montant(v) { return lxbMontant(v); }
   function montantLong(v) { return (Number(v) || 0).toFixed(2).replace(".", ",") + " €"; }
   function logoSrcOk(src) { return typeof src === "string" && /^(https:\/\/|data:image\/(png|jpe?g|gif|webp|svg\+xml);base64,|\/)/i.test(src); }
 
@@ -173,7 +261,7 @@
   }
   function carte(modele, face, bon, etab, opts) {
     modele = modeleValide(modele) || "maison"; opts = opts || {};
-    var p = palette(etab.couleur), mm = mmUnit(opts.mm), ecran = opts.impression ? "" : " lxb-ecran";
+    var p = palette(etab.couleur, etab.palette), mm = mmUnit(opts.mm), ecran = opts.impression ? "" : " lxb-ecran";
     var logo = (opts.sansLogo || !logoSrcOk(etab.logo)) ? "" : etab.logo;
     var nom = esc(etab.nom || "Établissement"), sous = esc(etab.sous || "");
     if (modele === "maison") {
@@ -206,7 +294,7 @@
 
   function a6(modele, bon, etab, opts) {
     modele = modeleValide(modele) || "maison"; opts = opts || {};
-    var p = palette(etab.couleur), mm = mmUnit(opts.mm);
+    var p = palette(etab.couleur, etab.palette), mm = mmUnit(opts.mm);
     var logo = logoSrcOk(etab.logo) ? etab.logo : "", nom = esc(etab.nom || "Établissement");
     var msg = bon.msg && bon.msg !== "Bon offert" ? esc(bon.msg) : "";
     var adr = [etab.adresse, etab.cpv].filter(Boolean).join(", ");
@@ -230,16 +318,35 @@
       '<div class="lxb-ft"><div class="lxb-qt">' + qrSvg(bon.code, "#17161A") + '</div><div><div class="lxb-cd">' + esc(bon.code || "") + '</div><div class="lxb-mt">' + mt + "</div></div></div></div></div>";
   }
 
-  // Document complet à imprimer. format : "carte" (85 x 55 à plier, sur A4) | "a6"
+  // Document complet à imprimer. format : "carte" (85 x 55 à plier, sur A4) | "a6" (papier A6) | "a6a4" (A6 sur A4, traits de coupe)
+  // | "pleine" (bon pleine page A4) | "plie" (A4 plié en deux, recto simple)
   function documentImpression(modele, bon, etab, format) {
     modele = modeleValide(modele) || "maison";
     var titre = "Carte cadeau " + esc(bon.code || "");
     var base = (g.location && /^https?:/.test(g.location.protocol)) ? g.location.origin : "https://luxyra.fr";
-    var corps, page;
+    var corps, page, paysage = modele === "ecrin";
+    var coins = '<i class="tc tl"></i><i class="tc tr"></i><i class="tc bl"></i><i class="tc br"></i>';
     if (format === "a6") {
-      var paysage = modele === "ecrin";
       page = "@page{size:" + (paysage ? "148mm 105mm" : "105mm 148mm") + ";margin:0}";
       corps = '<div class="feuille a6">' + a6(modele, bon, etab, { mm: "1mm" }) + "</div>";
+    } else if (format === "a6a4") {
+      // 31/10 (-2) : carte A6 centrée sur une feuille A4, avec traits de coupe (pour qui n'a que du papier A4)
+      page = "@page{size:A4 portrait;margin:0}";
+      corps = '<div class="feuille a4 centre"><div class="zone ' + (paysage ? "z6p" : "z6") + '">' + a6(modele, bon, etab, { mm: "1mm" }) + coins + "</div>" +
+        '<div class="aide bas">Découpez le long des repères : la carte fait ' + (paysage ? "148 × 105" : "105 × 148") + ' mm (format A6, se glisse dans une enveloppe C6). Papier conseillé : 200 à 300 g.</div></div>';
+    } else if (format === "pleine") {
+      // 31/10 (-2) : bon pleine page A4 (même dessin que l'A6, à l'échelle 2)
+      page = "@page{size:A4 " + (paysage ? "landscape" : "portrait") + ";margin:0}";
+      corps = '<div class="feuille ' + (paysage ? "a4l" : "a4") + ' pleine">' + a6(modele, bon, etab, { mm: "2mm" }) + "</div>";
+    } else if (format === "plie") {
+      // 31/10 (-2) : A4 plié en deux (impression recto simple) : en haut la face avant, en bas le dos imprimé à l'envers ;
+      // on plie la moitié basse vers l'arrière, puis on découpe les deux épaisseurs ensemble le long des repères.
+      page = "@page{size:A4 portrait;margin:0}";
+      corps = '<div class="feuille a4 plie2">' +
+        '<div class="demi"><div class="zone zc">' + carte(modele, "recto", bon, etab, { mm: "2.1mm", impression: true }) + coins + "</div></div>" +
+        '<div class="ligne-pli"></div>' +
+        '<div class="demi tourne"><div class="zone zc">' + carte(modele, "verso", bon, etab, { mm: "2.1mm", impression: true }) + coins + "</div></div>" +
+        '<div class="aide pli-aide">Imprimez sur une seule face. Pliez la feuille en deux sur le pointillé, image vers l’extérieur (le dos passe derrière), puis découpez les deux épaisseurs ensemble le long des repères : carte de 178 × 115 mm.</div></div>';
     } else {
       page = "@page{size:A4 portrait;margin:0}";
       corps = '<div class="feuille a4"><div class="plie">' +
@@ -256,6 +363,14 @@
       ".feuille{box-sizing:border-box;background:#fff;margin:18px auto;box-shadow:0 4px 24px rgba(0,0,0,.18);position:relative;overflow:hidden}" +
       ".feuille.a4{width:210mm;height:297mm;padding-top:30mm}" +
       ".feuille.a6{width:fit-content}" +
+      ".feuille.a4l{width:297mm;height:210mm}" +
+      ".feuille.pleine{padding:0;display:flex;align-items:center;justify-content:center}" +
+      ".feuille.centre{padding:0;display:flex;flex-direction:column;align-items:center;justify-content:center}" +
+      ".zone{position:relative}.zone.z6{width:105mm;height:148mm}.zone.z6p{width:148mm;height:105mm}.zone.zc{width:178.5mm;height:115.5mm}" +
+      ".aide.aide.bas{margin:12mm auto 0;width:150mm;text-align:center}" +
+      ".feuille.plie2{padding:0}.plie2 .demi{height:148.5mm;display:flex;align-items:center;justify-content:center}.plie2 .demi.tourne{transform:rotate(180deg)}" +
+      ".ligne-pli{position:absolute;left:0;right:0;top:148.5mm;border-top:.2mm dashed #999}" +
+      ".aide.pli-aide{position:absolute;left:0;right:0;top:3mm;margin:0 auto;width:178mm;font-size:2.4mm;line-height:1.35;text-align:center}" +
       ".plie{position:relative;width:170mm;height:55mm;margin:0 auto;display:flex}" +
       ".plie .face{width:85mm;height:55mm}" +
       ".pli{position:absolute;left:85mm;top:-6mm;bottom:-6mm;border-left:.2mm dashed #999}" +
@@ -297,10 +412,23 @@
     var s = doc.createElement("style"); s.id = "lxBonCss"; s.textContent = css(); (doc.head || doc.documentElement).appendChild(s); _cssPose = true;
   }
 
+  // E-mail complet de l'e-carte envoyé depuis la caisse (même corps que l'e-mail de la vente en ligne, gc-stripe-webhook ;
+  // mise en page commune Luxyra « envoyé pour le compte de … »)
+  function emailDocument(modele, o) {
+    var salon = lxbEsc(o.nom || "");
+    var lay = '<div style="background:#f4f1ea;padding:24px 10px;margin:0"><div style="max-width:580px;margin:0 auto;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e6dcc3;font-family:-apple-system,\'Segoe UI\',Arial,sans-serif;color:#1a1a1a;font-size:15px;line-height:1.6">' +
+      '<div style="background:#0b0b0b;padding:26px 20px 20px;text-align:center;border-bottom:3px solid #c8a84e"><img src="https://luxyra.fr/email/luxyra-logo-128.png" width="64" height="64" alt="Luxyra" style="display:block;margin:0 auto 10px;border-radius:12px">' +
+      '<div style="color:#d4a843;font-family:Georgia,\'Times New Roman\',serif;font-size:22px;letter-spacing:6px">LUXYRA</div><div style="color:#8c8270;font-size:11px;letter-spacing:1px;margin-top:4px;text-transform:uppercase">' + salon + "</div></div>" +
+      '<div style="padding:28px 26px 8px"><h1 style="margin:0 0 16px;font-family:Georgia,\'Times New Roman\',serif;font-size:22px;font-weight:400;color:#1a1a1a;line-height:1.3">Votre carte cadeau</h1>' + lxbEmailCorps(modele, o) + "</div>" +
+      '<div style="padding:16px 26px 22px;font-size:11px;color:#8a8a8a;border-top:1px solid #eee;margin-top:18px;line-height:1.5">Email envoyé pour le compte de ' + salon + ' via <a href="https://luxyra.fr" style="color:#b8922e">Luxyra</a>.</div></div></div>';
+    return '<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' + LXB_EMAIL_POLICES + '</head><body style="margin:0;padding:0">' + lay + "</body></html>";
+  }
+
   g.LXBon = {
-    version: "20261031-3", MODELES: MODELES, OCCASIONS: OCCASIONS,
+    version: "20261031-4", MODELES: MODELES, OCCASIONS: OCCASIONS,
     modeleValide: modeleValide, palette: palette, contraste: contraste, css: css, poserCss: poserCss,
     carte: carte, a6: a6, documentImpression: documentImpression, imprimer: imprimer,
-    occasionDepuisTheme: occasionDepuisTheme, qrSvg: qrSvg, esc: esc
+    occasionDepuisTheme: occasionDepuisTheme, qrSvg: qrSvg, esc: esc,
+    PALETTES: LXB_PALETTES, paletteValide: lxbPaletteValide, emailCorps: lxbEmailCorps, emailDocument: emailDocument
   };
 })(typeof window !== "undefined" ? window : globalThis);
