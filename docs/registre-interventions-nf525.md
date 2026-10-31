@@ -889,3 +889,4 @@ Aucune table, fonction ni déclencheur fiscal modifié ; lecture seule de `carte
 - Worker : rendu FR complet des factures Luxyra, lien signé, envoi à l'abonné à chaque paiement, Stripe en français (clients + Checkout). App : Mes factures -> rendu serveur (garde 20261031-10). Banc `docs/migrations_1031_factures/bancs/facture_rendu_test.mjs` : 24/24 mentions, XSS OK.
 - LUX-2026-0001 (O'R STUDIO) : facture NON renvoyée à la cliente (en attente de l'accord d'Alexandre).
 - À faire par Alexandre dans Stripe (Paramètres › E-mails clients) : garder « Paiements réussis » (reçu, désormais en français) ou le désactiver ; DÉSACTIVER l'envoi des factures Stripe finalisées pour éviter deux documents nommés « facture » pour une même vente.
+- 31/10/2026 : admin jamais affichée dans les applis Play (garde admin.html + admin-twa.html), hors NF525.
