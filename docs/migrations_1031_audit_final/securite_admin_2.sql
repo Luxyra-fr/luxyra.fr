@@ -128,7 +128,7 @@ begin
     into v from g left join public.salons s on s.id = g.salon_id;
   select jsonb_build_object('emis', coalesce(sum((e->>'emis')::int), 0), 'encours', coalesce(sum((e->>'encours')::numeric), 0),
            'utilise', coalesce(sum((e->>'utilise')::numeric), 0), 'expires', coalesce(sum((e->>'expires')::int), 0))
-    into t from jsonb_array_elements(v) e where not (e->>'test')::boolean;
+    into t from jsonb_array_elements(v) e where not coalesce((e->>'test')::boolean, false);  -- comme déployé : établissement introuvable = non test
   return jsonb_build_object('etablissements', v, 'total_reels', t, 'genere_le', now());
 end $f$;
 revoke all on function public.admin_bons_cadeaux_etat() from public, anon;

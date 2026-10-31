@@ -922,3 +922,8 @@ Aucune table, fonction ni déclencheur fiscal modifié ; lecture seule de `carte
 - `admin_delete_salon_cascade` : seule la liste des tables change (admin_log conservé) ; garde-fous fiscaux (refus si historique fiscal) inchangés.
 - Fonctions de caisse qui acceptent encore l'admin (à décider par Alexandre, non modifiées) : creer_ticket_avoir, consommer_bon_cadeau, recrediter_bon_cadeau, lx_pack_consommer, cloturer_exercice, cloturer_mois, lx_facture_emettre, lx_z_forcer_admin, edge rdv-empreinte-capture.
 - Fichier : docs/migrations_1031_audit_final/securite_admin_2.sql (rejouable).
+
+### 31/10/2026 (nuit, fin) — Relecture finale admin : RGPD du journal admin, règle « compte test » (hors périmètre fiscal)
+- Nature : journal d'administration et compteurs du tableau de bord uniquement. Aucune table ni fonction de caisse, clôture, signature, facture ou bon cadeau modifiée.
+- `purge_salon_6ans` (fonction qui appelle la suppression à 6 ans, liée à la conservation) : SEULE la ligne d'INSERT dans admin_log change (identifiant au lieu du nom et du SIRET). Conditions de conservation 6 ans, préavis et appel à `admin_delete_salon_cascade` inchangés.
+- Fichier : docs/migrations_1031_audit_final/f7_journal_rgpd_regle_test.sql (rejouable).
