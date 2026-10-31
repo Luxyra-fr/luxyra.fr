@@ -890,3 +890,5 @@ Aucune table, fonction ni déclencheur fiscal modifié ; lecture seule de `carte
 - LUX-2026-0001 (O'R STUDIO) : facture NON renvoyée à la cliente (en attente de l'accord d'Alexandre).
 - À faire par Alexandre dans Stripe (Paramètres › E-mails clients) : garder « Paiements réussis » (reçu, désormais en français) ou le désactiver ; DÉSACTIVER l'envoi des factures Stripe finalisées pour éviter deux documents nommés « facture » pour une même vente.
 - 31/10/2026 : admin jamais affichée dans les applis Play (garde admin.html + admin-twa.html), hors NF525.
+
+- 31/10/2026 — Sécurité de l administration (hors périmètre fiscal, aucune table NF525 modifiée) : en-têtes de sécurité admin.luxyra.fr, vue admin servie sur admin.luxyra.fr (session admin retirée de luxyra.fr), journal + alerte de connexion admin, déconnexion après inactivité et « tous les appareils », source de report_server_error neutralisée. I2 (droits admin d écriture sur tables fiscales) NON fait, en attente d accord.

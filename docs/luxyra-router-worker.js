@@ -155,6 +155,7 @@ async function __wrappedApiHandler(request, url, env) {
       if (url.pathname === "/api/admin/brevo" && request.method === "GET") return await handleAdminBrevo(request, env, url);
       // 2026-10-17 soir : STOP SMS — réinscription d'un numéro, déblocage Brevo des rappels (admin ou x-lx-internal)
       if (url.pathname === "/api/admin/sms-stop" && request.method === "POST") return await handleAdminSmsStop(request, env);
+      if (url.pathname === "/api/admin/connexion" && request.method === "POST") return await handleAdminConnexion(request, env); // 31/10 audit M3
       // 2026-10-15 : statistiques e-mails Brevo (7 / 30 j) et état des automatismes GitHub (admin seulement, lecture seule)
       if (url.pathname === "/api/admin/brevo-emails" && request.method === "GET") return await handleAdminBrevoEmails(request, env, url);
       if (url.pathname === "/api/admin/github-actions" && request.method === "GET") return await handleAdminGithubActions(request, env, url);
@@ -258,8 +259,42 @@ async function __wrappedApiHandler(request, url, env) {
     }
 }
 
+// 2026-10-31 (audit sécurité admin M1) : en-têtes de sécurité sur TOUTES les réponses de admin.luxyra.fr
+// (CSP avec frame-ancestors 'self' = aucun autre site ne peut encadrer l'admin, anti-encadrement, nosniff, pas de référent, jamais indexé, permissions minimales).
+// 'unsafe-inline' reste nécessaire (gestionnaires onclick de admin.html et app.html) ; les origines de scripts / connexions
+// sont limitées à l'inventaire exact (luxyra.fr, Supabase, api.github.com, géo/adresse data.gouv.fr pour la vue admin).
+// HSTS sans includeSubDomains : tous les sous-domaines DNS de luxyra.fr ne sont pas vérifiables d'ici.
+const LX_ADMIN_CSP = [
+  "default-src 'self'",
+  "script-src 'self' https://luxyra.fr 'unsafe-inline'",
+  "style-src 'self' https://luxyra.fr 'unsafe-inline'",
+  "img-src 'self' data: blob: https://luxyra.fr https://kxdgjtvrkwugbifgppai.supabase.co https://images.unsplash.com https://*.tile.openstreetmap.fr",
+  "font-src 'self' https://luxyra.fr data:",
+  "connect-src 'self' https://luxyra.fr https://kxdgjtvrkwugbifgppai.supabase.co wss://kxdgjtvrkwugbifgppai.supabase.co https://api.github.com https://geo.api.gouv.fr https://api-adresse.data.gouv.fr",
+  "worker-src 'self'", "manifest-src 'self'", "frame-src 'self' blob: data:", "child-src 'self' blob:",
+  "object-src 'none'", "base-uri 'none'", "form-action 'self'", "frame-ancestors 'self'"
+].join("; ");
+function lxEntetesAdmin(resp) {
+  try {
+    const h = new Headers(resp.headers);
+    h.set("Content-Security-Policy", LX_ADMIN_CSP);
+    h.set("X-Frame-Options", "SAMEORIGIN"); // aperçus d'impression internes (iframes blob) = même origine
+    h.set("X-Content-Type-Options", "nosniff");
+    h.set("Referrer-Policy", "no-referrer");
+    h.set("X-Robots-Tag", "noindex, nofollow");
+    h.set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()");
+    h.set("Strict-Transport-Security", "max-age=31536000");
+    h.set("Cross-Origin-Opener-Policy", "same-origin");
+    h.delete("Access-Control-Allow-Origin");
+    return new Response(resp.body, { status: resp.status, statusText: resp.statusText, headers: h });
+  } catch (_) { return resp; }
+}
 export default {
   async fetch(request, env) {
+    if (new URL(request.url).hostname === "admin.luxyra.fr") return lxEntetesAdmin(await this._fetchPrincipal(request, env));
+    return this._fetchPrincipal(request, env);
+  },
+  async _fetchPrincipal(request, env) {
     const url = new URL(request.url);
     if (request.method === "OPTIONS") return new Response(null, { headers: CORS_HEADERS });
     // ============ TRY/CATCH GLOBAL : toute exception non gérée arrive ici ============
@@ -282,6 +317,12 @@ export default {
             const _u = new URL(url); _u.pathname = "/admin.html";
             return await handleExistingRoutes(new Request(_u.toString(), request), _u, env);
           }
+          // 31/10 (audit I3) : la vue admin d'un établissement est servie ICI (la session admin ne quitte plus admin.luxyra.fr)
+          if (_p === "/app.html" && /^[0-9a-f-]{36}$/i.test(url.searchParams.get("vue_admin") || "")) {
+            return await handleExistingRoutes(request, url, env);
+          }
+          // jamais le service worker de l'appli ni ses manifestes ici (ils prendraient le contrôle de l'admin)
+          if (_p === "/sw.js" || (/^\/manifest.*\.json$/i.test(_p) && _p !== "/manifest-admin.json")) return new Response("Not found", { status: 404, headers: { "Cache-Control": "no-store" } });
           const _estPage = /\.html?$/i.test(_p) || !/\.[a-z0-9]{1,8}$/i.test(_p);
           if (_estPage && !/^\/(admin|admin-twa)\.html$/i.test(_p) && !_p.startsWith("/admin/")) {
             return Response.redirect("https://luxyra.fr" + _p + url.search, 302);
@@ -293,6 +334,11 @@ export default {
       if ((url.hostname === "luxyra.fr" || url.hostname === "www.luxyra.fr") && (request.method === "GET" || request.method === "HEAD")
           && /^\/admin(\.html|\/)?$/.test(url.pathname)) {
         return Response.redirect("https://admin.luxyra.fr/" + url.search, 301);
+      }
+      // 31/10 (audit I3) : la vue admin n'est plus servie sur luxyra.fr (elle y exposait la session admin) -> admin.luxyra.fr
+      if ((url.hostname === "luxyra.fr" || url.hostname === "www.luxyra.fr") && (request.method === "GET" || request.method === "HEAD")
+          && url.pathname === "/app.html" && url.searchParams.has("vue_admin")) {
+        return Response.redirect("https://admin.luxyra.fr/app.html" + url.search, 302);
       }
       // admin.luxyra.fr : jamais indexé
       if (url.hostname === "admin.luxyra.fr" && url.pathname === "/robots.txt") {
@@ -4663,6 +4709,47 @@ async function lxSmsStopRattrapage(env) {
 //                                          possibles) + levée du blocage Brevo ; traces audit_log / admin_log
 //  {op:"debloquer_brevo", telephone}     : numéro en lx_sms_stop : lève le blocage Brevo (rappels), opposition gardée
 //  {op:"debloquer_brevo_tous", forcer}   : idem pour tous les numéros de lx_sms_stop pas encore débloqués (200 max)
+// 2026-10-31 (audit sécurité admin M3) : chaque connexion admin réussie (mot de passe + double authentification) est
+// journalisée (admin_log CONNEXION_ADMIN : IP, pays, appareil) et signalée par notification + e-mail à contact@luxyra.fr.
+// Appelé par admin.html juste après la validation du code TOTP. Aucune donnée sensible (ni jeton, ni mot de passe).
+async function handleAdminConnexion(request, env) {
+  try {
+    const u = await lxAuthUser(request);
+    if (!u || !lxIsAdminUser(u)) return jsonResponse({ error: "Accès réservé à l'administrateur" }, 403);
+    if (!checkRateLimit("admin_connexion:" + u.id, 10)) return jsonResponse({ ok: true, limite: true });
+    const ip = String(request.headers.get("cf-connecting-ip") || "").slice(0, 64);
+    const pays = String((request.cf && request.cf.country) || "").slice(0, 4);
+    const ville = String((request.cf && request.cf.city) || "").slice(0, 60);
+    const ua = String(request.headers.get("user-agent") || "").slice(0, 200);
+    const appareil = /Android/i.test(ua) ? "Android" : /iPhone|iPad/i.test(ua) ? "iPhone/iPad" : /Windows/i.test(ua) ? "Windows" : /Mac OS/i.test(ua) ? "Mac" : /Linux/i.test(ua) ? "Linux" : "autre";
+    const nav = /Edg\//.test(ua) ? "Edge" : /Chrome\//.test(ua) ? "Chrome" : /Firefox\//.test(ua) ? "Firefox" : /Safari\//.test(ua) ? "Safari" : "autre";
+    const quand = new Date().toLocaleString("fr-FR", { timeZone: "Europe/Paris" });
+    const lieu = [ville, pays].filter(Boolean).join(", ") || "inconnu";
+    const det = `Connexion admin réussie (mot de passe + double authentification) — ${appareil} / ${nav} — IP ${ip || "?"} (${lieu}) — ${quand}`;
+    try {
+      await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/admin_log`, { method: "POST", headers: _sbHeaders(env, { Prefer: "return=minimal" }),
+        body: JSON.stringify({ admin_user_id: u.id, salon_id: null, action: "CONNEXION_ADMIN", details: det.slice(0, 900) }) });
+    } catch (_) {}
+    try {
+      await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/notify_admins`, { method: "POST", headers: _sbHeaders(env),
+        body: JSON.stringify({ p_event_type: "chat", p_title: "🔐 Connexion à l'admin", p_body: `${appareil} / ${nav} — ${lieu}`.slice(0, 150), p_url: "https://admin.luxyra.fr/" }) });
+    } catch (_) {}
+    try {
+      const esc = (t) => String(t || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+      const html = lxMailLayout(`<p style="font-size:15px">Une connexion à l'administration Luxyra vient d'avoir lieu.</p>
+<table style="font-size:14px;border-collapse:collapse"><tr><td style="padding:4px 12px 4px 0;color:#888">Quand</td><td>${esc(quand)}</td></tr>
+<tr><td style="padding:4px 12px 4px 0;color:#888">Appareil</td><td>${esc(appareil + " / " + nav)}</td></tr>
+<tr><td style="padding:4px 12px 4px 0;color:#888">Lieu approximatif</td><td>${esc(lieu)}</td></tr>
+<tr><td style="padding:4px 12px 4px 0;color:#888">Adresse IP</td><td>${esc(ip || "?")}</td></tr></table>
+<p style="font-size:14px;margin-top:16px"><b>Ce n'est pas vous ?</b> Ouvrez admin.luxyra.fr, touchez « Se déconnecter de tous les appareils », puis changez le mot de passe du compte admin.</p>`, { titre: "Connexion à l'administration" });
+      await brevoSendEmail(env, { to: "contact@luxyra.fr", toName: "Alexandre", senderName: "Luxyra sécurité", senderEmail: "contact@luxyra.fr", subject: "Connexion à l'administration Luxyra — " + appareil + " (" + lieu + ")", htmlContent: html, textContent: det });
+    } catch (_) {}
+    return jsonResponse({ ok: true });
+  } catch (e) {
+    await reportWorkerError(env, "worker:admin-connexion", e, {}, "warning");
+    return jsonResponse({ ok: false }, 500);
+  }
+}
 async function handleAdminSmsStop(request, env) {
   try {
     let qui = "x-lx-internal";
