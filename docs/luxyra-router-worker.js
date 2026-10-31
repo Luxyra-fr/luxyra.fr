@@ -1825,7 +1825,7 @@ async function handleBonCadeauStatut(request, env) {
       const s0 = Array.isArray(sa) ? sa[0] : null;
       let cfg = s0 && s0.config_json; if (typeof cfg === "string") { try { cfg = JSON.parse(cfg); } catch (_) { cfg = null; } }
       const modele = cfg && (cfg.bonModele === "maison" || cfg.bonModele === "ecrin") ? cfg.bonModele : "";
-      if (s0 && modele) carte = { modele, de: bc.de || "", pour: bc.pour || "", message: bc.message || "", theme_id: bc.theme_id || "", scope: bc.scope || "tout", usage_tva: bc.usage_tva || null, tva_rate: bc.tva_rate,
+      if (s0 && modele) carte = { modele, palette: (cfg && typeof cfg.bonPalette === "string" && /^[a-z_]{1,20}$/.test(cfg.bonPalette)) ? cfg.bonPalette : "", de: bc.de || "", pour: bc.pour || "", message: bc.message || "", theme_id: bc.theme_id || "", scope: bc.scope || "tout", usage_tva: bc.usage_tva || null, tva_rate: bc.tva_rate,
         salon: { nom: s0.nom || "", sous_titre: s0.sous_titre || "", adresse: s0.adresse || "", cp: s0.cp || "", ville: s0.ville || "", tel: s0.tel || "", logo: (s0.logo && String(s0.logo).length <= 400000) ? s0.logo : "", /* logo trop lourd : carte typographique */ couleur_primaire: s0.couleur_primaire || "", taux_tva: s0.taux_tva } };
     } catch (_) { carte = null; }
     return jsonResponse({ ok: true, paye: true, code: bc.code, valeur: Number(bc.valeur) || 0, date_expiration: bc.date_expiration || null, email: lxMasquerEmail(bc.buyer_email), carte });
@@ -4479,7 +4479,7 @@ async function handleBrevoSmsEvent(request, env) {
 // Réservation impossible (base injoignable) : l'e-mail part quand même (jamais zéro), sans clé.
 // ============================================================
 const LX_EMAIL_FENETRE_MS = 10 * 60 * 1000;
-const LX_EMAIL_CONTEXTES = new Set(["luxyra_auto", "rappel_24h", "anniversaire", "relance", "carte_rappel_30j", "carte_rappel_7j", "ticket", "marketing"]); // 2026-10-17 : + marketing (campagnes)
+const LX_EMAIL_CONTEXTES = new Set(["luxyra_auto", "rappel_24h", "anniversaire", "relance", "carte_rappel_30j", "carte_rappel_7j", "ticket", "marketing", "bon_ecarte"]); // 2026-10-31 (-2) : + bon_ecarte (e-carte envoyée depuis la caisse, transactionnel) // 2026-10-17 : + marketing (campagnes)
 // 2026-10-17 audit réglages (#4) : e-mails de prospection -> lien de désinscription obligatoire (fiche du salon)
 const LX_EMAIL_CONTEXTES_MARKETING = new Set(["marketing", "anniversaire", "relance"]);
 async function lxLienDesinscription(env, salonId, email, canal) {
