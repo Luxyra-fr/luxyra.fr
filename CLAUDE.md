@@ -2336,3 +2336,8 @@ Audit approuvé : `docs/admin-audit-1015.md` (P1 + P2, sauf le chat support fait
 - Lot 3 (même révision) : JET 410/270 obligatoires (refus si la ligne JET manque) pour identité et TVA changées par un non-propriétaire ; `config_json` non modifiable par l'éditeur (seul chemin : admin_salon_cfg_migration, drapeau `luxyra.cfg_migration`) ; jamais un compte admin propriétaire (trigger salons_proprietaire_non_admin) ; signatures JET d'installation hors « historique fiscal ». Scripts : nf525_admin_sans_ecriture_caisse_3.sql / _avant_3.sql.
 - Banc : docs/migrations_1031_audit_final/tests_acces_admin_caisse.sql (à relancer après toute modification d'une fonction de caisse). Dossier : docs/dossier-attestation-version-mineure-6.8.7-s1.md (verify_jwt obligatoire sur rdv-empreinte-capture/release, lx-cloture-auto, salon-factory-reset ; procédure clé service).
 - Scripts : docs/migrations_1031_audit_final/nf525_admin_sans_ecriture_caisse.sql (aller) / nf525_admin_avant.sql (retour). Registre NF525 à jour.
+
+
+## Suppression d'un établissement sans aucune vente réelle (31/10/2026)
+- Seule voie : `lx_prive.salon_archiver_avant_suppression(id, motif)` puis `lx_prive.admin_supprimer_salon_sans_vente_reelle(id, motif)` (SQL serveur uniquement, jamais depuis le navigateur). Refus si la moindre opération réelle existe (preuve `lx_prive.salon_preuve_aucune_vente_reelle`), si abonnement Stripe / offre en cours, et toujours pour Excellence Coiffure et O'R STUDIO (liste noire).
+- Archive de preuve conservée : `lx_prive.archives_suppression_editeur` (ajout seul) + bucket privé `lx-archives-editeur`. Inscrire chaque usage au registre NF525. Un établissement qui a vendu en réel ne se supprime JAMAIS : fermeture + purge automatique à 6 ans.
