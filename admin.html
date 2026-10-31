@@ -5719,8 +5719,9 @@ async function doEditUserId(id,newUid){
   if(ci.error){ alert("Vérification impossible : "+ci.error.message); return; }
   if(!ci.data||!ci.data.existe){ alert("Aucun compte de connexion avec cet identifiant."); return; }
   if(!confirm("Rattacher « "+((s&&s.nom)||id)+" » au compte "+ci.data.email+" ?\n\nAncien : "+(ancien||"aucun")+"\nNouveau : "+newUid+(ci.data.autres_salons?"\n\n⚠️ Ce compte gère déjà "+ci.data.autres_salons+" établissement(s).":"")+"\n\nLe gérant actuel perdra l'accès.")) return;
-  try{ await saMaj("salons",{user_id:newUid},id,["user_id"]); }catch(eU){ alert("❌ Non modifié : "+(eU&&eU.message||eU)); return; }
-  await saJournal(id,"CHANGE_USER_ID","old="+(ancien||"aucun")+" new="+newUid+" ("+ci.data.email+")");
+  // 31/10/2026 (audit I2) : le propriétaire ne se change plus par écriture directe (garde en base) ; fonction dédiée, journalisée en base
+  var rc=await _sb.rpc("lx_admin_salon_changer_proprietaire",{p_salon:id,p_user:newUid});
+  if(rc.error){ alert("❌ Non modifié : "+rc.error.message); return; }
   alert("✅ Établissement rattaché à "+ci.data.email);
   await loadData();render();openD(id);
 }

@@ -892,3 +892,10 @@ Aucune table, fonction ni déclencheur fiscal modifié ; lecture seule de `carte
 - 31/10/2026 : admin jamais affichée dans les applis Play (garde admin.html + admin-twa.html), hors NF525.
 
 - 31/10/2026 — Sécurité de l administration (hors périmètre fiscal, aucune table NF525 modifiée) : en-têtes de sécurité admin.luxyra.fr, vue admin servie sur admin.luxyra.fr (session admin retirée de luxyra.fr), journal + alerte de connexion admin, déconnexion après inactivité et « tous les appareils », source de report_server_error neutralisée. I2 (droits admin d écriture sur tables fiscales) NON fait, en attente d accord.
+
+### 31/10/2026 — Droits de l'administrateur sur la caisse des établissements (audit sécurité I2, validé par Alexandre)
+- Nature : durcissement des DROITS d'accès uniquement. Aucune donnée fiscale lue, modifiée ou supprimée ; check_fiscal_integrity = 0 avant et après.
+- L'administrateur (is_admin()) perd l'écriture directe sur : tickets (insert, update ; la policy delete « admin seul » est supprimée), tickets_attente, clotures, clotures_mensuelles, clotures_annuelles, archives, audit_log. La lecture admin est inchangée.
+- L'établissement propriétaire, les fonctions serveur (SECURITY DEFINER) et le rôle service gardent leurs droits : encaissement et clôtures inchangés (vérifié par simulation dans une transaction annulée).
+- Propriétaire d'un établissement (salons.user_id) : garde en base (trg_salons_user_id_garde) ; seul chemin = lx_admin_salon_changer_proprietaire() (admin aal2, journalisée dans admin_log). Le salon ne pouvait déjà pas le changer (salons_proteger_facturation).
+- Fichiers : docs/migrations_1031_i2/i2_admin_ecriture_caisse.sql (md5 94feb459…), retour arrière exact i2_retour_arriere.sql ; admin.html (changement de propriétaire par la fonction dédiée).
