@@ -83,6 +83,17 @@ a{color:var(--gold);text-decoration:none}
 .btn.ghost{background:transparent}
 .btn.danger{border-color:#ef5350;color:#ef5350;background:transparent}
 .btn:disabled{opacity:.5;cursor:not-allowed}
+/* 31/10 (nuit) : bandeau bas (attestation) — sous la fiche et les fenêtres, repliable, place réservée en bas de page */
+.lx-bandeau-bas{position:fixed;bottom:14px;left:14px;z-index:150;max-width:340px;font-size:13px;color:var(--text)}
+.lx-bandeau-bas .lx-bd-plein{position:relative;background:#2a2516;border:1px solid var(--gold);border-radius:12px;padding:10px 34px 10px 14px;box-shadow:0 6px 24px rgba(0,0,0,.45)}
+.lx-bandeau-bas .lx-bd-fermer{position:absolute;top:4px;right:4px;width:30px;height:30px;border:0;background:transparent;color:var(--text2);font-size:20px;line-height:1;cursor:pointer;border-radius:8px}
+.lx-bandeau-bas .lx-bd-fermer:hover{color:var(--gold)}
+.lx-bandeau-bas .lx-bd-mini{display:none;background:#2a2516;border:1px solid var(--gold);color:var(--gold);border-radius:20px;padding:8px 14px;font-size:12px;font-weight:700;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.4);font-family:var(--f1)}
+.lx-bandeau-bas.replie .lx-bd-plein{display:none}.lx-bandeau-bas.replie .lx-bd-mini{display:block}
+body.lx-bd-ouvert{padding-bottom:150px}body.lx-bd-replie{padding-bottom:64px}
+body:has(.dp-overlay.open) .lx-bandeau-bas{display:none}
+@media (max-width:700px){.lx-bandeau-bas{left:10px;right:10px;bottom:10px;max-width:none}.lx-bandeau-bas.replie{right:auto}body.lx-bd-ouvert{padding-bottom:170px}
+.dp-sticky-header{margin:-14px -14px 12px -14px!important}}
 #lxToasts{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:100000;display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none;width:min(92vw,420px)}
 .lx-toast{background:#1b1b1f;color:#f0e6c8;border:1px solid rgba(212,168,67,.45);border-radius:10px;padding:10px 16px;font-size:13px;box-shadow:0 6px 24px rgba(0,0,0,.45);transition:opacity .3s;pointer-events:auto;text-align:center}
 .lx-toast.ok{border-color:#66bb6a}.lx-toast.err{border-color:#ef5350;color:#ffcdd2}
@@ -528,7 +539,7 @@ async function lxMfaActiver(){
     var b=document.getElementById("lxMfaBandeau"); if(b) b.remove();
   };
 }
-setInterval(function(){ try{ if(_online && window._lxMfaActive===false && !document.getElementById("lxMfaBandeau")){ var b=document.createElement("div"); b.id="lxMfaBandeau"; b.style.cssText="position:fixed;bottom:14px;right:14px;z-index:9999;background:rgba(239,83,80,.15);border:1px solid var(--red);color:var(--text);border-radius:12px;padding:10px 14px;font-size:13px;max-width:320px"; b.innerHTML='🔐 <b>Sécurisez l’admin</b> : activez la double authentification. <button class="tb-btn primary" style="margin-top:6px;width:100%" onclick="lxMfaActiver()">Activer maintenant</button>'; document.body.appendChild(b); } }catch(e){} }, 3000);
+setInterval(function(){ try{ if(_online && window._lxMfaActive===false && !document.getElementById("lxMfaBandeau")){ var b=document.createElement("div"); b.id="lxMfaBandeau"; b.style.cssText="position:fixed;bottom:14px;right:14px;z-index:150;background:rgba(239,83,80,.15);border:1px solid var(--red);color:var(--text);border-radius:12px;padding:10px 14px;font-size:13px;max-width:320px"; b.innerHTML='🔐 <b>Sécurisez l’admin</b> : activez la double authentification. <button class="tb-btn primary" style="margin-top:6px;width:100%" onclick="lxMfaActiver()">Activer maintenant</button>'; document.body.appendChild(b); } }catch(e){} }, 3000);
 // ===== ATTESTATION NF525 — VOLET 1 ÉDITEUR (2026-10-10) =====
 // Modèle officiel BOI-LETTRE-000242 : l'éditeur signe le volet 1 une fois par version majeure (texte dans lx-nf525-attestation.js).
 // Signature électronique : session admin protégée par double authentification (aal2) + horodatage + SHA-256, table inaltérable.
@@ -537,10 +548,21 @@ async function lxAttEdVerifier(){
   if(window._lxAttEdVerifie||!_sb||!_online||!window.LX_ATT) return; window._lxAttEdVerifie=true;
   try{ var r=await _sb.from("nf525_attestation_editeur").select("id").eq("version_majeure",LX_ATT.versionMajeure).maybeSingle();
     if(r.error||r.data) return;
-    var b=document.createElement("div"); b.id="lxAttEdBandeau"; b.style.cssText="position:fixed;bottom:14px;left:14px;z-index:9999;background:rgba(200,168,78,.15);border:1px solid var(--gold);color:var(--text);border-radius:12px;padding:10px 14px;font-size:13px;max-width:340px";
-    b.innerHTML='📄 <b>Attestation de conformité (caisse) version '+LX_ATT.versionMajeure+'</b> : le volet éditeur est à signer pour que les établissements puissent signer le leur. <button class="tb-btn primary" style="margin-top:6px;width:100%" onclick="lxAttEdOuvrir()">Lire et signer</button>';
+    // 31/10 (nuit) : bandeau repliable. « × » -> petit bouton « 📄 Attestation » (mémorisé) ; place réservée en bas de page
+    // (padding) pour ne plus masquer la fin des fiches et cartes ; toujours SOUS les fenêtres et la fiche (z-index 150).
+    var b=document.createElement("div"); b.id="lxAttEdBandeau"; b.className="lx-bandeau-bas";
+    b.innerHTML='<div class="lx-bd-plein"><button class="lx-bd-fermer" type="button" aria-label="Réduire" title="Réduire" onclick="lxBandeauReplier(true)">×</button>📄 <b>Attestation de conformité (caisse) version '+saEsc(LX_ATT.versionMajeure)+'</b> : le volet éditeur est à signer pour que les établissements puissent signer le leur. <button class="tb-btn primary" style="margin-top:6px;width:100%" onclick="lxAttEdOuvrir()">Lire et signer</button></div>'+
+      '<button class="lx-bd-mini" type="button" onclick="lxBandeauReplier(false)" title="Attestation à signer">📄 Attestation à signer</button>';
     document.body.appendChild(b);
+    var _rep=false; try{ _rep=localStorage.getItem("lx_att_bandeau_replie")==="1"; }catch(_e){}
+    lxBandeauReplier(_rep, true);
   }catch(e){ window._lxAttEdVerifie=false; }
+}
+function lxBandeauReplier(replie, init){
+  var b=document.getElementById("lxAttEdBandeau"); if(!b) return;
+  b.classList.toggle("replie", !!replie);
+  document.body.classList.toggle("lx-bd-ouvert", !replie); document.body.classList.toggle("lx-bd-replie", !!replie);
+  if(!init){ try{ localStorage.setItem("lx_att_bandeau_replie", replie?"1":"0"); }catch(_e){} }
 }
 function lxAttEdOuvrir(){
   var txt=lxAtt.volet1(new Date());
@@ -557,7 +579,7 @@ function lxAttEdOuvrir(){
     this.disabled=true;
     var r=await _sb.rpc("nf525_signer_editeur",{p_version:LX_ATT.versionMajeure,p_mise_sur_marche:LX_ATT.miseSurMarche,p_signataire:nom,p_texte:txt,p_user_agent:navigator.userAgent});
     if(r.error){ e.textContent=r.error.message; this.disabled=false; return; }
-    lxMfaFermer(); var b=document.getElementById("lxAttEdBandeau"); if(b) b.remove();
+    lxMfaFermer(); var b=document.getElementById("lxAttEdBandeau"); if(b) b.remove(); document.body.classList.remove("lx-bd-ouvert","lx-bd-replie");
     (await lxAlert("✅ Volet 1 signé. Les établissements peuvent maintenant signer leur volet 2 dans l’application (Paramètres → Caisse → Conformité de la caisse → Mon attestation)."));
   };
 }
@@ -1141,7 +1163,8 @@ function lxTdbLocal(){
   var imp=SALONS.filter(function(s){return s.status==='past_due'&&!s.fermeLe;}).map(function(s){return {id:s.id,nom:s.nom,stripe_customer:s.stripeCust};});
   var nc=SALONS.filter(function(s){ return !s.fermeLe&&s.trialEnd&&!s.stripeSub&&s.status!=='active'&&s.status!=='past_due'&&!/^\s*(salon|luxyra)\s+d[eé]mo/i.test(s.nom||'')&&!(s.isFree&&(!s.freeUntil||new Date(s.freeUntil)>new Date())); var t=new Date(s.trialEnd).getTime(); return t<now&&t>now-90*864e5; })
     .map(function(s){ return {id:s.id,nom:s.nom,fin:s.trialEnd,statut:s.status,depuis_jours:Math.floor((now-new Date(s.trialEnd))/864e5)}; });
-  return {local:true, mrr:{total:mrrTotal(),variation:null}, essais_non_convertis:nc, abonnes:{payants:SALONS.filter(function(s){return mrrOf(s)>0;}).length, essais:SALONS.filter(function(s){return s.status==='trial'&&!s.fermeLe&&!/^\s*(salon|luxyra)\s+d[eé]mo/i.test(s.nom||'');}).length},
+  return {local:true, mrr:{total:mrrTotal(),variation:null}, essais_non_convertis:nc, abonnes:{payants:SALONS.filter(function(s){return mrrOf(s)>0;}).length, essais:SALONS.filter(function(s){return s.status==='trial'&&!s.fermeLe&&!lxEstTest(s);}).length,
+      actifs:SALONS.filter(function(s){return s.status==='active'&&!s.fermeLe&&!lxEstTest(s);}).length, tests:SALONS.filter(function(s){return s.status!=='cancelled'&&!s.fermeLe&&lxEstTest(s);}).length},
     essais_7j:e7, impayes:imp, support:{non_lus:window.ADMIN_UNREAD_CHAT||0,plus_ancien:null}, bot:null, a_reparer:null, nf525:null, nuit:null, alertes:[], compteurs:{}};
 }
 async function lxTdbCharger(force){
@@ -1209,10 +1232,10 @@ function lxTdbRendu(){
   // 2) LES 4 CARTES CLÉS
   h+='<div class="kpi-row">';
   h+=_tdbCarte({label:'Revenu mensuel',valeur:fmtM(m.total||0),couleur:'var(--gold)',icone:'💰',page:'revenus/mrr',
-    sous:saEsc(ab.payants||0)+' client(s) payant(s) · '+(v==null?'pas encore de relevé à 30 j':(v>=0?'+':'')+fmtM(v)+' depuis le relevé du '+fmtD(m.ref_mois))});
+    sous:saEsc(ab.payants||0)+' payant(s)'+(ab.actifs!=null&&ab.actifs!==ab.payants?' sur '+saEsc(ab.actifs)+' actif(s)':'')+' · hors offerts et tests · '+(v==null?'pas encore de relevé à 30 j':(v>=0?'+':'')+fmtM(v)+' depuis le relevé du '+fmtD(m.ref_mois))});
   var i7=(d.inscrits_7j!=null?d.inscrits_7j:SALONS.filter(function(s){return !/^\s*(salon|luxyra)\s+d[eé]mo/i.test(s.nom||'')&&(Date.now()-new Date(s.created).getTime())<7*864e5;}).length);
   h+=_tdbCarte({label:'Nouveaux inscrits (7 j)',valeur:saEsc(i7),couleur:i7?'var(--green)':'var(--text2)',icone:'🆕',page:'salons/liste',
-    sous:saEsc(ab.essais||0)+' essai(s) en cours'});
+    sous:saEsc(ab.essais||0)+' essai(s) en cours'+(ab.tests?' · '+saEsc(ab.tests)+' compte(s) de test ou offert(s) ouvert(s), exclus des chiffres':'')});
   h+=_tdbCarte({label:'Essais : fin sous 7 j / terminés',valeur:'<span style="color:'+(e7.length?'var(--orange)':'var(--text2)')+'">'+saEsc(e7.length)+'</span> <span style="color:var(--text3)">/</span> <span style="color:'+(nc.length?'var(--red)':'var(--text2)')+'">'+saEsc(nc.length)+'</span>',icone:'⏰',page:'revenus/impayes',
     sous:'finissent bientôt / terminés sans abonnement (90 j)'});
   var bsr=bo?(bo.sans_reponse||0):0, sup=(su.non_lus||0)+bsr;
@@ -3102,7 +3125,8 @@ function _esc(s){ return saEsc(s); } // 31/10 audit : échappement unique (apost
 function rAnalytics(sub){
   var totalC=0,totalCollabs=0;SALONS.forEach(function(s){totalC+=s.clients||0;totalCollabs+=s.collabs||0;});
   // 2026-10-31 : seuls les abonnements PAYANTS (mrrOf > 0) comptent par forfait ; offerts et tests à part
-  var byPlan={essential:0,pro:0},nOff=0,nTest=0;SALONS.forEach(function(s){ if(s.fermeLe) return; if(mrrOf(s)>0) byPlan[s.plan]=(byPlan[s.plan]||0)+1; else if(s.status==='active'&&s.isFree&&!lxEstTest({modeCaisse:s.modeCaisse,nom:s.nom})) nOff++; else if(lxEstTest(s)&&s.status!=='cancelled') nTest++; });
+  // 31/10 (nuit) : même règle que le tableau de bord : « tests » = TOUS les comptes de test ou offerts encore ouverts (dont offerts)
+  var byPlan={essential:0,pro:0},nOff=0,nTest=0;SALONS.forEach(function(s){ if(s.fermeLe) return; if(mrrOf(s)>0) byPlan[s.plan]=(byPlan[s.plan]||0)+1; if(s.status!=='cancelled'&&lxEstTest(s)){ nTest++; if(s.isFree&&(!s.freeUntil||new Date(s.freeUntil)>new Date())) nOff++; } });
   var byMetier={};SALONS.forEach(function(s){if(s.fermeLe)return;byMetier[s.metier]=(byMetier[s.metier]||0)+1;});
   var h='<div class="topbar"><h1>'+({cohorts:'Cohortes',funnel:'Entonnoir'}[sub]||'Chiffres clés')+' <span>'+({cohorts:'Rétention des établissements',funnel:'De l’inscription à l’abonnement'}[sub]||'Vue d’ensemble')+'</span></h1></div>';
   if(sub==='cohorts'){return rAnalyticsCohorts(h);}
@@ -3111,7 +3135,7 @@ function rAnalytics(sub){
   h+='<div class="kpi"><div class="kpi-label">Total clients</div><div class="kpi-value" style="color:var(--blue)">'+totalC+'</div><div class="kpi-sub">Tous établissements confondus</div></div>';
   h+='<div class="kpi"><div class="kpi-label">Total collaborateurs</div><div class="kpi-value" style="color:var(--gold)">'+totalCollabs+'</div></div>';
   h+='<div class="kpi"><div class="kpi-label">Essentiel payants</div><div class="kpi-value" style="color:var(--green)">'+(byPlan.essential||0)+'</div><div class="kpi-sub">abonnement Stripe en cours</div></div>';
-  h+='<div class="kpi"><div class="kpi-label">Pro payants</div><div class="kpi-value" style="color:var(--purple)">'+(byPlan.pro||0)+'</div><div class="kpi-sub">hors offerts ('+nOff+') et comptes de test ('+nTest+')</div></div>';
+  h+='<div class="kpi"><div class="kpi-label">Pro payants</div><div class="kpi-value" style="color:var(--purple)">'+(byPlan.pro||0)+'</div><div class="kpi-sub">hors comptes de test ou offerts ouverts : '+nTest+(nOff?' (dont '+nOff+' offert'+(nOff>1?'s':'')+')':'')+'</div></div>';
   h+='</div>';
   h+='<div class="card"><h3>📊 Répartition par métier</h3>';
   Object.keys(byMetier).forEach(function(k){
@@ -3285,7 +3309,7 @@ function rLegalPage(){
   h+='<div style="display:grid;gap:8px">';
   // Liens vers les pages RÉELLEMENT publiées (vérifiées présentes dans le repo + footer site).
   var docs=[
-    {nom:'Mentions légales',url:'https://luxyra.fr/mentions'},
+    {nom:'Mentions légales',url:'https://luxyra.fr/mentions-legales'},
     {nom:'CGV / CGU',url:'https://luxyra.fr/cgv'},
     {nom:'Politique de confidentialité',url:'https://luxyra.fr/politique-confidentialite'},
     {nom:'DPA (sous-traitance RGPD)',url:'https://luxyra.fr/dpa'},
