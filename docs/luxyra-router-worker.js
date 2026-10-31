@@ -668,8 +668,12 @@ async function lxGuardSalon(request, env, salonId) {
     // il est refusé (route + établissement + compte, jamais le contenu de la demande)
     try {
       const _sid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(salonId || "")) ? String(salonId) : null;
-      await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/admin_log`, { method: "POST", headers: _sbHeaders(env, { Prefer: "return=minimal" }),
-        body: JSON.stringify({ action: _refus ? "ADMIN_ROUTE_REFUSEE" : "ADMIN_ROUTE_ETABLISSEMENT", admin_user_id: u.id || null, admin_email: String(u.email || "admin"), salon_id: _sid, cible: _p.slice(0, 200), details: (_refus ? "Refusé (lecture seule) : " : "Accès admin via ") + _p.slice(0, 200), origine: "auto" }) });
+      const _ligne = { action: _refus ? "ADMIN_ROUTE_REFUSEE" : "ADMIN_ROUTE_ETABLISSEMENT", admin_user_id: u.id || null, admin_email: String(u.email || "admin"), salon_id: _sid, cible: _p.slice(0, 200), details: (_refus ? "Refusé (lecture seule) : " : "Accès admin via ") + _p.slice(0, 200) + (_sid ? "" : (salonId ? " (établissement " + String(salonId).slice(0, 40) + ")" : "")), origine: "auto" };
+      const _post = (o) => fetch(`${CONFIG.SUPABASE_URL}/rest/v1/admin_log`, { method: "POST", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify(o) });
+      let _rl = await _post(_ligne);
+      // établissement inexistant (clé étrangère) : la trace est gardée sans lien, avec l'identifiant dans les détails
+      if (!_rl.ok && _sid) { _rl = await _post({ ..._ligne, salon_id: null, details: _ligne.details + " (établissement " + _sid + ")" }); }
+      if (!_rl.ok) console.error("admin_log route admin : échec " + _rl.status);
     } catch (_) {}
     if (_refus) return jsonResponse({ error: "Administration : lecture seule sur les établissements" }, 403);
     return null;
