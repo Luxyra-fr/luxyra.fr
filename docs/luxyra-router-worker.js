@@ -623,6 +623,15 @@ async function lxAuthUser(request) {
     if (!r.ok) return null;
     const u = await r.json();
     if (u && u.id) { try { u._aal = JSON.parse(atob(t.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))).aal || "aal1"; } catch (_) { u._aal = "aal1"; } }
+    // 2026-10-31 audit final F5 : pour le compte admin, la base reste seule juge (public.is_admin() :
+    // aal2 + session encore ouverte + moins de 12 h). Un appel de plus, seulement pour ce compte.
+    if (u && u.id && String(u.email || "").toLowerCase() === "support@luxyra.fr") {
+      u._adminOk = false;
+      try {
+        const ra = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/is_admin`, { method: "POST", headers: { apikey: CONFIG.SUPABASE_ANON_KEY, Authorization: "Bearer " + t, "Content-Type": "application/json" }, body: "{}" });
+        u._adminOk = ra.ok && (await ra.json()) === true;
+      } catch (_) { u._adminOk = false; }
+    }
     return (u && u.id) ? u : null;
   } catch (e) { return null; }
 }
@@ -631,7 +640,7 @@ async function lxAuthUser(request) {
 // support@luxyra.fr ; un compte admin sans second facteur n'a plus aucun droit admin) — aligné sur public.is_admin().
 function lxIsAdminUser(u) {
   if (!(u && String(u.email || "").toLowerCase() === "support@luxyra.fr")) return false;
-  return u._aal === "aal2";
+  return u._aal === "aal2" && u._adminOk === true; // 2026-10-31 F5 : + session < 12 h vérifiée par la base
 }
 async function lxOwnsSalon(env, userId, salonId) {
   if (!userId || !salonId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(salonId))) return false;
@@ -648,7 +657,21 @@ async function lxGuardSalon(request, env, salonId) {
   if (await lxIsInternal(request, env)) return null;
   const u = await lxAuthUser(request);
   if (!u) return jsonResponse({ error: "Authentification requise" }, 401);
-  if (lxIsAdminUser(u)) return null;
+  if (lxIsAdminUser(u)) {
+    let _p = ""; try { _p = new URL(request.url).pathname; } catch (_) {}
+    // 2026-10-31 audit final I5 : l'admin ne peut plus AGIR à la place d'un établissement (SMS, paiements, remboursements,
+    // invitations, envoi au comptable, réponses aux demandes…) : seules les lectures dont le panneau a besoin restent permises.
+    // Garantie serveur de la « vue admin lecture seule », même si le filtre du navigateur était contourné.
+    if (!LX_ROUTES_SALON_ADMIN_LECTURE.has(_p)) return jsonResponse({ error: "Administration : lecture seule sur les établissements" }, 403);
+    // 2026-10-31 audit final F6 : l'admin agissant sur une route d'établissement laisse une trace serveur
+    // (route + établissement, jamais le contenu de la demande)
+    try {
+      const _sid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(salonId || "")) ? String(salonId) : null;
+      await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/admin_log`, { method: "POST", headers: _sbHeaders(env, { Prefer: "return=minimal" }),
+        body: JSON.stringify({ action: "ADMIN_ROUTE_ETABLISSEMENT", admin_email: String(u.email || "admin"), salon_id: _sid, cible: _p.slice(0, 200), details: "Accès admin via " + _p.slice(0, 200), origine: "auto" }) });
+    } catch (_) {}
+    return null;
+  }
   if (!(await lxOwnsSalon(env, u.id, salonId))) return jsonResponse({ error: "Accès refusé" }, 403);
   return null;
 }
@@ -667,6 +690,8 @@ const LX_ROUTES_SALON = new Set([
   "/api/client/invite", "/api/cc/action", "/api/sms/recharge-auto", "/api/rdv/acompte-rembourser",
   "/api/compta/envoi" // 2026-10-27 : envoi au comptable (propriétaire du salon)
 ]);
+// 2026-10-31 audit final I5 : routes d'établissement que l'admin peut encore appeler (lecture / lien de consultation)
+const LX_ROUTES_SALON_ADMIN_LECTURE = new Set(["/api/admin/export-nf525", "/api/stripe/portal", "/api/stripe/connect-status"]);
 function lxUrlLuxyra(u) {
   try { const x = new URL(String(u)); return x.protocol === "https:" && (x.hostname === "luxyra.fr" || x.hostname.endsWith(".luxyra.fr")); } catch (e) { return false; }
 }
