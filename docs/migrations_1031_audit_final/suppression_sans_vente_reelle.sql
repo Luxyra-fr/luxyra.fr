@@ -144,3 +144,150 @@ begin
   return jsonb_build_object('ok', true, 'lignes', r->'rows_deleted', 'archive_id', v_arch.id, 'sha256', v_arch.sha256, 'detail', r->'deleted');
 end $$;
 revoke all on function lx_prive.admin_supprimer_salon_sans_vente_reelle(uuid, text) from public, anon, authenticated;
+
+-- ============================================================================================
+-- 6. Durcissement du 31/10/2026 (vérification indépendante après les 2 suppressions)
+--    a) refus étendu : établissement actif, déjà abonné, client ou compte Connect Stripe, essai en cours
+--    b) contrôles « aucune vente » sûrs face aux valeurs manquantes (clé absente = refus ; `is not true`)
+--    c) archive : TRUNCATE refusé ; conservation 6 ans puis purge contrôlée (ligne + copie du bucket)
+-- ============================================================================================
+create or replace function lx_prive.salon_preuve_aucune_vente_reelle(p_salon uuid) returns jsonb
+language sql stable security definer set search_path to 'public', 'pg_temp' as $$
+  select jsonb_build_object(
+    'mode_reel_depuis', s.mode_reel_depuis,
+    'tickets', (select count(*) from tickets where salon_id = s.id),
+    'clotures', (select count(*) from clotures where salon_id = s.id),
+    'clotures_periodiques', (select count(*) from clotures_mensuelles where salon_id = s.id)
+                          + (select count(*) from clotures_annuelles where salon_id = s.id)
+                          + (select count(*) from clotures_exercices where salon_id = s.id),
+    'factures_clients', (select count(*) from factures_clients where salon_id = s.id),
+    'bons_cadeaux', (select count(*) from cartes_cadeaux where salon_id = s.id),
+    'bons_mouvements', (select count(*) from cartes_cadeaux_mouvements where salon_id = s.id),
+    'packs_clients', (select count(*) from packs_clients where salon_id = s.id),
+    'corrections_reglement', (select count(*) from corrections_reglement where salon_id = s.id),
+    'duplicatas', (select count(*) from nf525_duplicatas where salon_id = s.id),
+    'archives', (select count(*) from archives where salon_id = s.id),
+    'commandes_payees_en_ligne', (select count(*) from commandes_online where salon_id = s.id and (paye or stripe_payment_id is not null or payment_intent_id is not null)),
+    'signatures_operations_apres_reel', (select count(*) from nf525_signatures g where g.salon_id = s.id and g.source_table <> 'nf525_jet' and g.signed_at >= coalesce(s.mode_reel_depuis, '-infinity')),
+    'scellements_apres_reel', (select count(*) from nf525_hash_seal h where h.salon_id = s.id and h.sealed_at >= coalesce(s.mode_reel_depuis, '-infinity')),
+    'jet_fiscal_apres_reel', (select count(*) from nf525_jet j where j.salon_id = s.id and j.code in (20,30,50,60,155,190,420,901) and j.horodatage >= coalesce(s.mode_reel_depuis, '-infinity')),
+    'purges_mode_test', (select coalesce(jsonb_agg(jsonb_build_object('le', p.created_at, 'motif', p.motif, 'nb', p.nb, 'empreinte', p.empreinte) order by p.created_at), '[]') from nf525_archives_purge p where p.salon_id = s.id),
+    'abonnement_stripe', s.stripe_subscription_id is not null,
+    'offert_actif', coalesce(s.is_free, false) and (s.free_until is null or s.free_until > current_date),
+    'statut_actif', coalesce(s.status, '') = 'active',
+    'deja_abonne', s.abonne_depuis is not null,
+    'client_stripe', coalesce(s.stripe_customer_id, '') <> '',
+    'connect_stripe', coalesce(s.stripe_connect_id, '') <> '',
+    'essai_en_cours', s.trial_end is not null and s.trial_end > now()
+  ) from salons s where s.id = p_salon;
+$$;
+revoke all on function lx_prive.salon_preuve_aucune_vente_reelle(uuid) from public, anon, authenticated;
+
+-- clé absente ou illisible = refus (coalesce vers la valeur qui refuse)
+create or replace function lx_prive.salon_aucune_vente_reelle(p jsonb) returns boolean
+language sql immutable as $$
+  select coalesce(p is not null
+     and coalesce((p->>'tickets')::int, 1) = 0 and coalesce((p->>'clotures')::int, 1) = 0 and coalesce((p->>'clotures_periodiques')::int, 1) = 0
+     and coalesce((p->>'factures_clients')::int, 1) = 0 and coalesce((p->>'bons_cadeaux')::int, 1) = 0 and coalesce((p->>'bons_mouvements')::int, 1) = 0
+     and coalesce((p->>'packs_clients')::int, 1) = 0 and coalesce((p->>'corrections_reglement')::int, 1) = 0 and coalesce((p->>'duplicatas')::int, 1) = 0
+     and coalesce((p->>'archives')::int, 1) = 0 and coalesce((p->>'commandes_payees_en_ligne')::int, 1) = 0
+     and coalesce((p->>'signatures_operations_apres_reel')::int, 1) = 0 and coalesce((p->>'scellements_apres_reel')::int, 1) = 0
+     and coalesce((p->>'jet_fiscal_apres_reel')::int, 1) = 0
+     and coalesce((p->>'abonnement_stripe')::boolean, true) = false and coalesce((p->>'offert_actif')::boolean, true) = false
+     and coalesce((p->>'statut_actif')::boolean, true) = false and coalesce((p->>'deja_abonne')::boolean, true) = false
+     and coalesce((p->>'client_stripe')::boolean, true) = false and coalesce((p->>'connect_stripe')::boolean, true) = false
+     and coalesce((p->>'essai_en_cours')::boolean, true) = false, false);
+$$;
+
+-- garde commune (liste noire + abonnement/offre/actif/Stripe/essai), appelée par l'archivage ET la suppression
+create or replace function lx_prive.salon_suppression_garde(p_salon uuid) returns void
+language plpgsql stable security definer set search_path to 'public', 'pg_temp' as $$
+declare s salons;
+begin
+  if p_salon in ('e0cf27c7-d402-4d76-8e91-9ef5231b3582', '4bb782f4-7dab-49b1-be93-105564e7a5cc') then
+    raise exception 'Établissement protégé : suppression refusée'; end if;
+  select * into s from salons where id = p_salon;
+  if s.id is null then raise exception 'Établissement introuvable'; end if;
+  if s.stripe_subscription_id is not null
+     or (coalesce(s.is_free, false) and (s.free_until is null or s.free_until > current_date))
+     or coalesce(s.status, '') = 'active' or s.abonne_depuis is not null
+     or coalesce(s.stripe_customer_id, '') <> '' or coalesce(s.stripe_connect_id, '') <> ''
+     or (s.trial_end is not null and s.trial_end > now()) then
+    raise exception 'Établissement actif, abonné, client ou compte Stripe, ou essai en cours : suppression refusée'; end if;
+end $$;
+revoke all on function lx_prive.salon_suppression_garde(uuid) from public, anon, authenticated;
+
+do $$
+declare d text;
+begin
+  -- archivage : garde commune + contrôle « is not true »
+  d := pg_get_functiondef('lx_prive.salon_archiver_avant_suppression(uuid,text)'::regprocedure);
+  if position('lx_prive.salon_suppression_garde(p_salon)' in d) = 0 then
+    if position('  if length(coalesce(trim(p_motif), '''')) < 15 then raise exception ''Motif obligatoire (15 caractères minimum)''; end if;
+  select nom into v_nom' in d) = 0 then raise exception 'motif archivage introuvable'; end if;
+    d := replace(d, '  if length(coalesce(trim(p_motif), '''')) < 15 then raise exception ''Motif obligatoire (15 caractères minimum)''; end if;
+  select nom into v_nom', '  perform lx_prive.salon_suppression_garde(p_salon);
+  if length(coalesce(trim(p_motif), '''')) < 15 then raise exception ''Motif obligatoire (15 caractères minimum)''; end if;
+  select nom into v_nom');
+  end if;
+  d := replace(d, 'if not lx_prive.salon_aucune_vente_reelle(v_preuve) then', 'if lx_prive.salon_aucune_vente_reelle(v_preuve) is not true then');
+  execute d;
+  -- suppression : garde commune + contrôle « is not true »
+  d := pg_get_functiondef('lx_prive.admin_supprimer_salon_sans_vente_reelle(uuid,text)'::regprocedure);
+  if position('lx_prive.salon_suppression_garde(p_salon)' in d) = 0 then
+    if position('  select * into s from salons where id = p_salon for update;' in d) = 0 then raise exception 'motif suppression introuvable'; end if;
+    d := replace(d, '  select * into s from salons where id = p_salon for update;', '  perform lx_prive.salon_suppression_garde(p_salon);
+  select * into s from salons where id = p_salon for update;');
+  end if;
+  d := replace(d, 'if not lx_prive.salon_aucune_vente_reelle(v_preuve) then', 'if lx_prive.salon_aucune_vente_reelle(v_preuve) is not true then');
+  execute d;
+end $$;
+
+-- archive : effacement seulement par la purge de conservation (drapeau de transaction posé par elle seule)
+create or replace function lx_prive.archives_suppression_editeur_garde() returns trigger
+language plpgsql set search_path to 'pg_catalog' as $$
+begin
+  if tg_op = 'TRUNCATE' then raise exception 'Archive de suppression : effacement en bloc interdit'; end if;
+  if tg_op = 'DELETE' then
+    if coalesce(current_setting('luxyra.purge_archives_editeur', true), '') = '1' and old.created_at < now() - interval '6 years' then
+      return old; end if;
+    raise exception 'Archive de suppression : effacement interdit (conservation 6 ans)';
+  end if;
+  if new.salon_id is distinct from old.salon_id or new.contenu is distinct from old.contenu or new.sha256 is distinct from old.sha256
+     or new.preuve_aucune_vente is distinct from old.preuve_aucune_vente or new.motif is distinct from old.motif
+     or new.nom is distinct from old.nom or new.created_at is distinct from old.created_at
+     or (old.supprime_le is not null and new.supprime_le is distinct from old.supprime_le)
+     or (old.chemin is not null and new.chemin is distinct from old.chemin) then
+    raise exception 'Archive de suppression : modification interdite';
+  end if;
+  return new;
+end $$;
+drop trigger if exists archives_suppression_editeur_truncate on lx_prive.archives_suppression_editeur;
+create trigger archives_suppression_editeur_truncate before truncate on lx_prive.archives_suppression_editeur
+  for each statement execute function lx_prive.archives_suppression_editeur_garde();
+
+-- purge de conservation : lignes de plus de 6 ans + copie du bucket privé (API Storage, la suppression SQL directe y est interdite)
+create or replace function lx_prive.archives_suppression_editeur_purger() returns integer
+language plpgsql security definer set search_path to 'public', 'pg_temp' as $$
+declare r record; n int := 0; v_key text;
+begin
+  select decrypted_secret into v_key from vault.decrypted_secrets where name = 'service_role_key' limit 1;
+  perform set_config('luxyra.purge_archives_editeur', '1', true);
+  for r in select id, salon_id, chemin from lx_prive.archives_suppression_editeur where created_at < now() - interval '6 years' loop
+    if r.chemin is not null and v_key is not null then
+      perform net.http_delete(
+        url := 'https://kxdgjtvrkwugbifgppai.supabase.co/storage/v1/object/lx-archives-editeur',
+        headers := jsonb_build_object('Authorization', 'Bearer ' || v_key, 'apikey', v_key, 'Content-Type', 'application/json'),
+        body := jsonb_build_object('prefixes', jsonb_build_array(r.chemin)));
+    end if;
+    delete from lx_prive.archives_suppression_editeur where id = r.id;
+    insert into admin_log(action, details) values ('ARCHIVE_SUPPRESSION_PURGEE_6ANS', jsonb_build_object('archive_id', r.id, 'salon_id', r.salon_id)::text);
+    n := n + 1;
+  end loop;
+  perform set_config('luxyra.purge_archives_editeur', '', true);
+  return n;
+end $$;
+revoke all on function lx_prive.archives_suppression_editeur_purger() from public, anon, authenticated;
+
+select cron.unschedule(jobid) from cron.job where jobname = 'lx_archives_editeur_purge_6ans';
+select cron.schedule('lx_archives_editeur_purge_6ans', '25 4 2 * *', 'select lx_prive.archives_suppression_editeur_purger();');
