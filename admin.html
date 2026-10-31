@@ -136,7 +136,7 @@ tr:hover{background:rgba(255,255,255,.02)}
 .dp-overlay.fullscreen .dpTab .dp-section{break-inside:avoid;display:inline-block;width:100%}
 @media (max-width:1100px){.dp-overlay.fullscreen .dpTab{column-count:1}}
 /* 2026-10-31 audit final F3 : aucune page ne déborde sur téléphone (tableaux défilables, filtres repliés) */
-@media (max-width:700px){#mainContent{max-width:100vw;overflow-x:hidden}#mainContent table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%}#mainContent .topbar{flex-wrap:wrap;gap:8px}#mainContent .topbar select,#mainContent .topbar input{max-width:100%;min-width:0}#mainContent pre{white-space:pre-wrap;word-break:break-all}}
+@media (max-width:700px){#mainContent{max-width:100vw;overflow-x:hidden}#mainContent table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%}#mainContent .topbar{flex-wrap:wrap;gap:8px}#mainContent .topbar select,#mainContent .topbar input{max-width:100%;min-width:0}#mainContent pre{white-space:pre-wrap;word-break:break-all}#mainContent .tb-btn,#mainContent .dp-btn,#mainContent button.tb-btn{min-height:40px}}
 @media (max-width:700px){.dp-panel{padding:14px!important}.dp-field{flex-wrap:wrap;gap:4px}.dp-field .v{text-align:left!important;max-width:100%;word-break:break-word}.dp-stats{flex-wrap:wrap}.dpTabBtn{font-size:11px!important;padding:6px 8px!important}}
 .dp-actions-select{padding:8px 12px;border-radius:10px;border:1px solid var(--gold);background:var(--bg3);color:var(--text);font-size:13px;font-weight:600;cursor:pointer}
 .dp-expand{background:none;border:1px solid var(--border);color:var(--text2);font-size:14px;cursor:pointer;padding:6px 10px;border-radius:8px;margin-right:6px;transition:all .15s}
@@ -227,7 +227,7 @@ tr:hover{background:rgba(255,255,255,.02)}
     <img src="data:image/webp;base64,UklGRhgCAABXRUJQVlA4IAwCAAAQCwCdASokACQAPlEejEQjoaEXGgcwOAUEsoBdkKW+OipLeayvQDF/GnqC/qt6OXsA8gAilR9y4k0ztkYBaN40eX9tRRVPHHZrv74q+ES2IeBAJF9S3Gj5mNY5rfZj+lFQAP6cP35812/b2vytDtHN3phe+Dr55A7jdRSFj5pudQy0fFfW9F9QTZgJSJhvSCz+bhKMxMNDywJcWxTdx/NGjd2yf2qDcd6MASAUgAvKbwJ8JTyu5FdWsuhh5z/2dPDyz/C000IRTE/hvTigX5/WlLmoAdjSvwoab3rf++69pzdW1rmueZ6vMN0NLTGqSozYi+fY5ZCl34BlXDIV7kRcQV1a4Dr5yoPonf8uv6HmZdvsUvRLzxW2t/v0FHEKNfMgoCOhOH6XICVU6ELMExB9NbeGiWgpNKaKYqHQ6XUYTjQKVSOZqUiZTmjecezauCP2yfDzZBtz2r9bHAHvr5QWuxtm8ImTlYT75qXF62y3XU3zn5ApjBrOasGx9eiPczU/+e4tv6g0iv6KSTwXbHlLFonQcp+n5KTPj81BtWsSOgAw4l1avJfkOfTTjdxCp5mDx8raLn2RSTspnftWvKK5MQVtrj2LlWI2NSLYhAIvOZKidTwJrMaimAlfnMuKUL59Fk4focbA8mm59eecO8ILQDn7fzjX2yUf08/wH5LIKQzb6hW9jtl8oAAAAA==" width="36" height="36" alt="L">
     <div>
       <div class="sb-logo-text">Luxyra</div>
-      <div class="sb-logo-sub">ADMIN PANEL</div>
+      <div class="sb-logo-sub">ADMINISTRATION</div>
     </div>
   </div>
   <!-- 2026-10-15 : menu en 7 rubriques (audit docs/admin-audit-1015.md), construit par lxMenuRendu() -->
@@ -260,7 +260,6 @@ var SALONS=[],ALERTS=[],DEMANDES=[],INSCRIPTIONS=[],MIGRATIONS=[];
 // Écrit dans admin_log via la RPC admin_journal (is_admin + 2FA côté serveur ; l'auteur — compte et e-mail — est
 // rempli par la base, jamais par le navigateur). En plus, la base trace automatiquement avant / après toute
 // écriture de l'admin sur les tables gérées ici (AUTO_MODIF_… — docs/migrations_1015/admin_structure.sql).
-// Repli si la RPC n'est pas encore installée : insertion directe (policy is_admin) avec les anciennes colonnes.
 async function lxJournal(action, o){
   o = o || {};
   if(!_sb || !_online) return null;
@@ -268,13 +267,9 @@ async function lxJournal(action, o){
   try{
     var r = await _sb.rpc("admin_journal", { p_action:String(action||"ACTION"), p_salon:o.salon||null, p_cible:o.cible||null, p_details:det.slice(0,4000), p_avant:o.avant==null?null:o.avant, p_apres:o.apres==null?null:o.apres });
     if(!r.error) return r.data;
-    if(!/admin_journal|function|schema cache/i.test(String(r.error.message||""))) { console.warn("[journal]", r.error.message); return null; }
+    console.warn("[journal]", r.error.message);
   }catch(e){ console.warn("[journal]", e&&e.message); }
-  try{
-    var r2 = await _sb.from("admin_log").insert({ admin_user_id:_uid, salon_id:o.salon||null, action:String(action||"ACTION").toUpperCase().slice(0,80),
-      details:(o.cible?"["+o.cible+"] ":"")+det+(o.avant!=null||o.apres!=null?" | avant="+JSON.stringify(o.avant)+" | après="+JSON.stringify(o.apres):"") });
-    if(r2 && r2.error) console.warn("[journal]", r2.error.message);
-  }catch(e2){ console.warn("[journal]", e2&&e2.message); }
+  // 2026-10-31 : plus d'insertion directe (journal écrit uniquement par le serveur, inaltérable)
   return null;
 }
 window.lxJournal = lxJournal;
@@ -472,7 +467,7 @@ async function lxOuvrirDoc(u){
 function gSalon(id){return SALONS.find(function(s){return s.id===id;});}
 function planB(p){var pl=gPlan(p);return '<span class="badge badge-'+(p==="pro"?"gold":"blue")+'">'+saEsc(pl.nom)+'</span>';}
 function statusB(s){var m={active:{c:"green",l:"Actif"},trial:{c:"orange",l:"Essai"},past_due:{c:"red",l:"Impayé"},suspended:{c:"red",l:"Suspendu"},cancelled:{c:"red",l:"Résilié"},ferme:{c:"red",l:"🔒 Fermé"}};var x=m[s]||{c:"blue",l:s};return '<span class="badge badge-'+x.c+'">'+x.l+'</span>';}
-function verifB(v){var m={pending:{c:"orange",l:"En attente"},verified:{c:"green",l:"Vérifié"},rejected:{c:"red",l:"Rejeté"},incomplete:{c:"blue",l:"Incomplet"}};var x=m[v]||m.pending;return '<span class="badge badge-'+x.c+'">'+x.l+'</span>';}
+function verifB(v){var m={pending_review:{c:"orange",l:"À vérifier"},pending:{c:"gold",l:"En attente de justificatifs"},verified:{c:"green",l:"Vérifié"},rejected:{c:"red",l:"Rejeté"},incomplete:{c:"blue",l:"Incomplet"}};var x=m[v]||m.pending;return '<span class="badge badge-'+x.c+'">'+x.l+'</span>';}
 function dBetween(a,b){return Math.ceil((new Date(b)-new Date(a))/(864e5));}
 
 // ===== DOUBLE AUTHENTIFICATION (2026-10-10) =====
@@ -486,7 +481,8 @@ async function saVerifAdmin(){
   try{
     var r=await _sb.rpc("is_admin");
     if(r && r.data===true) return true;
-    if(window._lxMfaActive===false){ (await lxAlert("Double authentification non activée : les droits administrateur sont inactifs tant qu'elle n'est pas configurée (bandeau en haut du tableau de bord).")); return true; }
+    // 2026-10-31 : sans double authentification, aucun droit admin -> écran d'activation (plus de panneau vide)
+    if(window._lxMfaActive===false){ lxEcranActivationMfa(); return false; }
     // 2026-10-31 audit final F5 : session de plus de 12 h refusée par le serveur -> message clair, ce navigateur seulement
     var _rs=null; try{ _rs=(await _sb.rpc("admin_session_restante")).data; }catch(_e){}
     try{ localStorage.removeItem("lx_admin_derniere_act"); }catch(_e){}
@@ -533,6 +529,15 @@ async function lxMfaGate(){
     });
   }catch(e){ return _lxMfaEchec("erreur inattendue ("+((e&&e.message)||e)+")"); }
 }
+function lxEcranActivationMfa(){
+  try{ document.querySelector(".sidebar").style.display="none"; document.querySelector(".burger").style.display="none"; }catch(_e){}
+  var el=document.getElementById("mainContent"); if(!el) return; el.style.marginLeft="0";
+  el.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px"><div style="background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:28px;max-width:420px;width:100%;text-align:center">'+
+    '<div style="font-size:34px">🔐</div><h2 style="color:var(--gold);margin:8px 0">Activez la double authentification</h2>'+
+    '<div style="font-size:14px;color:var(--text2);line-height:1.5;margin-bottom:16px">L’administration ne s’ouvre qu’avec un code à 6 chiffres en plus du mot de passe. Tant qu’elle n’est pas activée, aucun droit administrateur n’est donné.</div>'+
+    '<button class="tb-btn primary" style="width:100%;min-height:44px;font-size:15px" onclick="lxMfaActiver()">Activer maintenant</button>'+
+    '<button class="tb-btn" style="width:100%;min-height:40px;margin-top:8px" onclick="doAdminLogout()">Se déconnecter</button></div></div>';
+}
 async function lxMfaActiver(){
   var en=await _sb.auth.mfa.enroll({factorType:"totp", friendlyName:"Luxyra admin "+new Date().toISOString().slice(0,10)});
   if(en.error){ (await lxAlert("Activation impossible : "+en.error.message)); return; }
@@ -544,9 +549,10 @@ async function lxMfaActiver(){
     if(r.error){ document.getElementById("lxMfaErr").textContent="Code incorrect, réessayez"; return; }
     window._lxMfaActive=true; lxMfaFermer(); (await lxAlert("✅ Double authentification activée. Elle sera demandée à chaque connexion à l’admin."));
     var b=document.getElementById("lxMfaBandeau"); if(b) b.remove();
+    if(!_online){ try{ await _sb.auth.signOut({scope:"local"}); }catch(_e){} showLogin(); showErr("Double authentification activée : reconnectez-vous (mot de passe + code)."); }
   };
 }
-setInterval(function(){ try{ if(_online && window._lxMfaActive===false && !document.getElementById("lxMfaBandeau")){ var b=document.createElement("div"); b.id="lxMfaBandeau"; b.style.cssText="position:fixed;bottom:14px;right:14px;z-index:150;background:rgba(239,83,80,.15);border:1px solid var(--red);color:var(--text);border-radius:12px;padding:10px 14px;font-size:13px;max-width:320px"; b.innerHTML='🔐 <b>Sécurisez l’admin</b> : activez la double authentification. <button class="tb-btn primary" style="margin-top:6px;width:100%" onclick="lxMfaActiver()">Activer maintenant</button>'; document.body.appendChild(b); } }catch(e){} }, 3000);
+setInterval(function(){ try{ if(_online && window._lxMfaActive===false && !document.getElementById("lxMfaBandeau")){ var b=document.createElement("div"); b.id="lxMfaBandeau"; b.style.cssText="position:fixed;bottom:14px;right:14px;z-index:150;background:rgba(239,83,80,.15);border:1px solid var(--red);color:var(--text);border-radius:12px;padding:10px 14px;font-size:13px;max-width:320px"; b.innerHTML='<button aria-label="Replier" title="Replier" style="float:right;background:none;border:none;color:var(--text2);font-size:16px;cursor:pointer;min-width:32px;min-height:32px" onclick="var p=this.parentNode;var r=p.getAttribute(\'data-replie\')===\'1\';p.setAttribute(\'data-replie\',r?\'0\':\'1\');p.querySelector(\'.lxMfaCorps\').style.display=r?\'\':\'none\';this.textContent=r?\'✕\':\'🔐\'">✕</button><div class="lxMfaCorps">🔐 <b>Sécurisez l’admin</b> : activez la double authentification. <button class="tb-btn primary" style="margin-top:6px;width:100%;min-height:40px" onclick="lxMfaActiver()">Activer maintenant</button></div>'; document.body.appendChild(b); } }catch(e){} }, 3000);
 // ===== ATTESTATION NF525 — VOLET 1 ÉDITEUR (2026-10-10) =====
 // Modèle officiel BOI-LETTRE-000242 : l'éditeur signe le volet 1 une fois par version majeure (texte dans lx-nf525-attestation.js).
 // Signature électronique : session admin protégée par double authentification (aal2) + horodatage + SHA-256, table inaltérable.
@@ -658,7 +664,7 @@ function showLogin(){
   document.querySelector(".burger").style.display="none";
   var el=document.getElementById("mainContent");
   el.style.marginLeft="0";
-  el.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center"><div style="background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:32px;max-width:380px;width:100%"><div style="text-align:center;margin-bottom:24px"><img src="data:image/webp;base64,UklGRigDAABXRUJQVlA4IBwDAACQDwCdASowADAAPlEij0WjoaETnASQOAUEsYBXJ605F9ePOejDbec73pwG84/6hxHu6q1dzC/+R9wHs1+hv+V/efgG/Vr/Z9eT9t/Yt/XlTKjrpPnVbcfCR8tAOR6dRsfqF3udzZAdGylkMu2pczclBrwDhuRUDlbkjXhfxbiQjs9IdEwgAP78pX/Fh/xQon4sa1CAyc1/ohBG4jmXYWWfjbcyo11jsoAEsbKeULzwh4FPpVJacD7br1LCiiTDp6xN56OfIpUJgCP+FWVUJOptF9MFJb8tE/3ifo4Ng0+lY/VlDL4D/TB2T4CbrArX9vFDoA8SUi/m517TEcmWSSbht5H+dTrB2o0es+G2o659GdTCDQNyr9Hh8vrb3Y6Cc6zsBIJZMqmmOLAm9+SJtf95P9+xYORz7ZuF8tvS94dtKJwJGMeX8OQXzRL0KFHATmXJUqnLKsq/v1Zf1kmomC9u7aTBJ/4O7vOnFN6wS2rvppGtBvfLZ/FtS03eYzgPGzOItPGsadUwy7fTb/FZEnSeVSH1zzIXIEq/8+S7Ccq2dHZ69n6L9OXHDU5ajWGModmSmmOJLh/aBVTZvjrBUfHG4B0cxIHE16Jy/o5+f+wQRxjDHFxSihTQKV4cl4Vb322dDJx61utw0XwrKdyfqVuW7nGFAECCSOFIpzrlhBKChYG2Vd9wgu58MRtO2nPzXO1PkMGAe+QaaBL1S71cD0zDIE3yhpFNwL+TMswCh6JWdmOur6ca76M1MH1a76WXsgpuEc7lPJi3+mziL0Dv52LSajdG/5teMdG2pP/5GsX1GyLUZK9NnA2iIGNVArxMbvXQ15D/UVozmLf0GPQ5ICgwSw5Iv76FLCxKVsgS8ARQG8E3hqqMSb7XYCoHuYkTlowqF0qTthXyq89GJ++pf7hud/OAcFnN3z5dNSSvK8XkfJdwyJKp9Pcsug48wzT+NiKadVrEIS2eKfhxhdS8bzoWPR96Ff4lh9zxrh2Q8iLrcjwyaE+NrgC+wprpy9eV3uy1L7nH2heVxDPHLS4Qou4afIINoUvdBbv7wAAA" style="width:48px;height:48px;border-radius:10px;margin-bottom:8px" alt="L"><div style="font-size:28px;font-weight:900;color:var(--gold);letter-spacing:3px">LUXYRA</div><div style="font-size:12px;color:var(--text3);font-family:var(--mono);letter-spacing:2px">ADMIN PANEL</div></div><div id="loginErr" style="display:none;background:var(--red-bg);color:var(--red);padding:10px;border-radius:8px;font-size:13px;margin-bottom:12px"></div><div style="margin-bottom:12px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Email</label><input id="aEmail" type="email" style="width:100%;padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:14px;outline:none" placeholder="admin@luxyra.fr"></div><div style="margin-bottom:20px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Mot de passe</label><input id="aPass" type="password" style="width:100%;padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:14px;outline:none" placeholder="••••••••" onkeydown="if(event.keyCode===13)doLogin()"></div><button onclick="doLogin()" style="width:100%;padding:12px;border-radius:10px;background:var(--gold);color:#000;font-weight:700;font-size:15px;border:none;cursor:pointer">Se connecter</button></div></div>';
+  el.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center"><div style="background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:32px;max-width:380px;width:100%"><div style="text-align:center;margin-bottom:24px"><img src="data:image/webp;base64,UklGRigDAABXRUJQVlA4IBwDAACQDwCdASowADAAPlEij0WjoaETnASQOAUEsYBXJ605F9ePOejDbec73pwG84/6hxHu6q1dzC/+R9wHs1+hv+V/efgG/Vr/Z9eT9t/Yt/XlTKjrpPnVbcfCR8tAOR6dRsfqF3udzZAdGylkMu2pczclBrwDhuRUDlbkjXhfxbiQjs9IdEwgAP78pX/Fh/xQon4sa1CAyc1/ohBG4jmXYWWfjbcyo11jsoAEsbKeULzwh4FPpVJacD7br1LCiiTDp6xN56OfIpUJgCP+FWVUJOptF9MFJb8tE/3ifo4Ng0+lY/VlDL4D/TB2T4CbrArX9vFDoA8SUi/m517TEcmWSSbht5H+dTrB2o0es+G2o659GdTCDQNyr9Hh8vrb3Y6Cc6zsBIJZMqmmOLAm9+SJtf95P9+xYORz7ZuF8tvS94dtKJwJGMeX8OQXzRL0KFHATmXJUqnLKsq/v1Zf1kmomC9u7aTBJ/4O7vOnFN6wS2rvppGtBvfLZ/FtS03eYzgPGzOItPGsadUwy7fTb/FZEnSeVSH1zzIXIEq/8+S7Ccq2dHZ69n6L9OXHDU5ajWGModmSmmOJLh/aBVTZvjrBUfHG4B0cxIHE16Jy/o5+f+wQRxjDHFxSihTQKV4cl4Vb322dDJx61utw0XwrKdyfqVuW7nGFAECCSOFIpzrlhBKChYG2Vd9wgu58MRtO2nPzXO1PkMGAe+QaaBL1S71cD0zDIE3yhpFNwL+TMswCh6JWdmOur6ca76M1MH1a76WXsgpuEc7lPJi3+mziL0Dv52LSajdG/5teMdG2pP/5GsX1GyLUZK9NnA2iIGNVArxMbvXQ15D/UVozmLf0GPQ5ICgwSw5Iv76FLCxKVsgS8ARQG8E3hqqMSb7XYCoHuYkTlowqF0qTthXyq89GJ++pf7hud/OAcFnN3z5dNSSvK8XkfJdwyJKp9Pcsug48wzT+NiKadVrEIS2eKfhxhdS8bzoWPR96Ff4lh9zxrh2Q8iLrcjwyaE+NrgC+wprpy9eV3uy1L7nH2heVxDPHLS4Qou4afIINoUvdBbv7wAAA" style="width:48px;height:48px;border-radius:10px;margin-bottom:8px" alt="L"><div style="font-size:28px;font-weight:900;color:var(--gold);letter-spacing:3px">LUXYRA</div><div style="font-size:12px;color:var(--text3);font-family:var(--mono);letter-spacing:2px">ADMINISTRATION</div></div><div id="loginErr" style="display:none;background:var(--red-bg);color:var(--red);padding:10px;border-radius:8px;font-size:13px;margin-bottom:12px"></div><form id="lxLoginForm" onsubmit="event.preventDefault();doLogin();return false" autocomplete="on"><div style="margin-bottom:12px"><label for="aEmail" style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">E-mail</label><input id="aEmail" name="username" type="email" autocomplete="username" inputmode="email" autocapitalize="none" spellcheck="false" style="width:100%;padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:16px;outline:none" placeholder="adresse e-mail"></div><div style="margin-bottom:20px"><label for="aPass" style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Mot de passe</label><input id="aPass" name="password" type="password" autocomplete="current-password" style="width:100%;padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:16px;outline:none" placeholder="••••••••"></div><button type="submit" style="min-height:44px;width:100%;padding:12px;border-radius:10px;background:var(--gold);color:#000;font-weight:700;font-size:15px;border:none;cursor:pointer">Se connecter</button></form></div></div>';
 }
 
 async function doLogin(){
@@ -678,7 +684,7 @@ async function _lxDoLogin(){
   var pass=document.getElementById("aPass").value;
   if(!email||!pass){showErr("Email et mot de passe requis");return;}
   var r=await _sb.auth.signInWithPassword({email:email,password:pass});
-  if(r.error){showErr(r.error.message);return;}
+  if(r.error){showErr(lxErreurConnexion(r.error));return;}
   _uid=r.data.user.id;
   var c=await _sb.from("admin_users").select("*").eq("user_id",_uid).single();
   if(!c.data){showErr("Compte non administrateur");await _sb.auth.signOut();return;}
@@ -692,6 +698,16 @@ async function _lxDoLogin(){
   document.querySelector(".burger").style.display="";
   document.getElementById("mainContent").style.marginLeft="";
   await loadPlansFromConfig();await loadData();try{await asChargerSuivi();}catch(_e){}loadDemandes();loadInscriptions();loadMigrations();loadInscriptionsLogForFunnel();await loadShortcuts();await loadChatConvs();subscribeChatRealtime();bootRoute();
+}
+// 2026-10-31 : messages de connexion en français (plus d'erreur Supabase brute en anglais)
+function lxErreurConnexion(e){
+  var m=String((e&&e.message)||e||""), st=Number(e&&e.status)||0;
+  if(/invalid login credentials|invalid_credentials|invalid email or password/i.test(m)) return "E-mail ou mot de passe incorrect.";
+  if(/email not confirmed/i.test(m)) return "Adresse e-mail pas encore confirmée.";
+  if(st===429||/rate limit|too many/i.test(m)) return "Trop de tentatives : patientez quelques minutes avant de réessayer.";
+  if(/fetch|network|failed to fetch|load failed/i.test(m)) return "Connexion au serveur impossible : vérifiez internet puis réessayez.";
+  if(/user.*(banned|disabled)/i.test(m)) return "Ce compte est désactivé.";
+  return "Connexion impossible. Réessayez dans un instant.";
 }
 function showErr(m){var e=document.getElementById("loginErr");if(e){e.style.display="block";e.textContent=m;}}
 async function doAdminLogout(){try{ localStorage.removeItem("lx_admin_derniere_act"); }catch(_e){} try{ await _sb.auth.signOut({scope:"local"}); }catch(_e){} // 31/10 : ce navigateur seulement (« tous les appareils » = bouton dédié)
@@ -717,6 +733,7 @@ async function doAdminLogoutPartout(){
   async function verif12(){ try{ if(!_online||!_sb) return; var r=await _sb.rpc("admin_session_restante"); var d=r&&r.data; if(!d) return;
     var sec=Number(d.secondes);
     if(sec<=0){ await doAdminLogout(); showErr("Session de plus de 12 heures fermée par le serveur : reconnectez-vous (mot de passe + code)."); return; }
+    if(sec>600) _prev12=false; // 2026-10-31 : réarmé après reconnexion
     if(sec<=600 && !_prev12){ _prev12=true; try{ toast("⏳ Votre session admin se termine dans "+Math.max(1,Math.round(sec/60))+" min (durée maximale 12 h) : enregistrez ce que vous faites."); }catch(_e){} }
   }catch(_e){} }
   setInterval(verif12,5*60*1000);
@@ -825,7 +842,7 @@ var LX_MENU=[
     {id:'fermetures',label:'Fermetures & archives'}]},
   {id:'revenus',icon:'💰',label:'Revenus & abonnements',subs:[
     {id:'mrr',label:'Revenu mensuel & historique'},{id:'stripe',label:'Stripe'},{id:'impayes',label:'Essais & impayés',badge:'impayes'},
-    {id:'parrainage',label:'Parrainage'},{id:'sms',label:'Revenus SMS'}]},
+    {id:'bons',label:'Bons cadeaux'},{id:'parrainage',label:'Parrainage'},{id:'sms',label:'Revenus SMS'}]},
   {id:'communication',icon:'💬',label:'Support',subs:[
     {id:'chat',label:'Boîte de réception',badge:'chat'},{id:'bot',label:'Base du bot'}]},
   {id:'diffusion',icon:'📣',label:'Communication',subs:[
@@ -901,7 +918,8 @@ function bootRoute(){
 function lxBadges(){
   var D=DEMANDES||[], M=MIGRATIONS||[], I=INSCRIPTIONS||[], now=Date.now();
   var tdb=window._TDB||null;
-  var essais7=(SALONS||[]).filter(function(s){ if(s.status!=='trial'||!s.trialEnd||s.fermeLe) return false; var d=(new Date(s.trialEnd)-now)/864e5; return d>=0&&d<7; }).length;
+  // 2026-10-31 : même règle « compte test » que le serveur pour les essais (nom Démo ou offre gratuite ; un essai est toujours en caisse test)
+  var essais7=(SALONS||[]).filter(function(s){ if(s.status!=='trial'||!s.trialEnd||s.fermeLe||lxEstTestEssai(s)) return false; var d=(new Date(s.trialEnd)-now)/864e5; return d>=0&&d<7; }).length;
   var impayes=(SALONS||[]).filter(function(s){ return s.status==='past_due'&&!s.fermeLe; }).length;
   var arG=(window._lxAR&&window._lxAR.items)?window._lxAR.items.filter(function(x){return x.niveau==='grave';}).length:(tdb&&tdb.a_reparer?Number(tdb.a_reparer.graves)||0:0);
   var alertes=tdb&&tdb.alertes?tdb.alertes.filter(function(a){return a.niveau!=='info';}).length:0;
@@ -911,7 +929,8 @@ function lxBadges(){
     inscriptions:I.filter(function(i){return (now-new Date(i.created_at))<7*864e5;}).length,
     demandes:D.filter(function(d){return d.status==='new';}).length,
     migrations:M.filter(function(m){return m.status==='new'||m.status==='contacted'||m.status==='in_progress';}).length,
-    impayes:essais7+impayes,
+    impayes:impayes,
+    essais:essais7,
     chat:window.ADMIN_UNREAD_CHAT||0,
     areparer:arG,
     claude:window._lxCdNb||0
@@ -931,7 +950,7 @@ function lxMenuRendu(){
     else if(sec.id==='salons') badgeSec='<span class="sb-badge" id="badgeSalons" style="background:var(--bg4);color:var(--text2)">'+(B.salons||'')+'</span>';
     else if(sec.id==='communication') badgeSec=act?'':bdg('chat');
     else if(sec.id==='qualite') badgeSec=act?'':((B.areparer?'<span class="sb-badge">'+saEsc(B.areparer)+'</span>':'')+bdg('claude','background:var(--purple);margin-left:4px'));
-    else if(sec.id==='revenus') badgeSec=act?'':(B.impayes?'<span class="sb-badge" style="background:var(--orange)">'+saEsc(B.impayes)+'</span>':'');
+    else if(sec.id==='revenus') badgeSec=act?'':((B.impayes?'<span class="sb-badge" title="Impayés" style="background:var(--red)">'+saEsc(B.impayes)+'</span>':'')+(B.essais?'<span class="sb-badge" title="Essais qui finissent sous 7 jours" style="background:var(--orange);margin-left:4px">'+saEsc(B.essais)+'</span>':''));
     h+='<div class="sb-item'+(act?' active':'')+'" data-tab="'+sec.id+'" onclick="nav(\''+sec.id+'\')"><span class="icon">'+sec.icon+'</span>'+saEsc(sec.label)+badgeSec+'</div>';
     if(act && sec.subs.length){
       lxSubsVisibles(sec, sub).forEach(function(x){
@@ -944,7 +963,7 @@ function lxMenuRendu(){
 }
 // Index de la recherche Ctrl+K : toutes les pages du menu (+ mots-clés)
 var LX_PAGES_MOTS={'tableau':'accueil cockpit chiffres alertes kpi','salons/liste':'salons liste fiche établissement','salons/fermetures':'fermés archives fermeture',
-  'revenus/mrr':'mrr revenu arr arpu churn historique croissance','revenus/stripe':'stripe abonnements factures remises remboursement','revenus/impayes':'impayés essais fin d essai paiement échoué past due',
+  'revenus/bons':'bons cadeaux cartes cadeaux encours passif e-carte','revenus/mrr':'mrr revenu arr arpu churn historique croissance','revenus/stripe':'stripe abonnements factures remises remboursement','revenus/impayes':'impayés essais fin d essai paiement échoué past due',
   'revenus/parrainage':'parrainage filleul parrain récompense','revenus/sms':'revenus sms packs marge','communication/chat':'chat support messages non lus','communication/bot':'bot base connaissances kb',
   'diffusion/sms':'sms brevo crédits','diffusion/email':'email modèles relances','diffusion/emailstats':'brevo statistiques e-mails rejets ouvertures','diffusion/desinscriptions':'désinscriptions désabonnement stop sms motifs opt-out',
   'qualite/areparer':'à réparer erreurs problèmes','qualite/monitoring':'monitoring erreurs cron quotas','qualite/nf525':'nf525 attestation conformité caisse','qualite/clotures':'clôtures z',
@@ -990,6 +1009,7 @@ function render(){
     else if(tab==='revenus'){
       if(sub==='stripe') h+=rStripe();
       else if(sub==='impayes') h+=rEssaisImpayes();
+      else if(sub==='bons') h+=rBonsCadeaux();
       else if(sub==='parrainage') h+=rParrainage();
       else if(sub==='sms') h+=rRevenusSms();
       else h+=rRevenue();
@@ -1035,6 +1055,11 @@ function render(){
 // ===== COCKPIT HELPERS =====
 // Compte de test (exclu des chiffres) : caisse en mode test, « Salon Démo » / « Luxyra Démo », offert en cours.
 // Même règle que lx_prive.salon_est_test() côté serveur (admin_tableau_de_bord).
+function lxEstTestEssai(s){ // compte test pour un essai : nom Démo ou offre gratuite en cours (pas le mode de caisse)
+  if(!s) return true;
+  if(/^\s*(salon|luxyra)\s+d[eé]mo/i.test(s.nom||'')) return true;
+  return !!(s.isFree && (!s.freeUntil || new Date(s.freeUntil)>new Date()));
+}
 function lxEstTest(s){
   if(!s) return true;
   if(s.modeCaisse==='test') return true;
@@ -3590,7 +3615,7 @@ function asOngletSuivi(s){
   h+='<div class="dp-field"><span class="k">Rappel</span><span class="v"><input type="date" id="asRappel-'+s.id+'" value="'+(su.rappel_le||"")+'" style="padding:4px;border-radius:6px;background:var(--bg3);color:var(--text);border:1px solid var(--border)"></span></div>';
   h+='<input id="asRappelNote-'+s.id+'" value="'+saEsc(su.rappel_note||"")+'" placeholder="Objet du rappel (ex. rappeler pour passer au Pro)" style="width:100%;padding:6px;border-radius:6px;background:var(--bg3);color:var(--text);border:1px solid var(--border);font-size:12px">';
   h+='<div style="display:flex;gap:6px;margin-top:6px"><button class="dp-btn" onclick="asSauverRappel(\''+s.id+'\')">💾 Enregistrer le rappel</button>'+(su.rappel_le?'<button class="dp-btn" onclick="asSauverSuivi(\''+s.id+'\',{rappel_le:null,rappel_note:null}).then(function(){openD(\''+s.id+'\')})">✓ Rappel fait</button>':'')+'</div>';
-  h+='<div style="font-size:11px;color:var(--text3);margin-top:4px">Le jour du rappel, tu reçois une notification sur ton téléphone (9 h).</div></div>';
+  h+='<div style="font-size:11px;color:var(--text3);margin-top:4px">Le jour du rappel, une notification arrive sur le téléphone admin (9 h).</div></div>';
   h+='<div class="dp-section"><div class="dp-label">🗒 Historique des échanges</div>';
   h+='<div style="display:flex;gap:6px;margin-bottom:6px"><select id="asNoteType-'+s.id+'" style="padding:4px;border-radius:6px;background:var(--bg3);color:var(--text);border:1px solid var(--border)"><option value="note">📝 Note</option><option value="appel">📞 Appel</option><option value="email">✉️ Email</option><option value="rdv">🤝 Rendez-vous</option></select><input id="asNote-'+s.id+'" placeholder="Ce qui a été dit / fait…" style="flex:1;padding:6px;border-radius:6px;background:var(--bg3);color:var(--text);border:1px solid var(--border);font-size:12px"><button class="dp-btn" onclick="asAjouterNote(\''+s.id+'\')">Ajouter</button></div>';
   h+='<div id="asNotes-'+s.id+'" style="font-size:12px;color:var(--text2)">Chargement…</div></div>';
@@ -3754,7 +3779,7 @@ function openD(id){
   if(s.fermeLe) h+='<div class="dp-field"><span class="k">Fermé le</span><span class="v">'+new Date(s.fermeLe).toLocaleDateString("fr-FR")+' — '+saEsc(s.fermeMotif||"")+'<div style="font-size:11px;color:var(--text3)">Caisse, clôtures, signatures et journal conservés 6 ans (jusqu\'au '+(function(){var d=new Date(s.fermeLe);d.setFullYear(d.getFullYear()+6);return d.toLocaleDateString("fr-FR");})()+'). Le gérant garde l\'accès en lecture seule (Mode archives).</div></span></div>';
   h+='<div class="dp-field"><span class="k">Inscrit le</span><span class="v">'+fmtD(s.created)+'</span></div>';
   if(s.trialEnd){var days=dBetween(new Date().toISOString().slice(0,10),s.trialEnd);h+='<div class="dp-field"><span class="k">Fin essai</span><span class="v" style="color:'+(days<=3?"var(--red)":"var(--orange)")+'">'+fmtD(s.trialEnd)+' ('+days+'j)</span></div>';}
-  // 2026-10-15 : liens Stripe (client, abonnement) + portail client (worker /api/stripe/portal, admin 2FA)
+  // 2026-10-15 : liens Stripe (client, abonnement) — 2026-10-31 : portail client retiré (lecture seule)
   if(s.stripeCust)h+='<div class="dp-field" style="align-items:flex-start"><span class="k">Stripe</span><span class="v" style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end">'+lxStripeLiens(s)+'</span></div>';
   h+='<div class="dp-field" style="align-items:flex-start"><span class="k">Geste</span><span class="v">'+(s.stripeSub?('<button class="dp-btn" style="font-size:12px;padding:6px 10px" onclick="lxOfferMonths(&#39;'+s.id+'&#39;)">🎁 Offrir des mois</button>'):'<span style="font-size:11px;color:var(--text3)">Pas d\'abonnement Stripe — geste indisponible</span>')+'</span></div>';
   h+='</div>';
@@ -3971,7 +3996,7 @@ async function confirmDeleteSalon(id){
   if(res.ok){
     // Rapport HONNÊTE : on ne dit "tout est propre" que si le post-check serveur
     // ne trouve AUCUNE ligne restante pour ce salon_id, nulle part.
-    var msg='🗑️ Salon supprimé\n\n'+
+    var msg='🗑️ Établissement supprimé\n\n'+
             'Lignes supprimées : '+res.rows+'\n'+
             'Tables purgées : '+res.tables+'\n';
     if(res.orphanTotal>0){
@@ -3987,16 +4012,16 @@ async function confirmDeleteSalon(id){
     (await lxAlert(msg));
     closeDetail();await loadData();render();
   }else{
-    (await lxAlert('❌ Erreur critique : '+res.err+'\n\nLe salon N\'A PAS été supprimé.'));
+    (await lxAlert('❌ Erreur critique : '+res.err+'\n\nL\'établissement N\'A PAS été supprimé.'));
   }
 }
 
 async function actS(id,act){
   var s=gSalon(id);if(!s||!_online)return;
   try{
-  if(act==="suspend"){await saMaj("salons",{status:"suspended"},id,["status"]);await saJournal(id,"SUSPEND","");(await lxAlert("⛔ Salon suspendu"));}
-  else if(act==="reactivate"){await saMaj("salons",{status:"active"},id,["status"]);await saJournal(id,"REACTIVATE","");(await lxAlert("✅ Salon réactivé"));}
-  else if(act==="extend"){var d=new Date(s.trialEnd||new Date());d.setDate(d.getDate()+7);await saMaj("salons",{trial_end:d.toISOString()},id);await saJournal(id,"TRIAL_EXTEND","+7 j");(await lxAlert("⏰ Essai prolongé de 7 jours"));}
+  if(act==="suspend"){await saMaj("salons",{status:"suspended"},id,["status"]);await saJournal(id,"SUSPEND","");(await lxAlert("⛔ Établissement suspendu"));}
+  else if(act==="reactivate"){await saMaj("salons",{status:"active"},id,["status"]);await saJournal(id,"REACTIVATE","");(await lxAlert("✅ Établissement réactivé"));}
+  else if(act==="extend"){ return asAction(id,"essai7"); } // 2026-10-31 : une seule règle (max(aujourd'hui, fin d'essai) + 7 j) avec confirmation
   else if(act==="plan"&&s.stripeSub){ // 2026-10-09 : abonné Stripe -> le changement passe par Stripe (prix + prorata), sinon la facture ne suivait pas
     var np2=s.plan==="essential"?"pro":"essential"; if(!(await lxConfirm("Changer le forfait de "+s.nom+" en "+np2.toUpperCase()+" ? Stripe facturera la différence au prorata."))) return;
     var d2=await saApi({op:"changer_forfait",salon_id:id,plan:np2,motif:"bouton forfait admin"}); (await lxAlert(d2.error?"❌ "+d2.error:"📦 Forfait changé (Stripe + application)")); if(typeof loadData==="function") loadData(); return;
@@ -4552,10 +4577,10 @@ function rRevenue(){
   var arr=mrr*12;var ac=SALONS.filter(function(s){return mrrOf(s)>0;}).length;
   var h='<div class="topbar"><h1>Revenus <span>Analyse financière</span></h1></div>';
   h+='<div class="kpi-row">';
-  h+='<div class="kpi"><div class="kpi-label">MRR</div><div class="kpi-value" style="color:var(--gold)">'+fmtM(mrr)+'</div><div class="kpi-sub">Mensuel</div><div class="kpi-icon">💰</div></div>';
-  h+='<div class="kpi"><div class="kpi-label">ARR</div><div class="kpi-value" style="color:var(--green)">'+fmtM(arr)+'</div><div class="kpi-sub">Projection annuelle</div><div class="kpi-icon">📈</div></div>';
-  h+='<div class="kpi"><div class="kpi-label">ARPU</div><div class="kpi-value">'+fmtM(Math.round(mrr/Math.max(1,ac)*100)/100)+'</div><div class="kpi-sub">Par établissement</div><div class="kpi-icon">🏠</div></div></div>';
-  h+='<div class="chart-card"><div class="chart-title">💰 MRR par plan</div>';
+  h+='<div class="kpi"><div class="kpi-label">Revenu mensuel — tarif catalogue</div><div class="kpi-value" style="color:var(--gold)">'+fmtM(mrr)+'</div><div class="kpi-sub">MRR · prix des formules (Fondateur, prix sur mesure), avant remises Stripe</div><div class="kpi-icon">💰</div></div>';
+  h+='<div class="kpi"><div class="kpi-label">Projection sur 12 mois</div><div class="kpi-value" style="color:var(--green)">'+fmtM(arr)+'</div><div class="kpi-sub">ARR · revenu mensuel × 12</div><div class="kpi-icon">📈</div></div>';
+  h+='<div class="kpi"><div class="kpi-label">Revenu moyen par établissement</div><div class="kpi-value">'+fmtM(Math.round(mrr/Math.max(1,ac)*100)/100)+'</div><div class="kpi-sub">Par établissement</div><div class="kpi-icon">🏠</div></div></div>';
+  h+='<div class="chart-card"><div class="chart-title">💰 Revenu mensuel par formule</div>';
   PLANS.forEach(function(p){
     var rev=0;SALONS.forEach(function(s){if(s.plan===p.id)rev+=mrrOf(s);});
     var pct=mrr>0?Math.round(rev/mrr*100):0;
@@ -4568,7 +4593,7 @@ function rRevenue(){
   // 2026-10-15 : la « simulation de croissance » (+5 comptes Pro / mois, chiffre inventé) est remplacée par la
   // croissance RÉELLE : inscriptions et passages au payant par mois, et tendance mesurée du revenu.
   h+='<div class="chart-card"><div class="chart-title">📈 Croissance réelle <span style="font-size:11px;color:var(--text3);font-weight:400">6 derniers mois, données mesurées</span></div><div id="lxCroissance">'+lxCroissanceReelle()+'</div></div>';
-  h+='<div class="chart-card"><div class="chart-title">🔄 Churn & mouvements de MRR <span style="font-size:11px;color:var(--text3);font-weight:400">(mois sur mois, donnees reelles mesurees)</span></div><div id="lxMrrMovements"><div style="color:var(--text3);font-size:13px">Chargement…</div></div></div>';
+  h+='<div class="chart-card"><div class="chart-title">🔄 Départs & mouvements du revenu mensuel <span style="font-size:11px;color:var(--text3);font-weight:400">(mois sur mois, données réelles mesurées)</span></div><div id="lxMrrMovements"><div style="color:var(--text3);font-size:13px">Chargement…</div></div></div>';
   setTimeout(lxLoadMrrMovements,60);
   return h;
 }
@@ -4604,7 +4629,7 @@ async function lxLoadMrrMovements(){
     var r=await _sb.from('mrr_snapshots').select('snapshot_month, mrr_total, paying_salons, breakdown').order('snapshot_month',{ascending:false}).limit(2);
     if(r.error) throw new Error(r.error.message);
     var snaps=r.data||[];
-    if(snaps.length<2){ box.innerHTML='<div style="color:var(--text3);font-size:13px">Disponible des 2 mois mesures (le suivi mensuel a demarre en mai 2026). Le 2e point sera capture au 1er du mois prochain.</div>'; return; }
+    if(snaps.length<2){ box.innerHTML='<div style="color:var(--text3);font-size:13px">Disponible dès 2 mois mesurés (le suivi mensuel a démarré en mai 2026). Le 2e point sera relevé le 1er du mois prochain.</div>'; return; }
     var cur=snaps[0], prev=snaps[1];
     var bCur=(cur.breakdown&&typeof cur.breakdown==='object')?cur.breakdown:{};
     var bPrev=(prev.breakdown&&typeof prev.breakdown==='object')?prev.breakdown:{};
@@ -4620,7 +4645,7 @@ async function lxLoadMrrMovements(){
     });
     var net=mNew+mExp-mContr-mChurn;
     var churnRate=payStart>0?Math.round(nChurn/payStart*1000)/10:0;
-    if(payStart===0 && mNew===0){ box.innerHTML='<div style="color:var(--text3);font-size:13px">Aucun salon payant sur la periode — rien a decomposer. La card s\'activera des tes premiers abonnements payants.</div>'; return; }
+    if(payStart===0 && mNew===0){ box.innerHTML='<div style="color:var(--text3);font-size:13px">Aucun établissement payant sur la période — rien à décomposer. Ce bloc s\'activera dès les premiers abonnements payants.</div>'; return; }
     function row(lbl,val,col){ return '<div class="chart-bar-row"><div class="chart-bar-label">'+lbl+'</div><div class="chart-bar-val" style="color:'+col+';font-family:var(--mono)">'+(val>=0?'+':'')+fmtM(val)+'</div></div>'; }
     var html='<div style="font-size:12px;color:var(--text3);margin-bottom:10px">'+_ymLabel(prev.snapshot_month)+' → '+_ymLabel(cur.snapshot_month)+'</div>';
     html+=row('🆕 Nouveau',mNew,'var(--green)');
@@ -4628,9 +4653,9 @@ async function lxLoadMrrMovements(){
     html+=row('⬇️ Contraction',-mContr,'var(--orange)');
     html+=row('❌ Churn',-mChurn,'var(--red)');
     html+='<div style="border-top:1px solid var(--border);margin-top:8px;padding-top:8px">'+row('= Variation nette',net,net>=0?'var(--gold)':'var(--red)')+'</div>';
-    html+='<div style="font-size:12px;color:var(--text2);margin-top:12px">Taux de churn : <strong style="color:'+(churnRate>5?'var(--red)':'var(--green)')+'">'+churnRate+'%</strong> <span style="color:var(--text3)">('+nChurn+' / '+payStart+' établissements payants en debut de periode)</span></div>';
+    html+='<div style="font-size:12px;color:var(--text2);margin-top:12px">Taux de départ (churn) : <strong style="color:'+(churnRate>5?'var(--red)':'var(--green)')+'">'+churnRate+'%</strong> <span style="color:var(--text3)">('+nChurn+' / '+payStart+' établissements payants en debut de periode)</span></div>';
     box.innerHTML=html;
-  }catch(e){ box.innerHTML='<div style="color:var(--red);font-size:13px">Erreur : '+(e.message||e)+'</div>'; }
+  }catch(e){ box.innerHTML='<div style="color:var(--red);font-size:13px">Erreur : '+saEsc(String((e&&e.message)||e))+'</div>'; }
 }
 
 // ===== PACKS SMS =====
@@ -5191,27 +5216,15 @@ function _lxTable(cols, rows, vide){
   return '<div style="overflow-x:auto"><table><tr>'+cols.map(function(c){return '<th>'+c+'</th>';}).join('')+'</tr>'+rows.map(function(r){return '<tr>'+r.map(function(c){return '<td>'+c+'</td>';}).join('')+'</tr>';}).join('')+'</table></div>';
 }
 
-// --- Stripe : portail client et tableau de bord depuis la fiche (worker /api/stripe/portal, admin 2FA autorisé) ---
-async function lxStripePortail(id){
-  var s=gSalon(id); if(!s) return;
-  if(!s.stripeCust){ (await lxAlert("Pas de client Stripe pour cet établissement.")); return; }
-  if(!(await lxConfirm("Ouvrir le portail client Stripe de « "+s.nom+" » ?\n\nVous y verrez ce que voit l'établissement (moyen de paiement, factures, résiliation). Toute modification faite là-bas s'applique réellement à son abonnement."))) return;
-  var w=window.open("about:blank","_blank");
-  try{
-    var tok=await lxAdminJeton();
-    var r=await fetch("/api/stripe/portal",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+tok},body:JSON.stringify({salon_id:id})});
-    var j=await r.json().catch(function(){return {};});
-    if(!r.ok||!j.url||!/^https:\/\/billing\.stripe\.com\//.test(j.url)){ if(w) w.close(); (await lxAlert("❌ Portail indisponible : "+(j.error||("erreur "+r.status)))); return; }
-    if(w) w.location.href=j.url; else window.location.href=j.url;
-    await lxJournal("STRIPE_PORTAIL_OUVERT",{salon:id,cible:"stripe:"+s.stripeCust});
-  }catch(e){ if(w) w.close(); (await lxAlert("❌ Portail indisponible : "+(e&&e.message||e))); }
-}
+// --- Stripe : fiche client et abonnement dans le tableau de bord Stripe ---
+// 2026-10-31 contre-audit : plus de « portail client » depuis l'admin (il permettait de résilier ou de changer la carte
+// de l'établissement) ; la route /api/stripe/portal est refusée à l'admin côté serveur.
 function lxStripeLiens(s){
   if(!s||!s.stripeCust) return '';
   var cus=encodeURIComponent(s.stripeCust), sub=s.stripeSub?encodeURIComponent(s.stripeSub):'';
   return '<a class="dp-btn" style="text-decoration:none;font-size:11px" href="https://dashboard.stripe.com/customers/'+cus+'" target="_blank" rel="noopener">Client Stripe ↗</a>'+
     (sub?' <a class="dp-btn" style="text-decoration:none;font-size:11px" href="https://dashboard.stripe.com/subscriptions/'+sub+'" target="_blank" rel="noopener">Abonnement ↗</a>':'')+
-    ' <button class="dp-btn" style="font-size:11px" onclick="lxStripePortail(\''+s.id+'\')">🧾 Portail client</button>';
+    '';
 }
 
 // --- Établissements › Fermetures & archives ---
@@ -5247,6 +5260,28 @@ function rEssaisImpayes(){
 
 // --- Revenus › Parrainage ---
 var PARR_STATUTS={inscrit:'🆕 Inscrit',en_cours:'⏳ En cours',en_attente:'⏸ En attente (parrain sans abonnement payant)',recompense:'✅ Récompensé',refuse:'✖ Refusé'};
+// --- Revenus › Bons cadeaux (lecture seule : encours par établissement) — 2026-10-31 ---
+function rBonsCadeaux(){
+  setTimeout(lxBonsCharger,20);
+  return '<div class="topbar"><h1>Bons cadeaux <span>Lecture seule — l’encours est une dette de l’établissement envers ses clients</span></h1><button class="tb-btn" onclick="lxBonsCharger()">⟳ Actualiser</button></div><div id="bonsZone"><div class="card" style="color:var(--text3)">Chargement…</div></div>';
+}
+async function lxBonsCharger(){
+  var el=document.getElementById('bonsZone'); if(!el) return;
+  var r=await _sb.rpc('admin_bons_cadeaux_etat');
+  if(r.error){ el.innerHTML='<div class="card" style="color:var(--red)">❌ '+saEsc(r.error.message)+'</div>'; return; }
+  var d=r.data||{}, T=d.total_reels||{}, L=d.etablissements||[];
+  var h='<div class="kpi-row">'+
+    '<div class="kpi"><div class="kpi-label">Bons émis (établissements réels)</div><div class="kpi-value">'+saEsc(T.emis||0)+'</div></div>'+
+    '<div class="kpi"><div class="kpi-label">Encours à honorer</div><div class="kpi-value" style="color:var(--gold)">'+fmtM(Number(T.encours)||0)+'</div></div>'+
+    '<div class="kpi"><div class="kpi-label">Déjà utilisé</div><div class="kpi-value" style="color:var(--green)">'+fmtM(Number(T.utilise)||0)+'</div></div>'+
+    '<div class="kpi"><div class="kpi-label">Expirés avec un reste</div><div class="kpi-value" style="color:'+((T.expires||0)>0?'var(--orange)':'var(--text2)')+'">'+saEsc(T.expires||0)+'</div></div></div>';
+  h+='<div class="card"><h3>Par établissement</h3>'+_lxTable(['Établissement','Émis','Valeur émise','Utilisé','Encours','Expirés (reste)','Vendus en ligne'],L.map(function(x){
+    var s=gSalon(x.salon_id), nom=s?'<a href="#" onclick="openD(\''+saJs(s.id)+'\');return false" style="color:var(--gold)">'+saEsc(x.nom||s.nom)+'</a>':saEsc(x.nom||'?');
+    return [nom+(x.test?' <span class="badge" style="font-size:10px">test</span>':''), saEsc(x.emis), fmtM(Number(x.valeur_emise)||0), fmtM(Number(x.utilise)||0),
+      '<b style="color:var(--gold)">'+fmtM(Number(x.encours)||0)+'</b>', saEsc(x.expires)+(Number(x.restant_expire)>0?' ('+fmtM(Number(x.restant_expire))+')':''), saEsc(x.en_ligne)];
+  }),'Aucun bon cadeau émis pour l’instant.')+'<div style="font-size:11px;color:var(--text3);margin-top:6px">Bons payés uniquement (les paiements en ligne non aboutis sont exclus). Rien ne peut être modifié ici : les bons se gèrent dans la caisse de l’établissement.</div></div>';
+  el.innerHTML=h;
+}
 function rParrainage(){
   setTimeout(lxParrCharger,20);
   return '<div class="topbar"><h1>Parrainage <span>Tous les parrainages entre établissements</span></h1></div><div id="parrZone"><div class="card" style="color:var(--text3)">Chargement…</div></div>';
@@ -5445,10 +5480,13 @@ async function lxJournalCharger(){
   if(F.salon) q=q.eq('salon_id',F.salon);
   if(F.action) q=q.ilike('action','%'+F.action.replace(/[%_,()]/g,'')+'%');
   if(F.auto!=='1') q=q.not('action','like','AUTO_%');
+  // 2026-10-31 : recherche texte faite par le serveur AVANT la limite de 500 lignes (plus d'entrées anciennes manquées)
+  var _t=(F.q||'').replace(/[%_,()*\\"]/g,' ').trim();
+  if(_t) q=q.or('details.ilike.*'+_t+'*,cible.ilike.*'+_t+'*,admin_email.ilike.*'+_t+'*,action.ilike.*'+_t+'*');
   var r=await q;
   if(r.error){ el.innerHTML='<div class="card" style="color:var(--red)">❌ '+saEsc(r.error.message)+'</div>'; return; }
   var L=r.data||[], t=(F.q||'').toLowerCase();
-  if(t) L=L.filter(function(x){ return (String(x.details||'')+' '+String(x.cible||'')+' '+String(x.admin_email||'')+' '+JSON.stringify(x.avant||'')+' '+JSON.stringify(x.apres||'')).toLowerCase().indexOf(t)>=0; });
+
   window._JL=L;
   var h='<div class="card" style="padding:0">';
   if(!L.length) h+='<div style="padding:16px;color:var(--text3)">Aucune action sur la période.</div>';
@@ -5731,7 +5769,7 @@ async function asChargerSupport(id, convChoisie){
   h+='<div style="max-height:420px;overflow-y:auto;border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg3)">';
   (ms.data||[]).forEach(function(m){
     var moi=m.sender==="admin", bot=m.sender==="bot";
-    h+='<div style="display:flex;justify-content:'+(moi?'flex-end':'flex-start')+';margin:4px 0"><div style="max-width:80%;padding:7px 10px;border-radius:10px;background:'+(moi?'rgba(200,168,78,.18)':bot?'rgba(100,181,246,.12)':'var(--bg2)')+';font-size:13px;white-space:pre-wrap"><div style="font-size:10px;color:var(--text3)">'+(moi?'Toi':bot?'Bot':'Salon')+' · '+new Date(m.created_at).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})+'</div>'+saEsc(m.message)+(Array.isArray(m.pieces)&&m.pieces.length?'<div style="font-size:11px;color:var(--gold);margin-top:3px">📎 '+m.pieces.length+' pièce(s) jointe(s) — voir Communication › Chat support</div>':'')+'</div></div>';
+    h+='<div style="display:flex;justify-content:'+(moi?'flex-end':'flex-start')+';margin:4px 0"><div style="max-width:80%;padding:7px 10px;border-radius:10px;background:'+(moi?'rgba(200,168,78,.18)':bot?'rgba(100,181,246,.12)':'var(--bg2)')+';font-size:13px;white-space:pre-wrap"><div style="font-size:10px;color:var(--text3)">'+(moi?'Luxyra (vous)':bot?'Bot':'Établissement')+' · '+new Date(m.created_at).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})+'</div>'+saEsc(m.message)+(Array.isArray(m.pieces)&&m.pieces.length?'<div style="font-size:11px;color:var(--gold);margin-top:3px">📎 '+m.pieces.length+' pièce(s) jointe(s) — voir Communication › Chat support</div>':'')+'</div></div>';
   });
   h+='</div><div style="display:flex;gap:6px;margin-top:8px"><textarea id="asSupRep-'+id+'" rows="2" placeholder="Répondre à l’établissement…" style="flex:1;padding:8px;border-radius:8px;background:var(--bg3);color:var(--text);border:1px solid var(--border)"></textarea><button class="tb-btn primary" onclick="asRepondreSupport(\''+id+'\',\''+cur+'\')">Envoyer</button></div>';
   el.innerHTML=h;
@@ -5991,7 +6029,7 @@ async function saChargerOverview(){
   var a=d.abonnements||{}, f=a.par_forfait||{};
   var h='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div style="font-size:12px;color:var(--text2)">Stripe en mode <b style="color:'+(d.mode==="live"?"var(--green)":"var(--orange)")+'">'+(d.mode==="live"?"RÉEL":"TEST")+'</b></div><div style="display:flex;gap:6px"><button class="tb-btn" onclick="saExportFactures()">⬇️ Export factures (CSV)</button><button class="tb-btn" onclick="saChargerOverview()">↻ Actualiser</button></div></div>';
   h+='<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px">';
-  h+=saCarte("Revenu mensuel (abonnements)",saE(a.mrr),"remises déduites, hors essais","var(--gold)");
+  h+=saCarte("Revenu mensuel — encaissé Stripe",saE(a.mrr),"remises Stripe déduites, hors essais (peut différer du tarif catalogue)","var(--gold)");
   h+=saCarte("Abonnés actifs",a.actifs||0,"Essentiel "+(f.essentiel||0)+" · Pro "+(f.pro||0)+" · Fondateur "+(f.pro_fondateur||0));
   h+=saCarte("Ce mois-ci","+"+(a.nouveaux_mois||0)+" / −"+(a.departs_mois||0),"nouveaux / départs");
   h+=saCarte("Impayés",a.impayes||0,(a.fin_de_periode||0)+" résiliation(s) programmée(s)",(a.impayes?"var(--red)":null));
@@ -6000,7 +6038,7 @@ async function saChargerOverview(){
   // Paiements des clients : sur le compte du salon (charges directes)
   var pc=d.paiements_clientes||{};
   h+='<div class="card" style="margin-bottom:14px;border-left:4px solid '+(pc.charges_directes?'var(--green)':'var(--orange)')+'"><div style="font-weight:800;margin-bottom:6px">💳 Paiements des clients</div>';
-  h+='<div style="font-size:13px">'+(pc.charges_directes?'✅ Encaissés <b>directement sur le compte Stripe de chaque établissement</b> (frais et litiges chez l’établissement, rien sur ton compte).':'⏳ Encore en <b>ancien mode</b> : ils transitent par ton compte Luxyra (frais Stripe à ta charge). Bascule prévue.')+'</div>';
+  h+='<div style="font-size:13px">'+(pc.charges_directes?'✅ Encaissés <b>directement sur le compte Stripe de chaque établissement</b> (frais et litiges chez l’établissement, rien sur le compte Luxyra).':'⏳ Encore en <b>ancien mode</b> : ils transitent par le compte Luxyra (frais Stripe à la charge de Luxyra). Bascule prévue.')+'</div>';
   h+='<div style="font-size:12px;color:var(--text2);margin-top:4px">Webhook « comptes connectés » vers luxyra.fr/api/stripe/webhook-connect : '+(pc.webhook_connect?'<b style="color:var(--green)">configuré ✓</b>':'<b style="color:var(--orange)">non trouvé dans la liste Stripe</b>')+(pc.dernier_evenement?' · dernier évènement reçu : <b>'+saEsc(pc.dernier_evenement)+'</b>':' · aucun évènement reçu pour l\'instant')+'</div>';
   if((pc.webhooks||[]).length){ h+='<div style="font-size:11px;color:var(--text2);margin-top:6px">Webhooks vus par Stripe :'; pc.webhooks.forEach(function(w){ h+='<div>• '+saEsc(w.url)+' — '+saEsc(w.statut)+' — '+w.evenements+' évènement(s) : '+saEsc((w.liste||[]).join(", "))+'</div>'; }); h+='</div>'; }
   h+='</div>';
@@ -6020,7 +6058,7 @@ async function saChargerOverview(){
   });
   h+='</div>';
   // Virements
-  h+='<div class="card" style="margin-bottom:14px"><div style="font-weight:800;margin-bottom:8px">🏦 Virements vers ton compte bancaire</div>';
+  h+='<div class="card" style="margin-bottom:14px"><div style="font-weight:800;margin-bottom:8px">🏦 Virements vers le compte bancaire de Luxyra</div>';
   if(!(d.virements||[]).length) h+='<div style="font-size:12px;color:var(--text2)">Aucun virement</div>';
   (d.virements||[]).forEach(function(x){ h+='<div style="display:flex;justify-content:space-between;padding:4px 0;border-top:1px solid var(--border);font-size:13px"><span>'+saD(x.arrivee)+'</span><span>'+saE(x.montant)+' · '+saEsc(x.statut==="paid"?"versé":x.statut==="in_transit"?"en cours":x.statut)+'</span></div>'; });
   h+='</div>';
