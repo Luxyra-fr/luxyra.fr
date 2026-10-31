@@ -2,6 +2,13 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
+<meta name="robots" content="noindex, nofollow">
+<script>
+// 2026-10-31 (audit sécurité M5) : l'administration ne fonctionne QUE sur https://admin.luxyra.fr (en-têtes de sécurité,
+// cookies/stockage isolés). Toute autre adresse (copie GitHub Pages luxyra-fr.github.io, ancien luxyra.fr/admin…) -> redirection,
+// et aucun script de l'admin ne s'exécute. localhost / 127.0.0.1 gardés pour les tests.
+(function(){ var h=location.hostname; if(h!=="admin.luxyra.fr" && h!=="localhost" && h!=="127.0.0.1"){ try{ location.replace("https://admin.luxyra.fr/"+location.search+location.hash); }catch(_e){} document.documentElement.innerHTML=""; throw new Error("admin : adresse non autorisée"); } })();
+</script>
 <script>
 // 2026-10-31 : l'administration ne s'ouvre JAMAIS dans les applis Play (Luxyra Pro fr.luxyra.pro / Luxyra fr.luxyra.client).
 // Android confie les notifications de luxyra.fr à l'appli vérifiée (délégation TWA) : toucher une notification admin ouvrait
@@ -172,6 +179,7 @@ tr:hover{background:rgba(255,255,255,.02)}
     <div style="font-family:var(--mono)">Luxyra Admin — 2026</div>
     <div style="margin-top:6px"><span id="onlineStatus" style="font-size:10px"></span></div>
     <button onclick="doAdminLogout()" style="margin-top:8px;width:100%;padding:6px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--text3);font-size:12px;cursor:pointer;font-family:var(--f1)">🚪 Déconnexion</button>
+    <button onclick="doAdminLogoutPartout()" style="margin-top:6px;width:100%;padding:6px;border-radius:8px;border:1px solid rgba(239,83,80,.4);background:transparent;color:#ef5350;font-size:11px;cursor:pointer;font-family:var(--f1)">⛔ Se déconnecter de tous les appareils</button>
   </div>
 </div>
 
@@ -592,6 +600,7 @@ async function _lxDoLogin(){
   if(!(await lxMfaGate())) return;
   if(!(await saVerifAdmin())) return;
   _online=true;
+  if(window._lxMfaActive) lxSignalerConnexionAdmin(); // 31/10 audit M3
   _lxEcranChargement();
   document.querySelector(".sidebar").style.display="flex";
   document.querySelector(".burger").style.display="";
@@ -600,6 +609,27 @@ async function _lxDoLogin(){
 }
 function showErr(m){var e=document.getElementById("loginErr");if(e){e.style.display="block";e.textContent=m;}}
 async function doAdminLogout(){await _sb.auth.signOut();_online=false;_uid=null;SALONS=[];INSCRIPTIONS=[];showLogin();}
+// 2026-10-31 (audit sécurité M2) : « Se déconnecter de tous les appareils » (révoque toutes les sessions admin, y compris
+// d'anciennes sessions restées sur un autre navigateur) + déconnexion automatique après 30 min sans activité.
+async function doAdminLogoutPartout(){
+  if(!confirm("Se déconnecter de TOUS les appareils (ordinateurs, téléphones) ? Il faudra se reconnecter partout avec le code.")) return;
+  try{ await lxJournal("DECONNEXION_TOUS_APPAREILS",{details:"révocation de toutes les sessions admin"}); }catch(_e){}
+  try{ await _sb.auth.signOut({scope:"global"}); }catch(_e){ try{ await _sb.auth.signOut(); }catch(_e2){} }
+  _online=false;_uid=null;SALONS=[];INSCRIPTIONS=[];showLogin(); showErr("Déconnecté de tous les appareils.");
+}
+(function(){
+  var DELAI=30*60*1000, derniere=Date.now();
+  function act(){ derniere=Date.now(); }
+  ["mousemove","mousedown","keydown","touchstart","scroll","wheel"].forEach(function(ev){ try{ window.addEventListener(ev,act,{passive:true,capture:true}); }catch(_e){} });
+  document.addEventListener("visibilitychange",function(){ if(document.visibilityState==="visible") verif(); });
+  async function verif(){ try{ if(_online && Date.now()-derniere>DELAI){ await doAdminLogout(); showErr("Déconnexion automatique après 30 minutes sans activité."); } }catch(_e){} }
+  setInterval(verif,60*1000);
+})();
+// 2026-10-31 (audit sécurité M3) : connexion réussie (mot de passe + double authentification) -> journal + alerte
+async function lxSignalerConnexionAdmin(){
+  try{ var s=await _sb.auth.getSession(); var t=s&&s.data&&s.data.session&&s.data.session.access_token; if(!t) return;
+    await fetch("/api/admin/connexion",{method:"POST",headers:{"Authorization":"Bearer "+t,"Content-Type":"application/json"},body:"{}"}); }catch(_e){}
+}
 
 // ===== LOAD =====
 async function loadData(){
@@ -3141,9 +3171,7 @@ function _kpi(label, value, color, icon){
     + '<div style="font-weight:800;font-size:24px;color:'+color+'">'+value+'</div></div>'
     + '</div>';
 }
-function _esc(s){
-  return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
+function _esc(s){ return saEsc(s); } // 31/10 audit : échappement unique (apostrophe comprise)
 
 // Analytics
 function rAnalytics(sub){
@@ -4218,7 +4246,7 @@ async function updDem(id,st){
 }
 
 // ===== MIGRATIONS =====
-function escHtml(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
+function escHtml(s){ return saEsc(s); } // 31/10 audit : échappement unique (apostrophe comprise)
 
 // === Helpers modales premium (remplacent alert() et confirm() natifs) ===
 function _lxAdminCloseModal(){var el=document.getElementById("lxAdminModal");if(el)el.remove();}
@@ -6085,7 +6113,7 @@ async function saChargerSalon(id){
     h+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0">';
     h+='<button class="dp-btn" style="font-size:11px" onclick="saRemise(\''+id+'\')">🏷 Appliquer une remise</button>';
     if((ab.remises||[]).length) h+='<button class="dp-btn" style="font-size:11px" onclick="saAction(\''+id+'\',{op:\'retirer_coupon\'},\'Retirer la remise de ce salon ?\')">Retirer la remise</button>';
-    h+='<button class="dp-btn" style="font-size:11px" onclick="saForfait(\''+id+'\',\''+ab.forfait+'\')">🔁 Changer de forfait</button>';
+    h+='<button class="dp-btn" style="font-size:11px" onclick="saForfait(\''+saJs(id)+'\',\''+saJs(ab.forfait)+'\')">🔁 Changer de forfait</button>';
     if(ab.annule_fin_periode) h+='<button class="dp-btn success" style="font-size:11px" onclick="saAction(\''+id+'\',{op:\'reprendre\'},\'Annuler la résiliation programmée ? L\\\'abonnement continuera normalement.\')">↩ Annuler la résiliation</button>';
     else h+='<button class="dp-btn" style="font-size:11px;color:var(--red)" onclick="saAction(\''+id+'\',{op:\'annuler_fin_periode\'},\'Résilier cet abonnement à la fin de la période payée ('+saD(ab.fin_periode)+') ?\',true)">Résilier en fin de période</button>';
     h+='</div>';
@@ -6097,7 +6125,7 @@ async function saChargerSalon(id){
       h+='<div style="display:flex;justify-content:space-between;gap:6px;align-items:center;font-size:12px;padding:4px 0;border-top:1px solid var(--border)"><span>'+saD(f.date)+' · '+saEsc(f.numero||"")+' · '+saE(f.statut==="paid"?f.paye:f.du)+' · '+st+'</span><span style="display:flex;gap:4px">';
       if(f.pdf) h+='<a class="dp-btn" style="font-size:10px;padding:3px 7px" href="'+saEsc(f.pdf)+'" target="_blank">PDF</a>';
       if(f.statut==="open") h+='<button class="dp-btn" style="font-size:10px;padding:3px 7px" onclick="saRelancer(\''+id+'\',\''+f.id+'\')">Relancer</button>';
-      if(f.statut==="paid"&&f.payment_intent) h+='<button class="dp-btn" style="font-size:10px;padding:3px 7px" onclick="saRembourser(\''+id+'\',\''+f.payment_intent+'\','+f.paye+',\'abonnement Luxyra\')">Rembourser</button>';
+      if(f.statut==="paid"&&f.payment_intent) h+='<button class="dp-btn" style="font-size:10px;padding:3px 7px" onclick="saRembourser(\''+saJs(id)+'\',\''+saJs(f.payment_intent)+'\','+Number(f.paye)+',\'abonnement Luxyra\')">Rembourser</button>';
       h+='</span></div>';
     });
   }
