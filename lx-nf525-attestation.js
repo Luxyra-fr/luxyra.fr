@@ -83,8 +83,10 @@
     if (att) h += '<h2>Signatures</h2><div class="recap"><div>' + esig(ed.signataire, 'Pour l’éditeur (volet 1)', ed.signe_le) + '</div><div>' + esig(att.representant, 'Pour l’établissement (volet 2)', att.signe_le) + '</div></div>';
     h += '<div class="note">Conservez ce document avec vos pièces comptables pendant toute la durée d’utilisation du logiciel puis six ans (art. L102 B du livre des procédures fiscales). ' +
       'Une nouvelle attestation vous sera demandée à chaque nouvelle version majeure du logiciel.</div>' +
-      '<button class="btn" onclick="window.print()">Imprimer / enregistrer en PDF</button></body></html>';
+      '<button class="btn" id="lxAttImprimer" type="button">Imprimer / enregistrer en PDF</button></body></html>';
     w.document.open(); w.document.write(h); w.document.close();
+    // 31/10/2026 (CSP sans script inline) : le bouton est branché depuis la page qui ouvre la fenêtre (même rendu, même texte)
+    try { var _b = w.document.getElementById("lxAttImprimer"); if (_b) _b.addEventListener("click", function(){ w.print(); }); } catch(_e) {}
   }
   window.LX_ATT = LX_ATT;
   window.lxAtt = { volet1: volet1, volet2: volet2, texteComplet: texteComplet, imprimer: imprimer, dFr: dFr, hFr: hFr, esc: esc };

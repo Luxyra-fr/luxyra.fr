@@ -156,6 +156,7 @@ async function __wrappedApiHandler(request, url, env) {
       // 2026-10-17 soir : STOP SMS — réinscription d'un numéro, déblocage Brevo des rappels (admin ou x-lx-internal)
       if (url.pathname === "/api/admin/sms-stop" && request.method === "POST") return await handleAdminSmsStop(request, env);
       if (url.pathname === "/api/admin/connexion" && request.method === "POST") return await handleAdminConnexion(request, env); // 31/10 audit M3
+      if (url.pathname === "/api/admin/csp-rapport" && request.method === "POST") return await handleCspRapport(request, env); // 31/10 lot B
       // 2026-10-15 : statistiques e-mails Brevo (7 / 30 j) et état des automatismes GitHub (admin seulement, lecture seule)
       if (url.pathname === "/api/admin/brevo-emails" && request.method === "GET") return await handleAdminBrevoEmails(request, env, url);
       if (url.pathname === "/api/admin/github-actions" && request.method === "GET") return await handleAdminGithubActions(request, env, url);
@@ -265,6 +266,21 @@ async function __wrappedApiHandler(request, url, env) {
 // 'unsafe-inline' reste nécessaire (gestionnaires onclick de admin.html et app.html) ; les origines de scripts / connexions
 // sont limitées à l'inventaire exact (luxyra.fr, Supabase, api.github.com, géo/adresse data.gouv.fr pour la vue admin).
 // HSTS avec includeSubDomains (posé sur admin.luxyra.fr : ne couvre que *.admin.luxyra.fr, inexistants).
+// 2026-10-31 (lot B) : admin.html n'exécute plus AUCUN code inline (scripts dans /admin/admin-garde.js et /admin/admin.js,
+// gestionnaires remplacés par un répartiteur unique) -> CSP stricte script-src 'self' sur les pages de l'administration.
+// La CSP historique (avec 'unsafe-inline') ne reste que pour /app.html (vue établissement, ~2 000 gestionnaires inline,
+// déplacée sur son origine séparée au lot C) et /admin-twa.html (page de renvoi des applis Play).
+const LX_ADMIN_CSP_STRICTE = [
+  "default-src 'self'",
+  "script-src 'self'", "script-src-attr 'none'",
+  "style-src 'self' https://luxyra.fr 'unsafe-inline'",
+  "img-src 'self' data: blob: https://luxyra.fr https://kxdgjtvrkwugbifgppai.supabase.co",
+  "font-src 'self' https://luxyra.fr data:",
+  "connect-src 'self' https://luxyra.fr https://kxdgjtvrkwugbifgppai.supabase.co wss://kxdgjtvrkwugbifgppai.supabase.co https://api.github.com",
+  "worker-src 'self'", "manifest-src 'self'", "frame-src 'self' blob: data:", "child-src 'self' blob:",
+  "object-src 'none'", "base-uri 'none'", "form-action 'self'", "frame-ancestors 'self'",
+  "report-uri /api/admin/csp-rapport", "report-to lx-csp"
+].join("; ");
 const LX_ADMIN_CSP = [
   "default-src 'self'",
   "script-src 'self' https://luxyra.fr 'unsafe-inline'",
@@ -280,8 +296,11 @@ function lxEntetesAdmin(resp, chemin) {
     const h = new Headers(resp.headers);
     // 2026-10-31 (lot A, S5) : une réponse /api qui n'est pas du JSON (HTML, texte…) ne peut rien exécuter sur l'origine admin
     const _ct = String(h.get("Content-Type") || "").toLowerCase();
-    h.set("Content-Security-Policy", (String(chemin || "").startsWith("/api/") && _ct.indexOf("application/json") < 0)
-      ? "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data: https:" : LX_ADMIN_CSP);
+    const _ch = String(chemin || "");
+    const _legacy = _ch === "/app.html" || _ch === "/admin-twa.html";
+    h.set("Content-Security-Policy", (_ch.startsWith("/api/") && _ct.indexOf("application/json") < 0)
+      ? "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data: https:" : (_legacy ? LX_ADMIN_CSP : LX_ADMIN_CSP_STRICTE));
+    if (!_legacy) h.set("Reporting-Endpoints", 'lx-csp="/api/admin/csp-rapport"');
     h.set("X-Frame-Options", "SAMEORIGIN"); // aperçus d'impression internes (iframes blob) = même origine
     h.set("X-Content-Type-Options", "nosniff");
     h.set("Referrer-Policy", "no-referrer");
@@ -4788,6 +4807,28 @@ async function lxSmsStopRattrapage(env) {
 // 2026-10-31 (audit sécurité admin M3) : chaque connexion admin réussie (mot de passe + double authentification) est
 // journalisée (admin_log CONNEXION_ADMIN : IP, pays, appareil) et signalée par notification + e-mail à contact@luxyra.fr.
 // Appelé par admin.html juste après la validation du code TOTP. Aucune donnée sensible (ni jeton, ni mot de passe).
+// 2026-10-31 (lot B) : rapports de violation de la CSP stricte de l'administration (report-uri / Reporting API).
+// Sans authentification (le navigateur les envoie seul) : taille plafonnée, débit limité (par IP et global), rien n'est renvoyé.
+async function handleCspRapport(request, env) {
+  try {
+    const ip = String(request.headers.get("cf-connecting-ip") || "?").slice(0, 64);
+    if (!checkRateLimit("csp_ip:" + ip, 5) || !checkRateLimit("csp_global", 30)) return new Response(null, { status: 204 });
+    const txt = (await request.text()).slice(0, 8000);
+    let j = null; try { j = JSON.parse(txt); } catch (_) { return new Response(null, { status: 204 }); }
+    const items = Array.isArray(j) ? j.slice(0, 5).map((x) => (x && x.body) || {}) : [ (j && j["csp-report"]) || (j && j.body) || {} ];
+    for (const r of items) {
+      const dir = String(r["effective-directive"] || r.effectiveDirective || r["violated-directive"] || "").slice(0, 80);
+      const bloque = String(r["blocked-uri"] || r.blockedURL || "").slice(0, 200);
+      let page = String(r["document-uri"] || r.documentURL || ""); try { page = new URL(page).pathname; } catch (_) { page = page.slice(0, 120); }
+      const extrait = String(r["script-sample"] || r.sample || "").slice(0, 120);
+      if (!dir) continue;
+      if (/^(chrome|moz|safari(-web)?)-extension/i.test(bloque)) continue; // extensions du navigateur : pas Luxyra
+      await reportWorkerError(env, "csp_admin", new Error("CSP admin : " + dir + " bloqué (" + (bloque || "inline") + ") sur " + page + (extrait ? " — " + extrait : "")),
+        { directive: dir, bloque, page, ua: String(request.headers.get("user-agent") || "").slice(0, 160) }, "warning");
+    }
+  } catch (_) {}
+  return new Response(null, { status: 204 });
+}
 async function handleAdminConnexion(request, env) {
   try {
     const u = await lxAuthUser(request);
