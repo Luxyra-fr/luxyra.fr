@@ -288,6 +288,16 @@ export default {
           }
         }
       }
+      // 2026-10-31 : l'administration n'existe plus sur luxyra.fr (doublon supprimé) -> redirection permanente vers admin.luxyra.fr
+      // (les fichiers /admin/*.js restent servis pour les anciens service workers ; seules les pages sont redirigées).
+      if ((url.hostname === "luxyra.fr" || url.hostname === "www.luxyra.fr") && (request.method === "GET" || request.method === "HEAD")
+          && /^\/admin(\.html|\/)?$/.test(url.pathname)) {
+        return Response.redirect("https://admin.luxyra.fr/" + url.search, 301);
+      }
+      // admin.luxyra.fr : jamais indexé
+      if (url.hostname === "admin.luxyra.fr" && url.pathname === "/robots.txt") {
+        return new Response("User-agent: *\nDisallow: /\n", { headers: { "Content-Type": "text/plain; charset=utf-8" } });
+      }
       // /health (et /api/health) — monitoring externe (UptimeRobot, Better Stack, etc.)
       // Capté AVANT le routing normal pour répondre vite (pas de DOM/HTML).
       if (url.pathname === "/health" || url.pathname === "/api/health") {
