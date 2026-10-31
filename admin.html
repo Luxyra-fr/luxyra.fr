@@ -665,7 +665,8 @@ async function _lxDoLogin(){
   await loadPlansFromConfig();await loadData();try{await asChargerSuivi();}catch(_e){}loadDemandes();loadInscriptions();loadMigrations();loadInscriptionsLogForFunnel();await loadShortcuts();await loadChatConvs();subscribeChatRealtime();bootRoute();
 }
 function showErr(m){var e=document.getElementById("loginErr");if(e){e.style.display="block";e.textContent=m;}}
-async function doAdminLogout(){try{ localStorage.removeItem("lx_admin_derniere_act"); }catch(_e){} await _sb.auth.signOut();_online=false;_uid=null;SALONS=[];INSCRIPTIONS=[];showLogin();}
+async function doAdminLogout(){try{ localStorage.removeItem("lx_admin_derniere_act"); }catch(_e){} try{ await _sb.auth.signOut({scope:"local"}); }catch(_e){} // 31/10 : ce navigateur seulement (« tous les appareils » = bouton dédié)
+_online=false;_uid=null;SALONS=[];INSCRIPTIONS=[];showLogin();}
 // 2026-10-31 (audit sécurité M2) : « Se déconnecter de tous les appareils » (révoque toutes les sessions admin, y compris
 // d'anciennes sessions restées sur un autre navigateur) + déconnexion automatique après 30 min sans activité.
 async function doAdminLogoutPartout(){
@@ -679,7 +680,8 @@ async function doAdminLogoutPartout(){
   function act(){ derniere=Date.now(); if(_online && derniere-_ecrit>15000){ _ecrit=derniere; try{ localStorage.setItem("lx_admin_derniere_act", String(derniere)); }catch(_e){} } }
   ["mousemove","mousedown","keydown","touchstart","scroll","wheel"].forEach(function(ev){ try{ window.addEventListener(ev,act,{passive:true,capture:true}); }catch(_e){} });
   document.addEventListener("visibilitychange",function(){ if(document.visibilityState==="visible") verif(); });
-  async function verif(){ try{ if(_online && Date.now()-derniere>DELAI){ await doAdminLogout(); showErr("Déconnexion automatique après 30 minutes sans activité."); } }catch(_e){} }
+  async function verif(){ try{ var _ls=0; try{ _ls=Number(localStorage.getItem("lx_admin_derniere_act"))||0; }catch(_e){} if(_ls>derniere) derniere=_ls; // activité d'un autre onglet
+    if(_online && Date.now()-derniere>DELAI){ await doAdminLogout(); showErr("Déconnexion automatique après 30 minutes sans activité."); } }catch(_e){} }
   setInterval(verif,60*1000);
 })();
 // 2026-10-31 (audit sécurité M3) : connexion réussie (mot de passe + double authentification) -> journal + alerte
@@ -3922,7 +3924,7 @@ async function confirmDeleteSalon(id){
     if(hf.data===true){ if(s.fermeLe){ (await lxAlert("🔒 « "+s.nom+" » est déjà fermé.\n\nSes données de caisse sont conservées 6 ans (obligation légale) : la suppression n'est pas possible.")); return; }
       if((await lxConfirm("« "+s.nom+" » a un historique de caisse (tickets, clôtures, journal) qui doit être conservé 6 ans.\n\nLa suppression n'est pas possible. Voulez-vous plutôt le FERMER DÉFINITIVEMENT ?"))) return lxFermerSalon(id); return; } }
   catch(e){ (await lxAlert("❌ Vérification impossible ("+(e.message||e)+"). Rien n'a été supprimé.")); return; }
-  if(!(await lxConfirm('⚠️ SUPPRESSION DÉFINITIVE\n\nSalon : '+s.nom+'\nEmail : '+(s.email||'?')+'\n\nToutes les données seront purgées (RDV, clients, tickets, clôtures, documents, compte auth).\n\nContinuer ?')))return;
+  if(!(await lxConfirm('⚠️ SUPPRESSION DÉFINITIVE\n\nSalon : '+s.nom+'\nEmail : '+(s.email||'?')+'\n\nToutes les données seront purgées (RDV, clients, tickets, clôtures, documents).\n\nContinuer ?')))return;
   var word=(await lxSaisie('Pour confirmer, tapez exactement le nom de l’établissement :\n\n'+s.nom));
   if(word!==s.nom){(await lxAlert('❌ Nom incorrect, suppression annulée'));return;}
   var res=await deleteSalonCascade(id);
@@ -4362,8 +4364,8 @@ function rMigrations(){
 
 function showMigrationMessage(id){
   var m=MIGRATIONS.find(function(x){return x.id===id;});if(!m)return;
-  var msg=m.message||"<em style='color:rgba(255,255,255,.4)'>Aucun message rédigé par le client</em>";
-  var html='<div style="text-align:left;font-size:14px;line-height:1.7;color:#d4d0ca;background:rgba(0,0,0,.25);border:1px solid rgba(212,168,67,.15);border-radius:10px;padding:14px;white-space:pre-wrap;font-family:-apple-system,Segoe UI,sans-serif">'+escHtml(msg).replace(/&lt;em /g,"<em ").replace(/&lt;\/em&gt;/g,"</em>")+'</div>'
+  var msgHtml=m.message?escHtml(m.message):"<em style='color:rgba(255,255,255,.4)'>Aucun message rédigé par le client</em>"; // 31/10 contre-audit : plus de balises réactivées
+  var html='<div style="text-align:left;font-size:14px;line-height:1.7;color:#d4d0ca;background:rgba(0,0,0,.25);border:1px solid rgba(212,168,67,.15);border-radius:10px;padding:14px;white-space:pre-wrap;font-family:-apple-system,Segoe UI,sans-serif">'+msgHtml+'</div>'
     +'<div style="margin-top:10px;font-size:11px;color:rgba(255,255,255,.4);text-align:center;letter-spacing:1px">— '+escHtml(m.salon_name)+' —</div>';
   lxAdminAlert(html,{html:true,surtitle:"Message du client",title:"Précisions"});
 }
@@ -6057,7 +6059,8 @@ async function saAction(id,body,question,danger){
 }
 async function saRemise(id){
   var t=(await lxSaisie("Remise : tape un pourcentage (ex. 50%) ou un montant en euros (ex. 5€)","50%")); if(t===null) return;
-  var pct=/%/.test(t)?parseFloat(t):0, mt=/€|eur/i.test(t)||!/%/.test(t)?parseFloat(String(t).replace(",",".")):0; if(pct) mt=0;
+  var pct=/%/.test(t)?parseFloat(String(t).replace(",",".")):0, mt=/€|eur/i.test(t)?parseFloat(String(t).replace(",",".")):0; if(pct) mt=0;
+  if(!(pct>0&&pct<=100) && !(mt>0)){ await lxAlert("Indiquez un pourcentage (ex. 50%) ou un montant en euros (ex. 5€)."); return; } // 31/10 contre-audit
   var dur=await lxChoix("Durée de la remise :",[["1","Une seule facture"],["2","Plusieurs mois"],["3","Pour toujours"]],{titre:"Remise"}); if(dur===null) return;
   var body={op:"coupon",pourcentage:pct||0,montant:mt||0,duree:dur==="3"?"forever":dur==="2"?"repeating":"once"};
   if(dur==="2"){ var n=await lxChoix("Pendant combien de mois ?",[[2,"2 mois"],[3,"3 mois"],[6,"6 mois"],[12,"12 mois"]],{titre:"Remise"}); if(n===null) return; body.mois=n; }
