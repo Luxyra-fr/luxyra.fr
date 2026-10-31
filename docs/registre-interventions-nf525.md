@@ -865,3 +865,11 @@ secours, deux appareils), aucune application du SQL, aucune publication.
 - Aucune table, fonction, déclencheur ni donnée fiscale touchés : montants, codes, TVA, tickets, BUU/BUM, paiement inchangés. Pas de SQL (hors fiche bot).
 - lx-bon-cadeau.js v20261031-4 (bloc commun LXB-PARTAGE), app.html / luxyra-supabase.js (garde 20261031-8), bons-cadeaux.html, bons-cadeaux-success.html, worker (`carte.palette`, contexte e-mail `bon_ecarte`), edge gc-stripe-webhook v14 (verify_jwt false).
 - Bancs : bons_v2_test 51/51, bons_v2_app 26/26, XSS (anciens + nouveaux rendus) sans exécution, QR décodés (OpenCV) sur e-carte et impressions.
+
+## 31/10/2026 (fin d'après-midi) — Bons cadeaux v3 : réserves du contre-audit bons v2 + config publique en liste blanche (hors périmètre fiscal)
+- Aucune table, fonction, déclencheur ni donnée fiscale touchés : montants, codes, TVA, tickets, BUU/BUM, paiement inchangés.
+- SQL `docs/migrations_1031_bons3/bons3.sql` appliqué (MCP) : `lx_prive.envois_quota` + RPC `lx_envoi_quota`, `lx_prive.qr_jetons` + RPC `lx_qr_jeton` / `lx_qr_resoudre` (service_role seulement, vérifié : aucun droit anon/authenticated), `lx_config_publique()` en LISTE BLANCHE (15 clés) + resynchronisation de `salons_vitrine.config_json`. Retour arrière prêt : `bons3_retour_arriere.sql`.
+- Worker (push 208b2a6) : route `POST /api/bons/ecarte` (bon relu, e-mail construit côté serveur, plafond 50/jour/établissement, clé anti-doublon hachée), plafond quotidien persistant sur `/api/email/custom` (500/jour, appels navigateur), `GET /api/qr/t/<jeton>` (cache privé). Vérifié en prod : 400 / 404 / 401 attendus, jeton valide → GIF `private, max-age=86400`, ancienne `/api/qr?d=` conservée.
+- Edge `gc-stripe-webhook` v15 (verify_jwt false) : QR par jeton ; contrôle 405 (GET) et 401 (événement non vérifiable). La ligne d'alerte créée par ce contrôle a été supprimée.
+- App : l'e-carte passe par la nouvelle route ; lx-bon-cadeau.js v20261031-5 (pleine page à 1,85, A4 à 296,5 mm).
+- Bancs : bons_v3_worker_test 33/33, bons_v2_test 51/51, bons_v3_app 26/26 ; site public d'Excellence vérifié en ligne après la liste blanche (accueil, horaires et fermetures exceptionnelles, tarifs par catégories).
