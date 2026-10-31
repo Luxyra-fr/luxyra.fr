@@ -163,7 +163,7 @@ async function lxRenderPushDevices(){
     EV.forEach(function(ev){
       var on=!!d[ev[0]];
       h+='<label style="display:flex;align-items:center;gap:4px;font-size:11px;padding:4px 8px;border-radius:6px;background:'+(on?'var(--gold-bg2)':'var(--bg3)')+';cursor:pointer">'
-        +'<input type="checkbox" '+(on?"checked":"")+' data-lx-change="lxPushToggleEtRendre(\''+d.id+'\',\''+ev[0]+'\',this.checked)"> '+ev[1]+'</label>';
+        +'<input type="checkbox" '+(on?"checked":"")+' data-lx-change="lxPushToggleEtRendre(\''+saJs(d.id)+'\',\''+saJs(ev[0])+'\',this.checked)"> '+ev[1]+'</label>';
     });
     h+='</div></div>';
   });
@@ -727,10 +727,10 @@ function lxMenuRendu(){
     else if(sec.id==='communication') badgeSec=act?'':bdg('chat');
     else if(sec.id==='qualite') badgeSec=act?'':((B.areparer?'<span class="sb-badge">'+saEsc(B.areparer)+'</span>':'')+bdg('claude','background:var(--purple);margin-left:4px'));
     else if(sec.id==='revenus') badgeSec=act?'':((B.impayes?'<span class="sb-badge" title="Impayés" style="background:var(--red)">'+saEsc(B.impayes)+'</span>':'')+(B.essais?'<span class="sb-badge" title="Essais qui finissent sous 7 jours" style="background:var(--orange);margin-left:4px">'+saEsc(B.essais)+'</span>':''));
-    h+='<button type="button" class="sb-item'+(act?' active':'')+'"'+(act?' aria-current="page"':'')+' data-tab="'+sec.id+'" data-lx-click="nav(\''+sec.id+'\')"><span class="icon">'+sec.icon+'</span>'+saEsc(sec.label)+badgeSec+'</button>';
+    h+='<button type="button" class="sb-item'+(act?' active':'')+'"'+(act?' aria-current="page"':'')+' data-tab="'+sec.id+'" data-lx-click="nav(\''+saJs(sec.id)+'\')"><span class="icon">'+sec.icon+'</span>'+saEsc(sec.label)+badgeSec+'</button>';
     if(act && sec.subs.length){
       lxSubsVisibles(sec, sub).forEach(function(x){
-        h+='<button type="button" class="sb-sub'+(x.id===sub?' active':'')+'"'+(x.id===sub?' aria-current="page"':'')+' data-lx-click="nav(\''+sec.id+'\',\''+x.id+'\')">'+saEsc(x.label)+(x.badge?bdg(x.badge):'')+(x.badge2&&(B[x.badge2]||0)>0?bdg(x.badge2,'background:var(--orange);margin-left:4px'):'')+'</button>';
+        h+='<button type="button" class="sb-sub'+(x.id===sub?' active':'')+'"'+(x.id===sub?' aria-current="page"':'')+' data-lx-click="nav(\''+saJs(sec.id)+'\',\''+saJs(x.id)+'\')">'+saEsc(x.label)+(x.badge?bdg(x.badge):'')+(x.badge2&&(B[x.badge2]||0)>0?bdg(x.badge2,'background:var(--orange);margin-left:4px'):'')+'</button>';
       });
     }
   });
@@ -769,7 +769,7 @@ function render(){
       var act=(sub===it.id), n=it.badge?(B[it.badge]||0):0;
       var badge=n>0?' <span style="display:inline-block;background:linear-gradient(135deg,#e74c3c,#c0392b);color:#fff;font-size:10px;font-weight:800;padding:2px 7px;border-radius:10px;margin-left:4px;min-width:18px;text-align:center">'+saEsc(n)+'</span>':'';
       var n2=it.badge2?(B[it.badge2]||0):0; if(n2>0) badge+=' <span title="Essais qui finissent sous 7 jours" style="display:inline-block;background:var(--orange);color:#fff;font-size:10px;font-weight:800;padding:2px 7px;border-radius:10px;margin-left:4px;min-width:18px;text-align:center">'+saEsc(n2)+'</span>';
-      x+='<button type="button" role="tab" aria-selected="'+(act?'true':'false')+'" class="tb-btn" style="position:relative;'+(act?'background:var(--gold-bg);border-color:var(--gold);color:var(--gold)':'')+'" data-lx-click="nav(\''+tab+'\',\''+it.id+'\')">'+saEsc(it.label)+badge+'</button>';
+      x+='<button type="button" role="tab" aria-selected="'+(act?'true':'false')+'" class="tb-btn" style="position:relative;'+(act?'background:var(--gold-bg);border-color:var(--gold);color:var(--gold)':'')+'" data-lx-click="nav(\''+saJs(tab)+'\',\''+saJs(it.id)+'\')">'+saEsc(it.label)+badge+'</button>';
     });
     return x+'</div>';
   }
@@ -1024,7 +1024,7 @@ async function lxTdbCharger(force){
 }
 function _tdbCarte(o){
   // o: {label, valeur, sous, couleur, page, extra, icone, liste}
-  var click=o.page?' type="button" data-lx-click="lxAller(\''+o.page+'\''+(o.extra?',\''+o.extra+'\'':'')+')" style="cursor:pointer"':'';
+  var click=o.page?' type="button" data-lx-click="lxAller(\''+saJs(o.page)+'\''+(o.extra?',\''+saJs(o.extra)+'\'':'')+')" style="cursor:pointer"':'';
   var bal=o.page?'button':'div'; // lot B : carte cliquable = vrai bouton (clavier, lecteur d'écran)
   return '<'+bal+' class="kpi"'+click+(o.page?' title="Ouvrir : '+saEsc(o.label)+'"':'')+'>'+
     '<div class="kpi-label">'+saEsc(o.label)+'</div>'+
@@ -1065,7 +1065,7 @@ function lxTdbRendu(){
   h+='<div class="card"><h3>🎯 Alertes du jour <span style="color:var(--text3);font-weight:500">('+A.length+')</span></h3>';
   if(!A.length) h+='<div style="padding:14px;text-align:center;color:#66bb6a;font-weight:700">✨ Rien à signaler aujourd’hui.</div>';
   A.forEach(function(a,i){
-    h+='<div class="lx-ligne-alerte" data-lx-click="lxAlerteOuvrir('+i+')" style="display:flex;gap:10px;align-items:center;padding:10px 4px;min-height:40px;border-top:1px solid var(--border);cursor:pointer">'+
+    h+='<div class="lx-ligne-alerte" data-lx-click="lxAlerteOuvrir('+saNum(i)+')" style="display:flex;gap:10px;align-items:center;padding:10px 4px;min-height:40px;border-top:1px solid var(--border);cursor:pointer">'+
       '<span style="font-size:10px;font-weight:800;padding:2px 7px;border-radius:5px;background:'+col[a.niveau]+'22;color:'+col[a.niveau]+';white-space:nowrap">'+lib[a.niveau]+'</span>'+
       '<span style="flex:1;font-size:13px">'+saEsc(a.texte)+'</span><span style="color:var(--text3)">→</span></div>';
   });
@@ -1152,12 +1152,12 @@ function rTableau(){
   var lxIsTouch=('ontouchstart' in window)||navigator.maxTouchPoints>0;
   h+='<div class="card" style="margin-top:16px"><h3>⚡ Raccourcis <span style="font-size:11px;color:var(--text3);font-weight:400;margin-left:8px">'+(lxIsTouch?'(↑↓ pour réordonner)':'(glisser-déposer pour réordonner)')+'</span></h3><div id="lxScGrid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-top:8px">';
   (window.ADMIN_SHORTCUTS||[]).forEach(function(sc,idx){
-    h+='<div class="lx-sc-card" data-idx="'+idx+'" '+(lxIsTouch?'':'draggable="true" data-lx-dragstart="lxScDrag(event,'+idx+')" data-lx-dragover="event.preventDefault();lxScSurvol(this,1)" data-lx-dragleave="lxScSurvol(this,0)" data-lx-drop="lxScDrop(event,'+idx+')" data-lx-dragend="lxScDragEnd()"')+' style="position:relative;border:2px solid transparent;border-radius:10px;transition:border-color .15s">';
-    h+='<button class="tb-btn" style="width:100%;padding:14px;display:flex;flex-direction:column;align-items:flex-start;gap:6px;text-align:left;cursor:'+(lxIsTouch?'pointer':'grab')+'" data-lx-click="lxRaccourci('+idx+')"><span style="font-size:20px">'+saEsc(sc.icon||'⭐')+'</span><span style="font-size:12px;font-weight:600">'+saEsc(sc.label||'')+'</span></button>';
+    h+='<div class="lx-sc-card" data-idx="'+idx+'" '+(lxIsTouch?'':'draggable="true" data-lx-dragstart="lxScDrag(event,'+saNum(idx)+')" data-lx-dragover="event.preventDefault();lxScSurvol(this,1)" data-lx-dragleave="lxScSurvol(this,0)" data-lx-drop="lxScDrop(event,'+saNum(idx)+')" data-lx-dragend="lxScDragEnd()"')+' style="position:relative;border:2px solid transparent;border-radius:10px;transition:border-color .15s">';
+    h+='<button class="tb-btn" style="width:100%;padding:14px;display:flex;flex-direction:column;align-items:flex-start;gap:6px;text-align:left;cursor:'+(lxIsTouch?'pointer':'grab')+'" data-lx-click="lxRaccourci('+saNum(idx)+')"><span style="font-size:20px">'+saEsc(sc.icon||'⭐')+'</span><span style="font-size:12px;font-weight:600">'+saEsc(sc.label||'')+'</span></button>';
     if(lxIsTouch){
       h+='<div style="position:absolute;top:4px;right:4px;display:flex;flex-direction:column;gap:2px">';
-      if(idx>0)h+='<button data-lx-click="event.stopPropagation();lxScMove('+idx+',-1)" style="background:var(--bg3);border:1px solid var(--border);color:var(--gold);width:24px;height:20px;border-radius:4px;font-size:11px;cursor:pointer;padding:0;line-height:1">▲</button>';
-      if(idx<(window.ADMIN_SHORTCUTS||[]).length-1)h+='<button data-lx-click="event.stopPropagation();lxScMove('+idx+',1)" style="background:var(--bg3);border:1px solid var(--border);color:var(--gold);width:24px;height:20px;border-radius:4px;font-size:11px;cursor:pointer;padding:0;line-height:1">▼</button>';
+      if(idx>0)h+='<button data-lx-click="event.stopPropagation();lxScMove('+saNum(idx)+',-1)" style="background:var(--bg3);border:1px solid var(--border);color:var(--gold);width:24px;height:20px;border-radius:4px;font-size:11px;cursor:pointer;padding:0;line-height:1">▲</button>';
+      if(idx<(window.ADMIN_SHORTCUTS||[]).length-1)h+='<button data-lx-click="event.stopPropagation();lxScMove('+saNum(idx)+',1)" style="background:var(--bg3);border:1px solid var(--border);color:var(--gold);width:24px;height:20px;border-radius:4px;font-size:11px;cursor:pointer;padding:0;line-height:1">▼</button>';
       h+='</div>';
     }
     h+='</div>';
@@ -1239,7 +1239,7 @@ function rChat(){
   var vue=window.CHAT_VUE||'boite';
   var h='<div class="topbar"><h1>Support <span>boîte de réception</span></h1><div style="display:flex;gap:6px;flex-wrap:wrap">';
   [['boite','💬 Boîte'],['types','⚡ Réponses types'],['revue','🤖 Revue du bot'],['stats','📊 Statistiques']].forEach(function(t){
-    h+='<button class="tb-btn'+(vue===t[0]?' primary':'')+'" data-lx-click="chatVue(\''+t[0]+'\')">'+t[1]+'</button>';
+    h+='<button class="tb-btn'+(vue===t[0]?' primary':'')+'" data-lx-click="chatVue(\''+saJs(t[0])+'\')">'+t[1]+'</button>';
   });
   h+='</div></div>';
   if(vue==='types') return h+chatRTypesPage();
@@ -1255,7 +1255,7 @@ function chatBoite(){
   h+='<div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;align-items:center">';
   CHAT_FILTRES.forEach(function(kv){
     var n=chatFiltrer(convs,kv[0]).length;
-    h+='<button class="tb-btn'+(f===kv[0]?' primary':'')+'" data-lx-click="lxChatFiltre(\''+kv[0]+'\')">'+kv[1]+(kv[0]!=='tous'&&kv[0]!=='resolus'&&n?' <b>'+n+'</b>':'')+'</button>';
+    h+='<button class="tb-btn'+(f===kv[0]?' primary':'')+'" data-lx-click="lxChatFiltre(\''+saJs(kv[0])+'\')">'+kv[1]+(kv[0]!=='tous'&&kv[0]!=='resolus'&&n?' <b>'+n+'</b>':'')+'</button>';
   });
   h+='<button class="tb-btn" title="Actualiser" data-lx-click="lxChatRecharger()">🔄</button></div>';
   h+='<div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">';
@@ -1531,7 +1531,7 @@ function chatColler(ev){
 }
 function chatRenderFichiers(){
   var el=document.getElementById('chatFichiers'); if(!el) return;
-  el.innerHTML=CHAT_FICHIERS.map(function(x,i){ return '<span style="font-size:11px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:3px 8px;margin-bottom:6px">'+(x.type==='application/pdf'?'📄 ':'🖼 ')+saEsc(x.nom)+' <a href="#" data-lx-click="lxChatRetirerFichier('+i+');return false" style="color:var(--red);text-decoration:none">✕</a></span>'; }).join('');
+  el.innerHTML=CHAT_FICHIERS.map(function(x,i){ return '<span style="font-size:11px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:3px 8px;margin-bottom:6px">'+(x.type==='application/pdf'?'📄 ':'🖼 ')+saEsc(x.nom)+' <a href="#" data-lx-click="lxChatRetirerFichier('+saNum(i)+');return false" style="color:var(--red);text-decoration:none">✕</a></span>'; }).join('');
 }
 function chatUuid(){ if(window.crypto&&crypto.randomUUID) return crypto.randomUUID(); var b=crypto.getRandomValues(new Uint8Array(16)); b[6]=(b[6]&15)|64; b[8]=(b[8]&63)|128; var h=Array.prototype.map.call(b,function(x){return ('0'+x.toString(16)).slice(-2);}).join(''); return h.slice(0,8)+'-'+h.slice(8,12)+'-'+h.slice(12,16)+'-'+h.slice(16,20)+'-'+h.slice(20); }
 async function chatTeleverser(salonId,convId){
@@ -1588,7 +1588,7 @@ async function chatAcOuvrir(q){
   var el=document.getElementById('chatAc'); if(!el) return;
   CHAT_AC={liste:l,i:0,ouvert:l.length>0};
   if(!l.length){ el.style.display='none'; return; }
-  el.innerHTML=l.map(function(x,k){ return '<div class="'+(k===0?'sel':'')+'" data-lx-mousedown="event.preventDefault();chatAcChoisir('+k+')"><b>/'+saEsc(x.raccourci)+'</b> · '+saEsc(x.titre)+'<div style="color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+saEsc(String(x.contenu).slice(0,120))+'</div></div>'; }).join('');
+  el.innerHTML=l.map(function(x,k){ return '<div class="'+(k===0?'sel':'')+'" data-lx-mousedown="event.preventDefault();chatAcChoisir('+saNum(k)+')"><b>/'+saEsc(x.raccourci)+'</b> · '+saEsc(x.titre)+'<div style="color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+saEsc(String(x.contenu).slice(0,120))+'</div></div>'; }).join('');
   el.style.display='block';
 }
 function chatAcFermer(){ CHAT_AC.ouvert=false; var el=document.getElementById('chatAc'); if(el) el.style.display='none'; }
@@ -1707,7 +1707,7 @@ async function chatRTypesCharger(){
   var l=await chatChargerRTypes(true);
   if(!l.length){ box.innerHTML='<i>Aucune réponse type.</i>'; return; }
   box.innerHTML='<table style="width:100%;border-collapse:collapse">'+l.map(function(x,i){
-    return '<tr style="border-top:1px solid var(--border)'+(x.actif===false?';opacity:.5':'')+'"><td style="padding:6px 8px;font-family:var(--mono);font-size:12px;white-space:nowrap">/'+saEsc(x.raccourci)+'</td><td style="padding:6px 8px"><b>'+saEsc(x.titre)+'</b><div style="font-size:11px;color:var(--text3);max-width:560px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+saEsc(String(x.contenu).slice(0,200))+'</div></td><td style="padding:6px 8px;font-size:11px">'+saEsc(x.ordre)+'</td><td style="padding:6px 8px;white-space:nowrap"><button class="tb-btn" data-lx-click="chatRTypesEditer('+i+')">✏️</button> <button class="tb-btn" data-lx-click="chatRTypesSupprimer('+i+')">🗑</button></td></tr>';
+    return '<tr style="border-top:1px solid var(--border)'+(x.actif===false?';opacity:.5':'')+'"><td style="padding:6px 8px;font-family:var(--mono);font-size:12px;white-space:nowrap">/'+saEsc(x.raccourci)+'</td><td style="padding:6px 8px"><b>'+saEsc(x.titre)+'</b><div style="font-size:11px;color:var(--text3);max-width:560px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+saEsc(String(x.contenu).slice(0,200))+'</div></td><td style="padding:6px 8px;font-size:11px">'+saEsc(x.ordre)+'</td><td style="padding:6px 8px;white-space:nowrap"><button class="tb-btn" data-lx-click="chatRTypesEditer('+saNum(i)+')">✏️</button> <button class="tb-btn" data-lx-click="chatRTypesSupprimer('+saNum(i)+')">🗑</button></td></tr>';
   }).join('')+'</table>';
 }
 function chatRTypesEditer(i){
@@ -1768,7 +1768,7 @@ async function chatRevueCharger(){
       h+='<div style="padding:8px 10px;margin-bottom:6px;border:1px solid var(--border);border-radius:10px;background:var(--bg3);color:var(--text)"><div style="font-size:11px;color:var(--text3)">'+saEsc(x.salon||'')+' · '+saEsc(new Date(x.le).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}))+(x.motif?' · '+saEsc(x.motif):'')+'</div>'
         +'<div style="margin-top:3px;white-space:pre-line"><b>Q :</b> '+saEsc(x.question||'—')+'</div>'
         +(x.reponse?'<div style="margin-top:3px;white-space:pre-line;color:var(--text2)"><b>Bot :</b> '+saEsc(String(x.reponse).slice(0,400))+'</div>':'')
-        +'<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap"><button class="tb-btn" style="font-size:11px" data-lx-click="chatRevueAjouterKb(\''+cle+'\','+i+')">➕ Ajouter à la base du bot</button><button class="tb-btn" style="font-size:11px" data-lx-click="lxChatOuvrirBoite(\''+saJs(x.conversation_id)+'\',\''+saJs(x.salon_id)+'\')">💬 Ouvrir la conversation</button></div></div>';
+        +'<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap"><button class="tb-btn" style="font-size:11px" data-lx-click="chatRevueAjouterKb(\''+saJs(cle)+'\','+saNum(i)+')">➕ Ajouter à la base du bot</button><button class="tb-btn" style="font-size:11px" data-lx-click="lxChatOuvrirBoite(\''+saJs(x.conversation_id)+'\',\''+saJs(x.salon_id)+'\')">💬 Ouvrir la conversation</button></div></div>';
     });
     return h;
   }
@@ -1845,7 +1845,7 @@ var EM_TYPES = {essai_j3:"J+3 · Besoin d'aide ?",essai_j7:"J+7 · Ce qu'il rest
 function rEmail(){
   var t=window._emailOnglet;
   var h='<div class="topbar"><h1>Emails <span>Relances, modèles, historique</span></h1></div>';
-  h+='<div style="display:flex;gap:6px;margin-bottom:14px">'+[["relances","🤖 Relances d'essai"],["modeles","📝 Modèles"],["historique","📜 Historique"]].map(function(o){return '<button class="tf-btn'+(t===o[0]?' active':'')+'" data-lx-click="lxPoserRendre(\'_emailOnglet\',\''+o[0]+'\')">'+o[1]+'</button>';}).join("")+'</div>';
+  h+='<div style="display:flex;gap:6px;margin-bottom:14px">'+[["relances","🤖 Relances d'essai"],["modeles","📝 Modèles"],["historique","📜 Historique"]].map(function(o){return '<button class="tf-btn'+(t===o[0]?' active':'')+'" data-lx-click="lxPoserRendre(\'_emailOnglet\',\''+saJs(o[0])+'\')">'+o[1]+'</button>';}).join("")+'</div>';
   setTimeout(emCharger,0);
   return h+'<div id="emZone" style="color:var(--text2)">Chargement…</div>';
 }
@@ -1857,7 +1857,7 @@ async function emCharger(){
   if(t==="historique"){
     var n=await saToutLire(function(x,y){ return _sb.from("admin_notes_salons").select("*").eq("type","email").order("cree_le",{ascending:false}).order("id").range(x,y); });
     var L=auto.map(function(x){return {d:x.envoye_le,salon:x.salon_id,txt:"🤖 "+(EM_TYPES[x.type]||x.type)+(x.sujet?" — "+x.sujet:""),ouvert:x.ouvert_le};}).concat((n.data||[]).map(function(x){return {d:x.cree_le,salon:x.salon_id,txt:"✉️ "+x.note,ouvert:null};})).sort(function(p,q){return new Date(q.d)-new Date(p.d);});
-    el.innerHTML='<div class="card">'+(L.length?L.map(function(x){var s=gSalon(x.salon);return '<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-top:1px solid var(--border);font-size:13px"><span><span style="color:var(--text3)">'+new Date(x.d).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit"})+'</span> <b style="cursor:pointer" data-lx-click="openD(\''+x.salon+'\')">'+saEsc(s?s.nom:"?")+'</b> '+saEsc(x.txt)+'</span><span style="font-size:11px">'+(x.ouvert?'<span style="color:var(--green)">👁 ouvert '+new Date(x.ouvert).toLocaleDateString("fr-FR")+'</span>':'')+'</span></div>';}).join(""):'<i>Aucun email envoyé pour l\'instant</i>')+'</div>';
+    el.innerHTML='<div class="card">'+(L.length?L.map(function(x){var s=gSalon(x.salon);return '<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-top:1px solid var(--border);font-size:13px"><span><span style="color:var(--text3)">'+new Date(x.d).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit"})+'</span> <b style="cursor:pointer" data-lx-click="openD(\''+saJs(x.salon)+'\')">'+saEsc(s?s.nom:"?")+'</b> '+saEsc(x.txt)+'</span><span style="font-size:11px">'+(x.ouvert?'<span style="color:var(--green)">👁 ouvert '+new Date(x.ouvert).toLocaleDateString("fr-FR")+'</span>':'')+'</span></div>';}).join(""):'<i>Aucun email envoyé pour l\'instant</i>')+'</div>';
     return;
   }
   // relances
@@ -1869,7 +1869,7 @@ async function emCharger(){
     var conv=L.filter(function(x){var s=gSalon(x.salon_id);return s&&(s.stripeSub||s.status==="active")&&!s.isFree;}).length;
     h+=saCarte(EM_TYPES[k],L.length+" envoyé(s)",(L.length?Math.round(ouv*100/L.length):0)+" % ouverts · "+conv+" devenu(s) client(s)");
   });
-  h+='</div><div class="card"><h3>Derniers envois</h3>'+(auto.length?auto.slice(0,50).map(function(x){var s=gSalon(x.salon_id);return '<div style="display:flex;justify-content:space-between;padding:5px 0;border-top:1px solid var(--border);font-size:13px"><span><span style="color:var(--text3)">'+new Date(x.envoye_le).toLocaleDateString("fr-FR")+'</span> <b style="cursor:pointer" data-lx-click="openD(\''+x.salon_id+'\')">'+saEsc(s?s.nom:"?")+'</b> — '+EM_TYPES[x.type]+'</span><span style="font-size:11px">'+(x.ouvert_le?'<span style="color:var(--green)">👁 ouvert</span>':'<span style="color:var(--text3)">non ouvert</span>')+'</span></div>';}).join(""):'<i style="font-size:13px">Aucune relance envoyée pour l\'instant</i>')+'</div>';
+  h+='</div><div class="card"><h3>Derniers envois</h3>'+(auto.length?auto.slice(0,50).map(function(x){var s=gSalon(x.salon_id);return '<div style="display:flex;justify-content:space-between;padding:5px 0;border-top:1px solid var(--border);font-size:13px"><span><span style="color:var(--text3)">'+new Date(x.envoye_le).toLocaleDateString("fr-FR")+'</span> <b style="cursor:pointer" data-lx-click="openD(\''+saJs(x.salon_id)+'\')">'+saEsc(s?s.nom:"?")+'</b> — '+EM_TYPES[x.type]+'</span><span style="font-size:11px">'+(x.ouvert_le?'<span style="color:var(--green)">👁 ouvert</span>':'<span style="color:var(--text3)">non ouvert</span>')+'</span></div>';}).join(""):'<i style="font-size:13px">Aucune relance envoyée pour l\'instant</i>')+'</div>';
   h+='<div style="font-size:11px;color:var(--text3);margin-top:8px">« Ouvert » est mesuré par une image invisible : certaines messageries la bloquent, le vrai taux est donc un peu plus élevé.</div>';
   el.innerHTML=h;
 }
@@ -1887,7 +1887,7 @@ async function emBasculer(on){
 function emVueModeles(){
   var L=window._EM_MODELES||[];
   var h='<div style="margin-bottom:10px"><button class="tb-btn primary" data-lx-click="emEditer(null)">+ Nouveau modèle</button> <span style="font-size:12px;color:var(--text3)">Variables : {nom} = nom de l’établissement, {prenom} = prénom du gérant. Utilisables dans « Envoyer un email » (fiche ou sélection).</span></div>';
-  L.forEach(function(m){ h+='<div class="card" style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;gap:8px"><b>'+saEsc(m.nom)+'</b><span><button class="dp-btn" style="font-size:11px" data-lx-click="emEditer('+m.id+')">✏️ Modifier</button> <button class="dp-btn" style="font-size:11px;color:var(--red)" data-lx-click="emSupprimer('+m.id+')">🗑</button></span></div><div style="font-size:12px;color:var(--text2);margin-top:4px">Objet : '+saEsc(m.sujet)+'</div><div style="font-size:12px;color:var(--text3);white-space:pre-line;margin-top:4px;max-height:90px;overflow:hidden">'+saEsc(m.corps)+'</div></div>'; });
+  L.forEach(function(m){ h+='<div class="card" style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;gap:8px"><b>'+saEsc(m.nom)+'</b><span><button class="dp-btn" style="font-size:11px" data-lx-click="emEditer('+saNum(m.id)+')">✏️ Modifier</button> <button class="dp-btn" style="font-size:11px;color:var(--red)" data-lx-click="emSupprimer('+saNum(m.id)+')">🗑</button></span></div><div style="font-size:12px;color:var(--text2);margin-top:4px">Objet : '+saEsc(m.sujet)+'</div><div style="font-size:12px;color:var(--text3);white-space:pre-line;margin-top:4px;max-height:90px;overflow:hidden">'+saEsc(m.corps)+'</div></div>'; });
   return h||'<i>Aucun modèle</i>';
 }
 function emEditer(id){
@@ -1976,20 +1976,20 @@ async function lxCdCharger(){
     var st=lib[d.statut]||[d.statut,'#9e9e9e'];
     var h='<div style="background:var(--bg2);border:1px solid var(--border);border-left:4px solid '+st[1]+';border-radius:10px;padding:'+(plie?'10px 12px':'12px')+';margin-bottom:8px">';
     if(plie){
-      h+='<div data-lx-click="lxCdOuvrir('+d.id+',true)" style="display:flex;gap:8px;align-items:center;cursor:pointer"><span style="font-size:10px;font-weight:800;padding:2px 7px;border-radius:6px;background:'+st[1]+'22;color:'+st[1]+';white-space:nowrap">'+st[0]+'</span><span style="flex:1;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+_esc(d.texte)+'</span><span style="font-size:11px;color:var(--text3);white-space:nowrap">'+f(d.cree_le)+' ›</span></div></div>';
+      h+='<div data-lx-click="lxCdOuvrir('+saNum(d.id)+',true)" style="display:flex;gap:8px;align-items:center;cursor:pointer"><span style="font-size:10px;font-weight:800;padding:2px 7px;border-radius:6px;background:'+st[1]+'22;color:'+st[1]+';white-space:nowrap">'+st[0]+'</span><span style="flex:1;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+_esc(d.texte)+'</span><span style="font-size:11px;color:var(--text3);white-space:nowrap">'+f(d.cree_le)+' ›</span></div></div>';
       return h;
     }
-    h+='<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px"><span style="font-size:11px;font-weight:800;padding:2px 8px;border-radius:6px;background:'+st[1]+'22;color:'+st[1]+'">'+st[0]+'</span>'+(d.urgence==='urgente'?'<span style="font-size:11px;color:var(--red);font-weight:700">URGENT</span>':'')+'<span style="font-size:11px;color:var(--text3);margin-left:auto">#'+d.id+' · '+f(d.cree_le)+(window._lxCdOuvert[d.id]?' · <a href="#" data-lx-click="lxCdOuvrir('+d.id+',false);return false" style="color:var(--text3)">replier</a>':'')+'</span></div>';
+    h+='<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px"><span style="font-size:11px;font-weight:800;padding:2px 8px;border-radius:6px;background:'+st[1]+'22;color:'+st[1]+'">'+st[0]+'</span>'+(d.urgence==='urgente'?'<span style="font-size:11px;color:var(--red);font-weight:700">URGENT</span>':'')+'<span style="font-size:11px;color:var(--text3);margin-left:auto">#'+d.id+' · '+f(d.cree_le)+(window._lxCdOuvert[d.id]?' · <a href="#" data-lx-click="lxCdOuvrir('+saNum(d.id)+',false);return false" style="color:var(--text3)">replier</a>':'')+'</span></div>';
     h+='<div style="font-size:14px;white-space:pre-wrap;word-break:break-word">'+_esc(d.texte)+'</div>';
     if(d.reponse){ h+='<div style="margin-top:10px;padding:10px;border-radius:8px;background:var(--bg3);font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-word"><b style="color:var(--gold)">🤖 Claude</b> <span style="font-size:11px;color:var(--text3)">'+f(d.repondu_le)+(d.traite_par?' · '+_esc(d.traite_par):'')+'</span>\n'+_esc(d.reponse)+'</div>'; }
     if(d.statut==='attente_ok' && d.accord===null){
       if(d.proposition) h+='<div style="margin-top:8px;padding:10px;border-radius:8px;border:1px dashed #ff9800;font-size:13px;white-space:pre-wrap;word-break:break-word"><b>Proposition :</b>\n'+_esc(d.proposition)+'</div>';
       h+='<input id="lxCdCom'+d.id+'" placeholder="Commentaire (facultatif)" style="width:100%;box-sizing:border-box;margin-top:8px;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text)">';
-      h+='<div style="display:flex;gap:8px;margin-top:8px"><button class="btn gold" style="flex:1" data-lx-click="lxCdAccord('+d.id+',true)">✅ OK, vas-y</button><button class="btn ghost" style="flex:1" data-lx-click="lxCdAccord('+d.id+',false)">✋ Non</button></div>';
+      h+='<div style="display:flex;gap:8px;margin-top:8px"><button class="btn gold" style="flex:1" data-lx-click="lxCdAccord('+saNum(d.id)+',true)">✅ OK, vas-y</button><button class="btn ghost" style="flex:1" data-lx-click="lxCdAccord('+saNum(d.id)+',false)">✋ Non</button></div>';
     } else if(d.accord!==null && d.accord!==undefined){
       h+='<div style="margin-top:6px;font-size:12px;color:var(--text3)">Ta réponse : '+(d.accord?'✅ OK':'✋ Non')+' · '+f(d.accord_le)+(d.commentaire_accord?' — '+_esc(d.commentaire_accord):'')+'</div>';
     }
-    if(d.statut==='nouvelle') h+='<div style="margin-top:8px"><button class="btn ghost" style="padding:4px 10px;font-size:11px" data-lx-click="lxCdAnnuler('+d.id+')">Annuler la demande</button></div>';
+    if(d.statut==='nouvelle') h+='<div style="margin-top:8px"><button class="btn ghost" style="padding:4px 10px;font-size:11px" data-lx-click="lxCdAnnuler('+saNum(d.id)+')">Annuler la demande</button></div>';
     return h+'</div>';
   };
   var h='';
@@ -2738,7 +2738,7 @@ function _renderMonitoringHTML(summary, recent, publicErrs, serverErrs, cronHeal
   var curHours = window._lxGroupHours || 24;
   var periodLabel = curHours <= 24 ? '24h' : (curHours <= 168 ? '7 jours' : '30 jours');
   function periodBtn(h, label, active){
-    return '<button data-lx-click="lxSetGroupedPeriod('+h+')" style="padding:4px 10px;margin-left:4px;border-radius:6px;border:1px solid '+(active?'var(--gold)':'var(--border)')+';background:'+(active?'var(--gold-bg)':'transparent')+';color:'+(active?'var(--gold)':'var(--text3)')+';font-size:11px;font-weight:'+(active?'700':'500')+';cursor:pointer">'+label+'</button>';
+    return '<button data-lx-click="lxSetGroupedPeriod('+saNum(h)+')" style="padding:4px 10px;margin-left:4px;border-radius:6px;border:1px solid '+(active?'var(--gold)':'var(--border)')+';background:'+(active?'var(--gold-bg)':'transparent')+';color:'+(active?'var(--gold)':'var(--text3)')+';font-size:11px;font-weight:'+(active?'700':'500')+';cursor:pointer">'+label+'</button>';
   }
   if(grouped.length > 0){
     h+='<div style="margin-bottom:24px"><h2 style="font-size:16px;margin:0 0 12px;color:var(--gold);display:flex;align-items:center;flex-wrap:wrap">🧩 Vue groupée — '+grouped.length+' signature'+(grouped.length>1?'s':'')+' uniques ('+periodLabel+')'
@@ -3318,7 +3318,7 @@ function asSelection(){ return SALONS.filter(function(s){return window._ASEL[s.i
 function asMajBarre(){ var n=asSelection().length, b=document.getElementById("asBarre"); if(!b) return; b.style.display=n?"flex":"none"; var c=document.getElementById("asNb"); if(c) c.textContent=n; }
 function asSet(k,v){ window._AF[k]=v; asRafraichir(); }
 function asRafraichir(){ var tb=document.getElementById("sTbody"); var L=asFiltrer(); if(tb) tb.innerHTML=asLignes(L); var c=document.getElementById("asCompte"); if(c) c.textContent=L.length+" / "+SALONS.filter(function(x){return !x.fermeLe;}).length; asMajBarre(); }
-function asSelect(k,opts){ var v=window._AF[k]; return '<select data-lx-change="asSet(\''+k+'\',this.value)" style="padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:12px">'+opts.map(function(o){return '<option value="'+o[0]+'"'+(String(v)===String(o[0])?' selected':'')+'>'+o[1]+'</option>';}).join("")+'</select>'; }
+function asSelect(k,opts){ var v=window._AF[k]; return '<select data-lx-change="asSet(\''+saJs(k)+'\',this.value)" style="padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:12px">'+opts.map(function(o){return '<option value="'+o[0]+'"'+(String(v)===String(o[0])?' selected':'')+'>'+o[1]+'</option>';}).join("")+'</select>'; }
 function rSalons(){
   setTimeout(function(){ asChargerSuivi().then(asRafraichir); lxLoadSalonHealth(); asChargerDemarrage().then(asRafraichir); },30);
   var h='<div class="topbar"><h1>Établissements <span id="asCompte">'+SALONS.filter(function(x){return !x.fermeLe;}).length+'</span></h1><div style="display:flex;gap:6px"><button class="tb-btn" data-lx-click="asExport(false)">⬇️ Export CSV</button><button class="tb-btn primary" data-lx-click="addModal()">✉️ Envoyer un lien d’inscription</button></div></div>';
@@ -3346,13 +3346,13 @@ function asLignes(L){
   var mI={coiffure:"✂️",barbier:"💈",esthetique:"💆",ongles:"💅",regard:"👁️",maquillage:"💄",tatouage:"🖋️",spa:"🌿",bien_etre:"🧘"}, h="";
   L.forEach(function(s){
     var su=asSuivi(s.id), j=asJoursEssai(s);
-    h+='<tr><td><input type="checkbox" '+(window._ASEL[s.id]?'checked':'')+' data-lx-change="asSel(\''+s.id+'\',this.checked)"></td>';
-    h+='<td style="cursor:pointer" data-lx-click="openD(\''+s.id+'\')"><div class="td-salon"><div class="td-avatar" style="background:'+s.color+'">'+saAvatar(s)+'</div><div><div class="td-name">'+saEsc(s.nom)+(s.siretAlerte?' <span title="'+saEsc(s.siretAlerte)+'" style="color:var(--orange);font-size:12px">⚠️ SIRET</span>':'')+'</div><div class="td-city">'+(mI[s.metier]||"✂️")+' '+saEsc(s.ville)+' · '+saModeCourt(s)+((su.etiquettes||[]).length?' · '+su.etiquettes.map(function(e){return '<span class="badge" style="font-size:9px">'+saEsc(e)+'</span>';}).join(" "):'')+'</div></div></div></td>';
+    h+='<tr><td><input type="checkbox" '+(window._ASEL[s.id]?'checked':'')+' data-lx-change="asSel(\''+saJs(s.id)+'\',this.checked)"></td>';
+    h+='<td style="cursor:pointer" data-lx-click="openD(\''+saJs(s.id)+'\')"><div class="td-salon"><div class="td-avatar" style="background:'+s.color+'">'+saAvatar(s)+'</div><div><div class="td-name">'+saEsc(s.nom)+(s.siretAlerte?' <span title="'+saEsc(s.siretAlerte)+'" style="color:var(--orange);font-size:12px">⚠️ SIRET</span>':'')+'</div><div class="td-city">'+(mI[s.metier]||"✂️")+' '+saEsc(s.ville)+' · '+saModeCourt(s)+((su.etiquettes||[]).length?' · '+su.etiquettes.map(function(e){return '<span class="badge" style="font-size:9px">'+saEsc(e)+'</span>';}).join(" "):'')+'</div></div></div></td>';
     h+='<td>'+planB(s.plan)+(lxEstOffert(s)?' <span class="badge badge-gold" style="font-size:9px">🎁 Offert</span>':(lxEstTest(s)?' <span class="badge" style="font-size:9px;background:var(--bg3);color:var(--text3)">🧪 Test</span>':''))+'</td>';
     h+='<td>'+statusB(s.fermeLe?"ferme":s.status)+(j!==null?'<div style="font-size:10px;color:'+(j<=3?'var(--red)':'var(--text3)')+'">'+(j>0?j+' j restants':'essai fini')+'</div>':'')+'</td>';
     h+='<td style="font-size:11px">'+(ETAPES[su.etape]||su.etape)+'</td><td>'+asScoreBadge(s.id)+'</td><td>'+((_salonHealthOf(s.id)||{}).clients!=null?_salonHealthOf(s.id).clients:s.clients)+'</td><td style="font-size:12px">'+(function(){var d=asDemarrageScore(s.id);return d==null?'…':'<span style="color:'+(d>=6?'var(--green)':d>=3?'var(--orange)':'var(--red)')+'">'+d+'/7</span>';})()+'</td><td style="font-size:12px;color:var(--text3)">'+fmtD(s.created)+'</td>'+_salonActivityCell(s);
     h+='<td style="font-size:11px">'+(su.rappel_le?'<span style="color:'+(su.rappel_le<=lxJourParis()?'var(--red)':'var(--text2)')+'">📞 '+fmtD(su.rappel_le)+'</span>':'—')+'</td>';
-    h+='<td><div class="td-actions"><button class="td-btn" data-lx-click="openD(\''+s.id+'\')" title="Fiche">👁</button><button class="td-btn" data-lx-click="lxOuvrirLien(\'mailto:'+saJs(s.email)+'\')" title="Email">✉️</button>'+(s.tel?'<button class="td-btn" data-lx-click="lxOuvrirLien(\'tel:'+saJs(s.tel)+'\')" title="Appeler">📞</button>':'')+'</div></td></tr>';
+    h+='<td><div class="td-actions"><button class="td-btn" data-lx-click="openD(\''+saJs(s.id)+'\')" title="Fiche">👁</button><button class="td-btn" data-lx-click="lxOuvrirLien(\'mailto:'+saJs(s.email)+'\')" title="Email">✉️</button>'+(s.tel?'<button class="td-btn" data-lx-click="lxOuvrirLien(\'tel:'+saJs(s.tel)+'\')" title="Appeler">📞</button>':'')+'</div></td></tr>';
   });
   return h||'<tr><td colspan="12" style="text-align:center;padding:40px;color:var(--text3)">Aucun établissement</td></tr>';
 }
@@ -3418,14 +3418,14 @@ async function asSauverSuivi(id,patch){
 function asOngletSuivi(s){
   var su=asSuivi(s.id);
   var h=asBlocDemarrage(s)+'<div class="dp-section"><div class="dp-label">🧭 Suivi commercial</div>';
-  h+='<div class="dp-field"><span class="k">Étape</span><span class="v"><select data-lx-change="lxSuiviEtape(\''+s.id+'\',this.value)" style="padding:4px 8px;border-radius:6px;background:var(--bg3);color:var(--text);border:1px solid var(--border)">'+Object.keys(ETAPES).map(function(k){return '<option value="'+k+'"'+(su.etape===k?' selected':'')+'>'+ETAPES[k]+'</option>';}).join("")+'</select></span></div>';
-  h+='<div class="dp-field"><span class="k">Étiquettes</span><span class="v">'+(su.etiquettes||[]).map(function(e){return '<span class="badge" style="cursor:pointer" title="Retirer" data-lx-click="asRetirerEtiquette(\''+s.id+'\','+(su.etiquettes||[]).indexOf(e)+')">'+saEsc(e)+' ✕</span>';}).join(" ")+' <button class="dp-btn" style="font-size:10px;padding:2px 8px" data-lx-click="asAjouterEtiquette(\''+s.id+'\')">+ Ajouter</button></span></div>';
+  h+='<div class="dp-field"><span class="k">Étape</span><span class="v"><select data-lx-change="lxSuiviEtape(\''+saJs(s.id)+'\',this.value)" style="padding:4px 8px;border-radius:6px;background:var(--bg3);color:var(--text);border:1px solid var(--border)">'+Object.keys(ETAPES).map(function(k){return '<option value="'+k+'"'+(su.etape===k?' selected':'')+'>'+ETAPES[k]+'</option>';}).join("")+'</select></span></div>';
+  h+='<div class="dp-field"><span class="k">Étiquettes</span><span class="v">'+(su.etiquettes||[]).map(function(e){return '<span class="badge" style="cursor:pointer" title="Retirer" data-lx-click="asRetirerEtiquette(\''+saJs(s.id)+'\','+(su.etiquettes||[]).indexOf(e)+')">'+saEsc(e)+' ✕</span>';}).join(" ")+' <button class="dp-btn" style="font-size:10px;padding:2px 8px" data-lx-click="asAjouterEtiquette(\''+saJs(s.id)+'\')">+ Ajouter</button></span></div>';
   h+='<div class="dp-field"><span class="k">Rappel</span><span class="v"><input type="date" id="asRappel-'+s.id+'" value="'+(su.rappel_le||"")+'" style="padding:4px;border-radius:6px;background:var(--bg3);color:var(--text);border:1px solid var(--border)"></span></div>';
   h+='<input id="asRappelNote-'+s.id+'" value="'+saEsc(su.rappel_note||"")+'" placeholder="Objet du rappel (ex. rappeler pour passer au Pro)" style="width:100%;padding:6px;border-radius:6px;background:var(--bg3);color:var(--text);border:1px solid var(--border);font-size:12px">';
-  h+='<div style="display:flex;gap:6px;margin-top:6px"><button class="dp-btn" data-lx-click="asSauverRappel(\''+s.id+'\')">💾 Enregistrer le rappel</button>'+(su.rappel_le?'<button class="dp-btn" data-lx-click="lxSuiviRappelEffacer(\''+s.id+'\')">✓ Rappel fait</button>':'')+'</div>';
+  h+='<div style="display:flex;gap:6px;margin-top:6px"><button class="dp-btn" data-lx-click="asSauverRappel(\''+saJs(s.id)+'\')">💾 Enregistrer le rappel</button>'+(su.rappel_le?'<button class="dp-btn" data-lx-click="lxSuiviRappelEffacer(\''+saJs(s.id)+'\')">✓ Rappel fait</button>':'')+'</div>';
   h+='<div style="font-size:11px;color:var(--text3);margin-top:4px">Le jour du rappel, une notification arrive sur le téléphone admin (9 h).</div></div>';
   h+='<div class="dp-section"><div class="dp-label">🗒 Historique des échanges</div>';
-  h+='<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px"><select id="asNoteType-'+s.id+'" style="padding:4px;border-radius:6px;background:var(--bg3);color:var(--text);border:1px solid var(--border)"><option value="note">📝 Note</option><option value="appel">📞 Appel</option><option value="email">✉️ Email</option><option value="rdv">🤝 Rendez-vous</option></select><input id="asNote-'+s.id+'" placeholder="Ce qui a été dit / fait…" style="flex:1 1 160px;min-width:0;padding:6px;border-radius:6px;background:var(--bg3);color:var(--text);border:1px solid var(--border);font-size:12px"><button class="dp-btn" data-lx-click="asAjouterNote(\''+s.id+'\')">Ajouter</button></div>';
+  h+='<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px"><select id="asNoteType-'+s.id+'" style="padding:4px;border-radius:6px;background:var(--bg3);color:var(--text);border:1px solid var(--border)"><option value="note">📝 Note</option><option value="appel">📞 Appel</option><option value="email">✉️ Email</option><option value="rdv">🤝 Rendez-vous</option></select><input id="asNote-'+s.id+'" placeholder="Ce qui a été dit / fait…" style="flex:1 1 160px;min-width:0;padding:6px;border-radius:6px;background:var(--bg3);color:var(--text);border:1px solid var(--border);font-size:12px"><button class="dp-btn" data-lx-click="asAjouterNote(\''+saJs(s.id)+'\')">Ajouter</button></div>';
   h+='<div id="asNotes-'+s.id+'" style="font-size:12px;color:var(--text2)">Chargement…</div></div>';
   setTimeout(function(){ asChargerNotes(s.id); },20);
   return h;
@@ -3507,7 +3507,7 @@ function openD(id){
   h+='<div class="dp-stats"><div class="dp-stat"><div class="n" style="color:var(--blue)">'+((_salonHealthOf(s.id)||{}).clients!=null?_salonHealthOf(s.id).clients:s.clients)+'</div><div class="l">Clients</div></div><div class="dp-stat"><div class="n" style="color:var(--gold)">'+((_salonHealthOf(s.id)||{}).collaborateurs!=null?_salonHealthOf(s.id).collaborateurs:s.collabs)+'</div><div class="l">Collabs</div></div><div class="dp-stat"><div class="n">'+verifB(s.verif)+'</div><div class="l">Vérification</div></div></div>';
   // 2026-10-09 : fiche à onglets
   var _ot=window._asOngletCourant||"identite";
-  h+='<div style="display:flex;gap:4px;flex-wrap:wrap;margin:6px 0 12px">'+[["identite","🏢 Identité"],["abonnement","💳 Abonnement"],["suivi","🧭 Suivi"],["activite","📈 Activité"],["support","💬 Support"],["technique","⚙️ Technique & SMS"]].map(function(t){return '<button class="tf-btn dpTabBtn'+(_ot===t[0]?' active':'')+'" data-t="'+t[0]+'" data-lx-click="asOnglet(\''+t[0]+'\')">'+t[1]+'</button>';}).join("")+'</div>';
+  h+='<div style="display:flex;gap:4px;flex-wrap:wrap;margin:6px 0 12px">'+[["identite","🏢 Identité"],["abonnement","💳 Abonnement"],["suivi","🧭 Suivi"],["activite","📈 Activité"],["support","💬 Support"],["technique","⚙️ Technique & SMS"]].map(function(t){return '<button class="tf-btn dpTabBtn'+(_ot===t[0]?' active':'')+'" data-t="'+t[0]+'" data-lx-click="asOnglet(\''+saJs(t[0])+'\')">'+t[1]+'</button>';}).join("")+'</div>';
   h+='<div class="dpTab" data-t="identite"'+(_ot==="identite"?'':' style="display:none"')+'>';
 
   // VERIFICATION
@@ -3522,7 +3522,7 @@ function openD(id){
   // INFO LEGALES
   h+='<div class="dp-section"><div class="dp-label">🏢 Informations légales</div>';
   (function(){ var par=s.parrainId?gSalon(s.parrainId):null, fil=SALONS.filter(function(x){return x.parrainId===s.id;});
-    h+='<div style="font-size:12px;color:var(--text2);margin-bottom:8px">🎁 Code parrainage : <b>'+saEsc(s.codeParr||"—")+'</b>'+(par?' · parrainé par <a href="#" data-lx-click="openD(\''+par.id+'\');return false" style="color:var(--gold)">'+saEsc(par.nom)+'</a>':'')+(fil.length?' · a parrainé : '+fil.map(function(f){return '<a href="#" data-lx-click="openD(\''+f.id+'\');return false" style="color:var(--gold)">'+saEsc(f.nom)+'</a>';}).join(", "):'')+'</div>'; })();
+    h+='<div style="font-size:12px;color:var(--text2);margin-bottom:8px">🎁 Code parrainage : <b>'+saEsc(s.codeParr||"—")+'</b>'+(par?' · parrainé par <a href="#" data-lx-click="openD(\''+saJs(par.id)+'\');return false" style="color:var(--gold)">'+saEsc(par.nom)+'</a>':'')+(fil.length?' · a parrainé : '+fil.map(function(f){return '<a href="#" data-lx-click="openD(\''+saJs(f.id)+'\');return false" style="color:var(--gold)">'+saEsc(f.nom)+'</a>';}).join(", "):'')+'</div>'; })();
   if(s.siretAlerte) h+='<div style="background:rgba(255,152,0,.1);border:1px solid rgba(255,152,0,.4);border-radius:8px;padding:8px;font-size:12px;margin-bottom:8px">⚠️ '+saEsc(s.siretAlerte)+'</div>';
   [["Gérant",s.gerantPrenom+" "+s.gerantNom],["Forme juridique",s.formeJur],["SIRET",s.siret],["SIREN",s.siren],["TVA Intra.",s.tva]].forEach(function(f){
     h+='<div class="dp-field"><span class="k">'+f[0]+'</span><span class="v">'+(f[1]&&f[1].trim()?saEsc(f[1]):'<span style="color:var(--text3);font-style:italic">—</span>')+'</span></div>';
@@ -4476,7 +4476,7 @@ window._smsOnglet = window._smsOnglet || "dash";
 var SMS_CTX = {rappel_24h:"Rappels 24 h",rappel_2h:"Rappels 2 h",confirmation_rdv:"Confirmations RDV",confirmation_rdv_groupe:"Confirmations (groupe)",campagne:"Campagnes",custom:"Messages manuels",anniversaire:"Anniversaires",autre:"Autres"};
 function rSMS(){
   var t=window._smsOnglet;
-  var h='<div style="display:flex;gap:6px;margin-bottom:14px">'+[["dash","📊 Tableau de bord"],["salons","🏠 Par établissement"],["reglages","⚙️ Réglages & packs"]].map(function(o){return '<button class="tf-btn'+(t===o[0]?' active':'')+'" data-lx-click="lxPoserRendre(\'_smsOnglet\',\''+o[0]+'\')">'+o[1]+'</button>';}).join("")+'</div>';
+  var h='<div style="display:flex;gap:6px;margin-bottom:14px">'+[["dash","📊 Tableau de bord"],["salons","🏠 Par établissement"],["reglages","⚙️ Réglages & packs"]].map(function(o){return '<button class="tf-btn'+(t===o[0]?' active':'')+'" data-lx-click="lxPoserRendre(\'_smsOnglet\',\''+saJs(o[0])+'\')">'+o[1]+'</button>';}).join("")+'</div>';
   if(t==="reglages") return h+smsFormReglages()+rSMSReglages();
   setTimeout(smsCharger,0);
   return h+'<div id="smsZone" style="color:var(--text2)">Chargement…</div>';
@@ -4642,7 +4642,7 @@ function smsVueSalons(d){
     h+='<td style="font-size:11px">'+(s.dernier_envoi?new Date(s.dernier_envoi).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}):"—")+'</td>';
     h+='<td>'+(s.en_attente?'<span title="SMS non envoyés faute de crédits" style="color:var(--orange)">'+s.en_attente+'</span>':'0')+'</td><td style="font-size:11px">'+(s.mode==="native"?"📱 téléphone":"Brevo")+'</td>';
     h+='<td>'+(s.bloque?'<span style="color:var(--red);font-weight:700">⛔ Bloqué</span>':'<span style="color:var(--green)">Actif</span>')+'</td>';
-    h+='<td><div style="display:flex;gap:4px;flex-wrap:wrap"><button class="dp-btn" style="font-size:10px;padding:3px 7px" data-lx-click="smsAjuster(\''+s.id+'\',1)">+ SMS</button><button class="dp-btn" style="font-size:10px;padding:3px 7px" data-lx-click="smsAjuster(\''+s.id+'\',-1)">− SMS</button><button class="dp-btn" style="font-size:10px;padding:3px 7px" data-lx-click="smsHistorique(\''+s.id+'\')">Historique</button><button class="dp-btn" style="font-size:10px;padding:3px 7px;color:'+(s.bloque?'var(--green)':'var(--red)')+'" data-lx-click="smsBloquer(\''+s.id+'\','+(!s.bloque)+')">'+(s.bloque?'Débloquer':'Bloquer')+'</button></div></td></tr>';
+    h+='<td><div style="display:flex;gap:4px;flex-wrap:wrap"><button class="dp-btn" style="font-size:10px;padding:3px 7px" data-lx-click="smsAjuster(\''+saJs(s.id)+'\',1)">+ SMS</button><button class="dp-btn" style="font-size:10px;padding:3px 7px" data-lx-click="smsAjuster(\''+saJs(s.id)+'\',-1)">− SMS</button><button class="dp-btn" style="font-size:10px;padding:3px 7px" data-lx-click="smsHistorique(\''+saJs(s.id)+'\')">Historique</button><button class="dp-btn" style="font-size:10px;padding:3px 7px;color:'+(s.bloque?'var(--green)':'var(--red)')+'" data-lx-click="smsBloquer(\''+saJs(s.id)+'\','+(!s.bloque)+')">'+(s.bloque?'Débloquer':'Bloquer')+'</button></div></td></tr>';
   });
   return h+'</table></div></div><div style="font-size:11px;color:var(--text3);margin-top:8px">« En attente » = rappels non envoyés faute de crédits (ils partent dès la recharge s\'ils sont encore utiles). « Bloqué » = plus aucun SMS payant envoyé pour cet établissement.</div>';
 }
@@ -4999,7 +4999,7 @@ function rNF525(){
   h+='<div id="lxNfPage"></div>';
   h+='<div class="card"><h3>📄 Attestations</h3><div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px"><button class="tb-btn" data-lx-click="lxAttEdVoir()">📄 Attestation éditeur signée (volet 1)</button><a class="tb-btn" style="text-decoration:none" href="/nf525-attestation-generale.html" target="_blank" rel="noopener">Attestation publique ↗</a></div><div id="lxAttListe"></div></div>';
   h+='<div class="card"><h3>📦 Export NF525 par établissement</h3><div style="font-size:12px;color:var(--text2);margin-bottom:8px">Fichier JSON (tickets, clôtures, contrôle du chaînage) produit par le worker <code>/api/admin/export-nf525</code>, pour un contrôle fiscal ou l\'archivage.</div>'+
-    (SALONS||[]).map(function(x){ return '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--border);font-size:13px"><span>'+saEsc(x.nom)+(x.fermeLe?' <span class="badge badge-red" style="font-size:9px">fermé</span>':'')+'</span><button class="dp-btn" data-lx-click="lxExportNf525(\''+x.id+'\')">⬇️ Exporter</button></div>'; }).join('')+'</div>';
+    (SALONS||[]).map(function(x){ return '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--border);font-size:13px"><span>'+saEsc(x.nom)+(x.fermeLe?' <span class="badge badge-red" style="font-size:9px">fermé</span>':'')+'</span><button class="dp-btn" data-lx-click="lxExportNf525(\''+saJs(x.id)+'\')">⬇️ Exporter</button></div>'; }).join('')+'</div>';
   setTimeout(function(){ lxARCharger(false); lxAttListeCharger(); }, 30);
   return h;
 }
@@ -5043,8 +5043,8 @@ function rFermetures(){
   var h='<div class="topbar"><h1>Fermetures <span>'+L.length+' établissement(s) fermé(s)</span></h1></div>';
   h+='<div class="card" style="font-size:12px;color:var(--text2);line-height:1.6">Un établissement fermé garde sa caisse, ses clôtures, ses signatures et son journal <b>6 ans</b> ; le gérant conserve l\'accès en lecture seule (Mode archives). Suppression automatique ensuite (voir <a href="#" data-lx-click="nav(\'qualite\',\'rgpd\');return false">RGPD & purges</a>).</div>';
   var rows=L.map(function(s){ var fin=new Date(s.fermeLe); fin.setFullYear(fin.getFullYear()+6);
-    return ['<b style="cursor:pointer" data-lx-click="openD(\''+s.id+'\')">'+saEsc(s.nom)+'</b><div style="font-size:11px;color:var(--text3)">'+saEsc(s.ville)+'</div>', _lxDt(s.fermeLe), saEsc(s.fermeMotif||'—'), saEsc(s.fermePar||'—'), fin.toLocaleDateString('fr-FR'),
-      '<div class="td-actions" style="flex-wrap:wrap"><button class="dp-btn" style="font-size:11px" data-lx-click="openD(\''+s.id+'\')">Fiche</button><button class="dp-btn" style="font-size:11px" data-lx-click="asVoirApp(\''+s.id+'\')">📚 Archives (lecture seule)</button><button class="dp-btn" style="font-size:11px" data-lx-click="lxExportNf525(\''+s.id+'\')">⬇️ Export NF525</button></div>']; });
+    return ['<b style="cursor:pointer" data-lx-click="openD(\''+saJs(s.id)+'\')">'+saEsc(s.nom)+'</b><div style="font-size:11px;color:var(--text3)">'+saEsc(s.ville)+'</div>', _lxDt(s.fermeLe), saEsc(s.fermeMotif||'—'), saEsc(s.fermePar||'—'), fin.toLocaleDateString('fr-FR'),
+      '<div class="td-actions" style="flex-wrap:wrap"><button class="dp-btn" style="font-size:11px" data-lx-click="openD(\''+saJs(s.id)+'\')">Fiche</button><button class="dp-btn" style="font-size:11px" data-lx-click="asVoirApp(\''+saJs(s.id)+'\')">📚 Archives (lecture seule)</button><button class="dp-btn" style="font-size:11px" data-lx-click="lxExportNf525(\''+saJs(s.id)+'\')">⬇️ Export NF525</button></div>']; });
   h+='<div class="table-wrap">'+_lxTable(['Établissement','Fermé le','Motif','Par','Conservé jusqu\'au','Archives'],rows,'Aucun établissement fermé.')+'</div>';
   return h;
 }
@@ -5056,14 +5056,14 @@ function rEssaisImpayes(){
   var imp=(SALONS||[]).filter(function(s){return s.status==='past_due'&&!s.fermeLe;});
   var h='<div class="topbar"><h1>Essais & impayés</h1><button class="tb-btn" data-lx-click="nav(\'revenus\',\'stripe\')">💳 Factures impayées dans Stripe →</button></div>';
   h+='<div class="card"><h3>💳 Paiements échoués / impayés ('+imp.length+')</h3>'+_lxTable(['Établissement','Forfait','Depuis','Stripe','Actions'],imp.map(function(s){
-    return ['<b style="cursor:pointer" data-lx-click="openD(\''+s.id+'\')">'+saEsc(s.nom)+'</b><div style="font-size:11px;color:var(--text3)">'+saEsc(s.email)+'</div>', planB(s.plan), s.pastDueSince?_lxDt(s.pastDueSince):'—', lxStripeLiens(s)||'<span style="color:var(--text3)">pas de client Stripe</span>',
-      '<button class="dp-btn" style="font-size:11px" data-lx-click="openD(\''+s.id+'\')">Fiche</button>'+(s.email?' <a class="dp-btn" style="font-size:11px;text-decoration:none" href="mailto:'+saEsc(s.email)+'">✉️</a>':'')]; }),'Aucun impayé.')+
+    return ['<b style="cursor:pointer" data-lx-click="openD(\''+saJs(s.id)+'\')">'+saEsc(s.nom)+'</b><div style="font-size:11px;color:var(--text3)">'+saEsc(s.email)+'</div>', planB(s.plan), s.pastDueSince?_lxDt(s.pastDueSince):'—', lxStripeLiens(s)||'<span style="color:var(--text3)">pas de client Stripe</span>',
+      '<button class="dp-btn" style="font-size:11px" data-lx-click="openD(\''+saJs(s.id)+'\')">Fiche</button>'+(s.email?' <a class="dp-btn" style="font-size:11px;text-decoration:none" href="mailto:'+saEsc(s.email)+'">✉️</a>':'')]; }),'Aucun impayé.')+
     '<div style="font-size:11px;color:var(--text3);margin-top:6px">Relance d\'une facture et détail des échecs : page Stripe (bouton en haut).</div></div>';
   h+='<div class="card"><h3>⏰ Essais en cours ('+essais.length+')</h3>'+_lxTable(['Établissement','Fin d\'essai','Reste','Démarrage','Actions'],essais.map(function(s){
     var j=s.trialEnd?Math.ceil((new Date(s.trialEnd)-now)/864e5):null; var d=asDemarrageScore(s.id);
-    return ['<b style="cursor:pointer" data-lx-click="openD(\''+s.id+'\')">'+saEsc(s.nom)+'</b><div style="font-size:11px;color:var(--text3)">'+saEsc(s.ville)+'</div>', _lxDt(s.trialEnd),
+    return ['<b style="cursor:pointer" data-lx-click="openD(\''+saJs(s.id)+'\')">'+saEsc(s.nom)+'</b><div style="font-size:11px;color:var(--text3)">'+saEsc(s.ville)+'</div>', _lxDt(s.trialEnd),
       j==null?'—':'<b style="color:'+(j<=3?'var(--red)':(j<=7?'var(--orange)':'var(--text2)'))+'">'+(j>0?j+' j':'terminé')+'</b>', d==null?'…':d+'/7',
-      '<div class="td-actions" style="flex-wrap:wrap"><button class="dp-btn" style="font-size:11px" data-lx-click="asAction(\''+s.id+'\',\'essai7\')">+7 j</button><button class="dp-btn" style="font-size:11px" data-lx-click="asAction(\''+s.id+'\',\'essai14\')">+14 j</button><button class="dp-btn" style="font-size:11px" data-lx-click="openD(\''+s.id+'\')">Fiche</button>'+(s.stripeCust?lxStripeLiens(s):'')+'</div>']; }),'Aucun essai en cours.')+'</div>';
+      '<div class="td-actions" style="flex-wrap:wrap"><button class="dp-btn" style="font-size:11px" data-lx-click="asAction(\''+saJs(s.id)+'\',\'essai7\')">+7 j</button><button class="dp-btn" style="font-size:11px" data-lx-click="asAction(\''+saJs(s.id)+'\',\'essai14\')">+14 j</button><button class="dp-btn" style="font-size:11px" data-lx-click="openD(\''+saJs(s.id)+'\')">Fiche</button>'+(s.stripeCust?lxStripeLiens(s):'')+'</div>']; }),'Aucun essai en cours.')+'</div>';
   if(!window._DEMARRAGE) setTimeout(function(){ asChargerDemarrage().then(function(){ if(window._currentSub==='impayes') render(); }); },30);
   return h;
 }
@@ -5104,7 +5104,7 @@ async function lxParrCharger(){
   L.forEach(function(p){ if(p.statut==='recompense'){ nbR++; tot+=Number(p.montant)||0; } if(p.statut==='en_attente'||p.statut==='en_cours'||p.statut==='inscrit') nbA++; });
   var codes=(SALONS||[]).filter(function(s){return s.codeParr&&!s.fermeLe;}).length;
   var h='<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">'+saCarte('Parrainages',L.length,'au total')+saCarte('Récompensés',nbR,saE(tot)+' offerts (crédit Stripe)','var(--green)')+saCarte('En cours / en attente',nbA,'récompense à venir','var(--orange)')+saCarte('Codes actifs',codes,'établissements ouverts avec un code')+'</div>';
-  var nom=function(id){ var s=gSalon(id); return s?'<a href="#" data-lx-click="openD(\''+s.id+'\');return false" style="color:var(--gold)">'+saEsc(s.nom)+'</a>':'<span style="color:var(--text3)">'+saEsc(String(id||'?').slice(0,8))+'</span>'; };
+  var nom=function(id){ var s=gSalon(id); return s?'<a href="#" data-lx-click="openD(\''+saJs(s.id)+'\');return false" style="color:var(--gold)">'+saEsc(s.nom)+'</a>':'<span style="color:var(--text3)">'+saEsc(String(id||'?').slice(0,8))+'</span>'; };
   h+='<div class="card">'+_lxTable(['Créé le','Parrain','Filleul','Statut','Récompense','Référence Stripe','Motif'],L.map(function(p){
     var par=gSalon(p.parrain_id), ref=String(p.stripe_ref||'');
     var lien=ref?(par&&par.stripeCust?'<a href="https://dashboard.stripe.com/customers/'+encodeURIComponent(par.stripeCust)+'" target="_blank" rel="noopener" style="font-family:var(--mono);font-size:11px;color:var(--gold)">'+saEsc(ref)+' ↗</a>':'<span style="font-family:var(--mono);font-size:11px">'+saEsc(ref)+'</span>'):'—';
@@ -5150,7 +5150,7 @@ async function lxEmailStatsCharger(forcer){
 function rDesinscriptions(){
   setTimeout(function(){ lxDesinsCharger(window._lxDesinsJours===undefined?30:window._lxDesinsJours); },20);
   return '<div class="topbar"><h1>Désinscriptions <span>Liens « Stop SMS » et « Se désinscrire » : motifs déclarés</span></h1>'+
-    '<div style="display:flex;gap:6px;flex-wrap:wrap">'+[[30,'30 jours'],[90,'90 jours'],[0,'Tout']].map(function(x){ return '<button class="tb-btn" data-desj="'+x[0]+'" data-lx-click="lxDesinsCharger('+x[0]+')">'+x[1]+'</button>'; }).join('')+'</div></div>'+
+    '<div style="display:flex;gap:6px;flex-wrap:wrap">'+[[30,'30 jours'],[90,'90 jours'],[0,'Tout']].map(function(x){ return '<button class="tb-btn" data-desj="'+x[0]+'" data-lx-click="lxDesinsCharger('+saNum(x[0])+')">'+x[1]+'</button>'; }).join('')+'</div></div>'+
     '<div id="desZone"><div class="card" style="color:var(--text3)">Chargement…</div></div>';
 }
 function _lxDesBarres(liste, cle, lib){
@@ -5236,12 +5236,12 @@ async function lxRgpdCharger(){
   if(r.error){ el.innerHTML='<div class="card" style="color:var(--red)">❌ '+saEsc(r.error.message)+'<div style="font-size:11px;color:var(--text3);margin-top:6px">RPC admin_rgpd_etat : appliquer docs/migrations_1015/admin_structure.sql.</div></div>'; }
   else {
     var d=r.data||{}, h='';
-    var lienSal=function(x){ var s=gSalon(x.id); return s?'<a href="#" data-lx-click="openD(\''+s.id+'\');return false" style="color:var(--gold)">'+saEsc(x.nom)+'</a>':saEsc(x.nom||'?'); };
+    var lienSal=function(x){ var s=gSalon(x.id); return s?'<a href="#" data-lx-click="openD(\''+saJs(s.id)+'\');return false" style="color:var(--gold)">'+saEsc(x.nom)+'</a>':saEsc(x.nom||'?'); };
     h+='<div class="card"><h3>🧹 Purges RGPD J+60 à venir <span style="font-size:11px;color:var(--text3);font-weight:400">fiches clients, photos, RDV et réservations en ligne ; la caisse reste 6 ans</span></h3>'+
       _lxTable(['Établissement','Statut','Fin du service','Préavis (J+53)','Purge prévue'],(d.j60||[]).map(function(x){ return [lienSal(x),statusB(x.statut),_lxDt(x.fin_service),x.preavis_le?'envoyé le '+_lxDt(x.preavis_le):'prévu le '+_lxDt(x.preavis_prevu),'<b>'+_lxDt(x.purge_prevue)+'</b>']; }),'Aucune purge J+60 prévue.')+
       ((d.j60_faites||[]).length?'<div style="font-size:12px;color:var(--text2);margin-top:8px">Déjà purgés : '+(d.j60_faites||[]).map(function(x){return saEsc(x.nom)+' ('+_lxDt(x.purge_le)+')';}).join(' · ')+'</div>':'')+'</div>';
     h+='<div class="card"><h3>🗄 Suppressions définitives à 6 ans <span style="font-size:11px;color:var(--text3);font-weight:400">6 ans après la dernière opération de caisse ou la fin du service ; préavis 30 j avant</span></h3>'+
-      _lxTable(['Établissement','Fermé / résilié','Préavis','Suppression prévue','Avant la suppression'],(d.six_ans||[]).map(function(x){ return [lienSal(x),_lxDt(x.ferme_le||x.resilie_le),x.preavis_le?'envoyé le '+_lxDt(x.preavis_le):'prévu le '+_lxDt(x.preavis_prevu),'<b>'+_lxDt(x.suppression_prevue)+'</b>','<button class="dp-btn" style="font-size:11px" data-lx-click="lxExportNf525(\''+x.id+'\')">⬇️ Export NF525</button> <button class="dp-btn" style="font-size:11px" data-lx-click="asVoirApp(\''+x.id+'\')">📚 Archives</button>']; }),'Aucun établissement résilié.')+
+      _lxTable(['Établissement','Fermé / résilié','Préavis','Suppression prévue','Avant la suppression'],(d.six_ans||[]).map(function(x){ return [lienSal(x),_lxDt(x.ferme_le||x.resilie_le),x.preavis_le?'envoyé le '+_lxDt(x.preavis_le):'prévu le '+_lxDt(x.preavis_prevu),'<b>'+_lxDt(x.suppression_prevue)+'</b>','<button class="dp-btn" style="font-size:11px" data-lx-click="lxExportNf525(\''+saJs(x.id)+'\')">⬇️ Export NF525</button> <button class="dp-btn" style="font-size:11px" data-lx-click="asVoirApp(\''+saJs(x.id)+'\')">📚 Archives</button>']; }),'Aucun établissement résilié.')+
       ((d.six_ans_faites||[]).length?'<div style="font-size:12px;font-weight:700;margin-top:10px">Historique des suppressions</div>'+_lxTable(['Établissement','Fin du service','Fin de conservation','Supprimé le','Lignes'],(d.six_ans_faites||[]).map(function(x){return [saEsc(x.nom),_lxDt(x.fin_service),_lxDt(x.fin_conservation),_lxDt(x.supprime_le),saEsc(x.lignes)];})):'')+'</div>';
     h+='<div class="card"><h3>👤 Comptes clients inactifs <span style="font-size:11px;color:var(--text3);font-weight:400">3 ans sans activité ; préavis 30 j ; une connexion annule tout · '+saEsc(d.nb_comptes_clients||0)+' compte(s) au total</span></h3>'+
       _lxTable(['Client','E-mail (masqué)','Dernière activité','Préavis','Suppression prévue'],(d.clients||[]).map(function(x){ return [saEsc(x.prenom||'—'),saEsc(x.email||''),_lxDt(x.derniere_activite),x.preavis_le?'envoyé le '+_lxDt(x.preavis_le):'—','<b>'+_lxDt(x.suppression_prevue)+'</b>']; }),'Aucun compte client en fin de conservation dans les 90 jours.')+'</div>';
@@ -5306,7 +5306,7 @@ async function lxJournalCharger(){
     h+='<div style="padding:9px 14px;border-top:1px solid var(--border);font-size:12px'+(auto?';opacity:.85':'')+'">'+
       '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:baseline"><span style="color:var(--text3);font-family:var(--mono);font-size:11px">'+_lxDt(x.timestamp_action,true)+'</span>'+
       '<b style="color:'+(auto?'var(--text2)':'var(--gold)')+'">'+saEsc(x.action)+'</b>'+
-      (s?'<a href="#" data-lx-click="openD(\''+s.id+'\');return false" style="color:var(--text)">'+saEsc(s.nom)+'</a>':'')+
+      (s?'<a href="#" data-lx-click="openD(\''+saJs(s.id)+'\');return false" style="color:var(--text)">'+saEsc(s.nom)+'</a>':'')+
       (x.cible?'<span style="color:var(--text3);font-family:var(--mono);font-size:10px">'+saEsc(x.cible)+'</span>':'')+
       '<span style="margin-left:auto;color:var(--text3);font-size:11px">'+saEsc(x.admin_email||(x.admin_user_id?'admin':'serveur'))+'</span></div>'+
       (x.details?'<div style="color:var(--text2);margin-top:2px;word-break:break-word">'+saEsc(String(x.details).slice(0,400))+'</div>':'')+
@@ -5525,7 +5525,7 @@ async function saveNotes(id){
 // === Fiche salon : menu d'actions déroulant (2026-10-09) ===
 function asZoneSensible(s){
   if(s.fermeLe) return '';
-  var bt=function(v,txt,aide){ return '<button type="button" class="dp-btn" style="border-color:var(--red);color:var(--red);background:transparent;text-align:left;width:100%;margin-bottom:6px" data-lx-click="asAction(\''+saJs(s.id)+'\',\''+v+'\')">'+txt+'<div style="font-size:12px;color:var(--text3);font-weight:400;margin-top:2px">'+aide+'</div></button>'; };
+  var bt=function(v,txt,aide){ return '<button type="button" class="dp-btn" style="border-color:var(--red);color:var(--red);background:transparent;text-align:left;width:100%;margin-bottom:6px" data-lx-click="asAction(\''+saJs(s.id)+'\',\''+saJs(v)+'\')">'+txt+'<div style="font-size:12px;color:var(--text3);font-weight:400;margin-top:2px">'+aide+'</div></button>'; };
   var h='<div class="dp-section" style="border:1px solid rgba(231,76,60,.35);border-radius:12px;padding:12px;margin-top:16px"><div class="dp-label" style="color:var(--red)">⚠️ Zone sensible</div>';
   if(s.status!=="suspended") h+=bt("suspend","⛔ Suspendre le compte","L’établissement n’a plus accès à l’application (réversible).");
   h+=bt("fermer","🔒 Fermer définitivement","Fin du service ; la caisse est conservée 6 ans.");
@@ -5543,7 +5543,7 @@ function asMenuActions(s){
   if(!s.fermeLe && s.status==="suspended") o.push(["reactivate","✅ Réactiver le compte"]);
   o.push(["reset","🔑 Envoyer un lien de nouveau mot de passe"]);
   // 2026-10-31 (lot A, E4) : Suspendre / Fermer / Supprimer sont dans la « Zone sensible » en bas de fiche (asZoneSensible)
-  return '<select class="dp-actions-select" data-lx-change="lxAsActionMenu(\''+s.id+'\',this)">'+o.map(function(x){return '<option value="'+x[0]+'">'+x[1]+'</option>';}).join("")+'</select>';
+  return '<select class="dp-actions-select" data-lx-change="lxAsActionMenu(\''+saJs(s.id)+'\',this)">'+o.map(function(x){return '<option value="'+x[0]+'">'+x[1]+'</option>';}).join("")+'</select>';
 }
 async function asAction(id,v){
   if(!v) return; var s=gSalon(id); if(!s) return;
@@ -5577,7 +5577,7 @@ async function asChargerSupport(id, convChoisie){
   var convs=cv.data||[];
   if(!convs.length){ el.innerHTML='<i>Aucune conversation avec cet établissement pour l\'instant.</i>'; return; }
   var cur=convChoisie||(convs[0]&&convs[0].id);
-  var h='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">'+convs.map(function(c){ return '<button class="tf-btn'+(c.id===cur?' active':'')+'" data-lx-click="asChargerSupport(\''+id+'\',\''+c.id+'\')">'+new Date(c.last_message_at||c.created_at).toLocaleDateString("fr-FR")+(c.status==="open"?' • ouverte':c.status==="waiting"?' • en attente du pro':' • résolue')+(c.escalade_bot&&c.status!=="resolved"?' 🙋':'')+(c.unread_count_admin?' ('+c.unread_count_admin+' non lu)':'')+'</button>'; }).join("")+'</div>';
+  var h='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">'+convs.map(function(c){ return '<button class="tf-btn'+(c.id===cur?' active':'')+'" data-lx-click="asChargerSupport(\''+saJs(id)+'\',\''+saJs(c.id)+'\')">'+new Date(c.last_message_at||c.created_at).toLocaleDateString("fr-FR")+(c.status==="open"?' • ouverte':c.status==="waiting"?' • en attente du pro':' • résolue')+(c.escalade_bot&&c.status!=="resolved"?' 🙋':'')+(c.unread_count_admin?' ('+c.unread_count_admin+' non lu)':'')+'</button>'; }).join("")+'</div>';
   var ms=await _sb.from("support_messages").select("*",{count:"exact"}).eq("conversation_id",cur).order("created_at",{ascending:false}).limit(300); // lot A F2 : les plus récents
   if(ms.data) ms.data=ms.data.slice().reverse();
   if(ms.count!=null&&ms.data&&ms.count>ms.data.length) h+='<div style="font-size:11px;color:var(--text3);margin-bottom:4px">'+ms.data.length+' derniers messages sur '+ms.count+' (historique complet dans Support).</div>';
@@ -5586,7 +5586,7 @@ async function asChargerSupport(id, convChoisie){
     var moi=m.sender==="admin", bot=m.sender==="bot";
     h+='<div style="display:flex;justify-content:'+(moi?'flex-end':'flex-start')+';margin:4px 0"><div style="max-width:80%;padding:7px 10px;border-radius:10px;background:'+(moi?'rgba(200,168,78,.18)':bot?'rgba(100,181,246,.12)':'var(--bg2)')+';font-size:13px;white-space:pre-wrap"><div style="font-size:10px;color:var(--text3)">'+(moi?'Luxyra (vous)':bot?'Bot':'Établissement')+' · '+new Date(m.created_at).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})+'</div>'+saEsc(m.message)+(Array.isArray(m.pieces)&&m.pieces.length?'<div style="font-size:11px;color:var(--gold);margin-top:3px">📎 '+m.pieces.length+' pièce(s) jointe(s) — voir Communication › Chat support</div>':'')+'</div></div>';
   });
-  h+='</div><div style="display:flex;gap:6px;margin-top:8px"><textarea id="asSupRep-'+id+'" rows="2" placeholder="Répondre à l’établissement…" style="flex:1;padding:8px;border-radius:8px;background:var(--bg3);color:var(--text);border:1px solid var(--border)"></textarea><button class="tb-btn primary" data-lx-click="asRepondreSupport(\''+id+'\',\''+cur+'\')">Envoyer</button></div>';
+  h+='</div><div style="display:flex;gap:6px;margin-top:8px"><textarea id="asSupRep-'+id+'" rows="2" placeholder="Répondre à l’établissement…" style="flex:1;padding:8px;border-radius:8px;background:var(--bg3);color:var(--text);border:1px solid var(--border)"></textarea><button class="tb-btn primary" data-lx-click="asRepondreSupport(\''+saJs(id)+'\',\''+saJs(cur)+'\')">Envoyer</button></div>';
   el.innerHTML=h;
   var box=el.querySelector('div[style*="max-height:420px"]'); if(box) box.scrollTop=box.scrollHeight;
   try{ await _sb.from("support_messages").update({read_by_admin:true}).eq("conversation_id",cur).eq("sender","client"); await _sb.from("support_conversations").update({unread_count_admin:0}).eq("id",cur); }catch(e){}
@@ -5762,7 +5762,7 @@ async function kbCharger(){
   if(r.error){ box.innerHTML='<div style="color:var(--red)">Erreur : '+saEsc(r.error.message)+'</div>'; return; }
   KB_LIGNES=r.data||[];
   box.innerHTML='<table style="width:100%;border-collapse:collapse">'+KB_LIGNES.map(function(k,i){
-    return '<tr style="border-top:1px solid var(--border)'+(k.actif?'':';opacity:.5')+'"><td style="padding:6px 8px;font-family:var(--mono);font-size:11px">'+saEsc(k.cle)+'</td><td style="padding:6px 8px"><b>'+saEsc(k.titre||"")+'</b><div style="font-size:11px;color:var(--text3);max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+saEsc(String(k.contenu||"").slice(0,200))+'</div></td><td style="padding:6px 8px;font-size:11px">'+saEsc(k.ordre)+'</td><td style="padding:6px 8px;font-size:11px;white-space:nowrap">'+(k.actif?'Actif':'Inactif')+'<div style="color:var(--text3)">'+saEsc(k.maj_le?new Date(k.maj_le).toLocaleDateString("fr-FR"):"")+'</div></td><td style="padding:6px 8px"><button class="tb-btn" data-lx-click="kbEditer('+i+')">✏️ Modifier</button></td></tr>';
+    return '<tr style="border-top:1px solid var(--border)'+(k.actif?'':';opacity:.5')+'"><td style="padding:6px 8px;font-family:var(--mono);font-size:11px">'+saEsc(k.cle)+'</td><td style="padding:6px 8px"><b>'+saEsc(k.titre||"")+'</b><div style="font-size:11px;color:var(--text3);max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+saEsc(String(k.contenu||"").slice(0,200))+'</div></td><td style="padding:6px 8px;font-size:11px">'+saEsc(k.ordre)+'</td><td style="padding:6px 8px;font-size:11px;white-space:nowrap">'+(k.actif?'Actif':'Inactif')+'<div style="color:var(--text3)">'+saEsc(k.maj_le?new Date(k.maj_le).toLocaleDateString("fr-FR"):"")+'</div></td><td style="padding:6px 8px"><button class="tb-btn" data-lx-click="kbEditer('+saNum(i)+')">✏️ Modifier</button></td></tr>';
   }).join("")+'</table>';
 }
 function kbEditer(i){
@@ -5842,6 +5842,7 @@ async function saJournal(salonId, action, details, avant, apres){
 }
 // 2026-10-14 : valeur placée DANS une chaîne JavaScript entre apostrophes d'un attribut data-lx-click="f('…')" :
 // échappement JavaScript d'abord (\ ' " retours ligne <), puis HTML (le navigateur décode l'attribut avant le JS).
+function saNum(v){ var n=Number(v); return isFinite(n)?String(n):'null'; }
 function saJs(v){ return saEsc(String(v==null?"":v).replace(/\\/g,"\\\\").replace(/'/g,"\\'").replace(/"/g,'\\"').replace(/\r\n|\r|\n|\u2028|\u2029/g," ").replace(/</g,"\\x3c")); }
 var SA_FORFAIT={essentiel:"Essentiel",pro:"Pro",pro_fondateur:"Pro Fondateur",autre:"Autre"};
 function saCarte(t,v,sub,c){ return '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px;min-width:150px;flex:1"><div style="font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px">'+t+'</div><div style="font-size:22px;font-weight:800;margin-top:4px;color:'+(c||'var(--text)')+'">'+v+'</div>'+(sub?'<div style="font-size:11px;color:var(--text2);margin-top:2px">'+sub+'</div>':'')+'</div>'; }
@@ -5881,7 +5882,7 @@ async function saChargerOverview(){
   (d.factures_impayees||[]).forEach(function(x){
     h+='<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;padding:6px 0;border-top:1px solid var(--border);font-size:13px"><span><b>'+saEsc(x.salon)+'</b> — '+saE(x.montant)+' — '+(x.tentatives||0)+' tentative(s)'+(x.prochaine?' · prochaine le '+saD(x.prochaine):'')+'</span><span style="display:flex;gap:6px">';
     if(x.url) h+='<a class="dp-btn" style="font-size:11px" href="'+saEsc(x.url)+'" target="_blank">Voir</a>';
-    if(x.salon_id) h+='<button class="dp-btn" style="font-size:11px" data-lx-click="saRelancer(\''+x.salon_id+'\',\''+x.id+'\',true)">Relancer le prélèvement</button>';
+    if(x.salon_id) h+='<button class="dp-btn" style="font-size:11px" data-lx-click="saRelancer(\''+saJs(x.salon_id)+'\',\''+saJs(x.id)+'\',true)">Relancer le prélèvement</button>';
     h+='</span></div>';
   });
   h+='</div>';
@@ -5893,7 +5894,7 @@ async function saChargerOverview(){
   // Comptes Stripe des salons
   h+='<div class="card"><div style="font-weight:800;margin-bottom:8px">💳 Comptes Stripe des établissements (paiements en ligne)</div>';
   if(!(d.salons_connect||[]).length) h+='<div style="font-size:12px;color:var(--text2)">Aucun salon</div>';
-  (d.salons_connect||[]).forEach(function(x){ h+='<div style="display:flex;justify-content:space-between;padding:4px 0;border-top:1px solid var(--border);font-size:13px;cursor:pointer" data-lx-click="openD(\''+x.id+'\')"><span>'+saEsc(x.nom)+'</span><span>'+saEsc(x.statut||"?")+'</span></div>'; });
+  (d.salons_connect||[]).forEach(function(x){ h+='<div style="display:flex;justify-content:space-between;padding:4px 0;border-top:1px solid var(--border);font-size:13px;cursor:pointer" data-lx-click="openD(\''+saJs(x.id)+'\')"><span>'+saEsc(x.nom)+'</span><span>'+saEsc(x.statut||"?")+'</span></div>'; });
   h+='</div>';
   el.innerHTML=h;
 }
@@ -5901,7 +5902,7 @@ async function saChargerOverview(){
 // --- Bloc « Gestion Stripe » dans la fiche d'un salon ---
 function saBlocSalon(s){
   if(!s.stripeSub&&!s.stripeCust&&!s.connectId) return '';
-  return '<div class="dp-section"><div class="dp-label">⚙️ Gestion Stripe</div><div id="saSalon-'+s.id+'"><button class="dp-btn" style="width:100%" data-lx-click="saChargerSalon(\''+s.id+'\')">Charger abonnement, factures et paiements</button></div></div>';
+  return '<div class="dp-section"><div class="dp-label">⚙️ Gestion Stripe</div><div id="saSalon-'+s.id+'"><button class="dp-btn" style="width:100%" data-lx-click="saChargerSalon(\''+saJs(s.id)+'\')">Charger abonnement, factures et paiements</button></div></div>';
 }
 async function saChargerSalon(id){
   var el=document.getElementById("saSalon-"+id); if(!el) return;
@@ -5916,11 +5917,11 @@ async function saChargerSalon(id){
     if(ab.essai_jusqu) h+='<div class="dp-field"><span class="k">Offert jusqu\'au</span><span class="v">'+saD(ab.essai_jusqu)+'</span></div>';
     (ab.remises||[]).forEach(function(r){ h+='<div class="dp-field"><span class="k">Remise</span><span class="v">'+saEsc(r.nom)+(r.fin?' (jusqu\'au '+saD(r.fin)+')':'')+'</span></div>'; });
     h+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0">';
-    h+='<button class="dp-btn" style="font-size:11px" data-lx-click="saRemise(\''+id+'\')">🏷 Appliquer une remise</button>';
-    if((ab.remises||[]).length) h+='<button class="dp-btn" style="font-size:11px" data-lx-click="lxSaAction(\''+id+'\',\'retirer_coupon\',\'Retirer la remise de cet établissement ?\')">Retirer la remise</button>';
+    h+='<button class="dp-btn" style="font-size:11px" data-lx-click="saRemise(\''+saJs(id)+'\')">🏷 Appliquer une remise</button>';
+    if((ab.remises||[]).length) h+='<button class="dp-btn" style="font-size:11px" data-lx-click="lxSaAction(\''+saJs(id)+'\',\'retirer_coupon\',\'Retirer la remise de cet établissement ?\')">Retirer la remise</button>';
     h+='<button class="dp-btn" style="font-size:11px" data-lx-click="saForfait(\''+saJs(id)+'\',\''+saJs(ab.forfait)+'\')">🔁 Changer de forfait</button>';
-    if(ab.annule_fin_periode) h+='<button class="dp-btn success" style="font-size:11px" data-lx-click="lxSaAction(\''+id+'\',\'reprendre\',\'Annuler la résiliation programmée ? L\\\'abonnement continuera normalement.\')">↩ Annuler la résiliation</button>';
-    else h+='<button class="dp-btn" style="font-size:11px;color:var(--red)" data-lx-click="lxSaAction(\''+id+'\',\'annuler_fin_periode\',\'Résilier cet abonnement à la fin de la période payée ('+saD(ab.fin_periode)+') ?\',true)">Résilier en fin de période</button>';
+    if(ab.annule_fin_periode) h+='<button class="dp-btn success" style="font-size:11px" data-lx-click="lxSaAction(\''+saJs(id)+'\',\'reprendre\',\'Annuler la résiliation programmée ? L\\\'abonnement continuera normalement.\')">↩ Annuler la résiliation</button>';
+    else h+='<button class="dp-btn" style="font-size:11px;color:var(--red)" data-lx-click="lxSaAction(\''+saJs(id)+'\',\'annuler_fin_periode\',\'Résilier cet abonnement à la fin de la période payée ('+saD(ab.fin_periode)+') ?\',true)">Résilier en fin de période</button>';
     h+='</div>';
   }
   if((d.factures||[]).length){
@@ -5929,7 +5930,7 @@ async function saChargerSalon(id){
       var st={paid:"payée",open:"<b style='color:var(--red)'>impayée</b>",void:"annulée",draft:"brouillon",uncollectible:"irrécouvrable"}[f.statut]||f.statut;
       h+='<div style="display:flex;justify-content:space-between;gap:6px;align-items:center;font-size:12px;padding:4px 0;border-top:1px solid var(--border)"><span>'+saD(f.date)+' · '+saEsc(f.numero||"")+' · '+saE(f.statut==="paid"?f.paye:f.du)+' · '+st+'</span><span style="display:flex;gap:4px">';
       if(f.pdf) h+='<a class="dp-btn" style="font-size:10px;padding:3px 7px" href="'+saEsc(f.pdf)+'" target="_blank">PDF</a>';
-      if(f.statut==="open") h+='<button class="dp-btn" style="font-size:10px;padding:3px 7px" data-lx-click="saRelancer(\''+id+'\',\''+f.id+'\')">Relancer</button>';
+      if(f.statut==="open") h+='<button class="dp-btn" style="font-size:10px;padding:3px 7px" data-lx-click="saRelancer(\''+saJs(id)+'\',\''+saJs(f.id)+'\')">Relancer</button>';
       if(f.statut==="paid"&&f.payment_intent) h+='<button class="dp-btn" style="font-size:10px;padding:3px 7px" data-lx-click="saRembourser(\''+saJs(id)+'\',\''+saJs(f.payment_intent)+'\','+Number(f.paye)+',\'abonnement Luxyra\')">Rembourser</button>';
       h+='</span></div>';
     });
@@ -5941,18 +5942,18 @@ async function saChargerSalon(id){
     if(c.blocage) h+='<div style="font-size:12px;color:var(--red)">Blocage : '+saEsc(c.blocage)+'</div>';
     if((c.en_retard||[]).length) h+='<div style="font-size:12px;color:var(--red)">En retard : '+saEsc(c.en_retard.join(", "))+'</div>';
     if((c.a_fournir||[]).length) h+='<div style="font-size:12px;color:var(--orange)">À fournir : '+saEsc(c.a_fournir.join(", "))+'</div>';
-    if(!c.encaissements||!c.virements||(c.a_fournir||[]).length) h+='<button class="dp-btn" style="font-size:11px;margin-top:6px" data-lx-click="saLienInscription(\''+id+'\')">🔗 Lien pour terminer son inscription Stripe</button>';
+    if(!c.encaissements||!c.virements||(c.a_fournir||[]).length) h+='<button class="dp-btn" style="font-size:11px;margin-top:6px" data-lx-click="saLienInscription(\''+saJs(id)+'\')">🔗 Lien pour terminer son inscription Stripe</button>';
     var P=d.paiements_clientes||[];
     h+='<div style="font-weight:700;font-size:12px;margin:12px 0 4px">Paiements des clients (90 jours) : '+P.length+'</div>';
     P.forEach(function(p){
       var stl={succeeded:"payé",requires_capture:"empreinte en attente",canceled:"annulé",processing:"en cours"}[p.statut]||p.statut;
       h+='<div style="display:flex;justify-content:space-between;gap:6px;align-items:center;font-size:12px;padding:4px 0;border-top:1px solid var(--border)"><span>'+saD(p.date)+' · '+saE(p.montant)+' · '+saEsc(p.type||"")+' · '+stl+(p.rembourse?' · <b>remboursé '+saE(p.rembourse)+'</b>':'')+'<br><span style="color:var(--text2)">'+saEsc(p.description).slice(0,90)+'</span></span>';
-      if(p.statut==="succeeded"&&p.rembourse<p.montant) h+='<button class="dp-btn" style="font-size:10px;padding:3px 7px" data-lx-click="saRembourser(\''+id+'\',\''+p.id+'\','+(p.montant-p.rembourse)+',\'paiement d\\\'un client (repris sur le compte de l’établissement)\')">Rembourser</button>';
+      if(p.statut==="succeeded"&&p.rembourse<p.montant) h+='<button class="dp-btn" style="font-size:10px;padding:3px 7px" data-lx-click="saRembourser(\''+saJs(id)+'\',\''+saJs(p.id)+'\','+(p.montant-p.rembourse)+',\'paiement d\\\'un client (repris sur le compte de l’établissement)\')">Rembourser</button>';
       h+='</div>';
     });
   }
   if(!h) h='<div style="font-size:12px;color:var(--text2)">Aucune donnée Stripe pour cet établissement.</div>';
-  h+='<button class="dp-btn" style="width:100%;margin-top:10px;font-size:11px" data-lx-click="saChargerSalon(\''+id+'\')">↻ Actualiser</button>';
+  h+='<button class="dp-btn" style="width:100%;margin-top:10px;font-size:11px" data-lx-click="saChargerSalon(\''+saJs(id)+'\')">↻ Actualiser</button>';
   el.innerHTML=h;
 }
 async function saAction(id,body,question,danger){
@@ -6124,6 +6125,8 @@ function lxOuvrirLien(u){ if(/^(mailto|tel):/i.test(String(u||''))) window.open(
 var LX_ACTIONS=Object.create(null);
 // liste blanche générée à partir des attributs data-lx-* du panneau (lot B) ; toute nouvelle action doit y être ajoutée
 ['addModal','addSmsCredits','addSmsCreditsCustom','annAction','asAction','asAjouterEtiquette','asAjouterNote','asChargerSupport','asExport','asGroupe','asOnglet','asRepondreSupport','asRetirerEtiquette','asSauverRappel','asSel','asSelTout','asSet','asVoirApp','brevoCharger','brevoSauverReglages','chatAcChoisir','chatChangerStatut','chatColler','chatMode','chatOuvrirPiece','chatRTypesEditer','chatRTypesSupprimer','chatReactiverBot','chatRevueAjouterKb','chatRevueCharger','chatSurSaisie','chatTouchesSaisie','chatVue','closeDetail','closeMod','createFromDem','delDem','delMig','doAdminLogout','doAdminLogoutPartout','doLogin','doSaveLegal','editLegal','editUserId','emBasculer','emEditer','emSauver','emSupprimer','kbEditer','loadAppConfigEditor','loadSystemHealth','lxARCharger','lxARDetail','lxARTraiter','lxAlerteOuvrir','lxAnaCacheClear','lxAppliquerSiret','lxAsActionMenu','lxAsFiltres','lxAsRech','lxAsSelVider','lxAttEdOuvrir','lxAttEdVoir','lxAttRelanceBasculer','lxAutoFixPgrst','lxBandeauReplier','lxBasculerSuivant','lxBonsCharger','lxCdAccord','lxCdAnnuler','lxCdEnvoyer','lxCdOuvrir','lxCdPlus','lxChatCtx','lxChatFermer','lxChatFichiers','lxChatFiltre','lxChatOuvrirBoite','lxChatPlus','lxChatRechEffacer','lxChatRechEntree','lxChatRecharger','lxChatRetirerFichier','lxChatSalonRech','lxCloseErrorDetail','lxClotJour','lxClotPlus','lxClotSalon','lxContratHash','lxCopier','lxDesinsCharger','lxEmailStatsCharger','lxExportNf525','lxFermerSiFond','lxJF','lxJournalCharger','lxLienCopier','lxLienMail','lxLienMaj','lxMarkResolvedManual','lxMfaActiver','lxMfaBandeauReplier','lxMfaFermer','lxModeAvanceBasculer','lxOfferMonths','lxOuvrirDoc','lxOuvrirLien','lxPoserRendre','lxPushDisable','lxPushEnable','lxPushPlusTard','lxPushTest','lxPushToggleEtRendre','lxRaccourci','lxRechAller','lxRechSalon','lxRechercheOuvrir','lxRequestClaudeFix','lxRetentionLancer','lxRetirerId','lxRetirerProche','lxRgpdCharger','lxSaAction','lxSauvCharger','lxScDrag','lxScDragEnd','lxScDrop','lxScMove','lxScSurvol','lxSelectionner','lxSetGroupedPeriod','lxShowErrorDetail','lxSidebarBascule','lxSmsSimul','lxSnoozeSignature','lxSuiviEtape','lxSuiviRappelEffacer','lxTdbCharger','lxTdbPlusMemo','lxTdbRessayer','lxTestMigrationPush','lxToggle1000','lxVerifierSiret','nav','openChatConv','openD','rMonitoringRefresh','resetDocs','resetSmsCredits','resolveChatConv','saChargerOverview','saChargerSalon','saExportFactures','saForfait','saLienInscription','saRelancer','saRembourser','saRemise','saveAppConfig','saveFreePlan','saveNotes','sendChatMsg','showMigrationMessage','showSalonContrat','smsAjuster','smsBloquer','smsHistorique','smsSauverReglages','toggleDocLock','toggleDrawerFull','updDem','updMig','verifSalon','lxAller'].forEach(function(k){ LX_ACTIONS[k]=1; });
+var LX_SEULES=Object.create(null);
+['asAction','saRembourser','resetSmsCredits','lxSaAction','saveFreePlan','saRemise','saForfait','lxRetentionLancer','emSupprimer','delDem','delMig','lxExportNf525','doAdminLogoutPartout','smsAjuster','smsBloquer','addSmsCredits','addSmsCreditsCustom','lxOfferMonths','verifSalon','toggleDocLock','resetDocs','lxAppliquerSiret','doSaveLegal','editUserId','lxAsActionMenu','asGroupe','saExportFactures','lxMarkResolvedManual','lxARTraiter','chatRTypesSupprimer','kbEditer','saveAppConfig','annAction','updDem','updMig','createFromDem','asVoirApp'].forEach(function(k){ LX_SEULES[k]=1; });
 var _lxGramCache=Object.create(null);
 function lxGrammaire(code){
   if(_lxGramCache[code]) return _lxGramCache[code];
@@ -6154,6 +6157,9 @@ function lxGrammaire(code){
       else throw new Error('action non autorisée : '+nom); }
     blanc(); if(code[i]===';') i++;
   }
+  // contre-audit lot B (M2) : une action sensible doit être SEULE dans son attribut (aucun enchaînement possible)
+  var nbAppels=out.filter(function(x){ return x.k==='c'; }).length;
+  if(nbAppels>1&&out.some(function(x){ return x.k==='c'&&LX_SEULES[x.f]; })) throw new Error('action sensible enchaînée');
   _lxGramCache[code]=out; return out;
 }
 function lxExecuter(el,ev,code){

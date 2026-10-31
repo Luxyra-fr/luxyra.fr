@@ -277,7 +277,7 @@ const LX_ADMIN_CSP_STRICTE = [
   "img-src 'self' data: blob: https://luxyra.fr https://kxdgjtvrkwugbifgppai.supabase.co",
   "font-src 'self' https://luxyra.fr data:",
   "connect-src 'self' https://luxyra.fr https://kxdgjtvrkwugbifgppai.supabase.co wss://kxdgjtvrkwugbifgppai.supabase.co https://api.github.com",
-  "worker-src 'self'", "manifest-src 'self'", "frame-src 'self' blob: data:", "child-src 'self' blob:",
+  "worker-src 'self'", "manifest-src 'self'", "frame-src 'none'", "child-src 'self'",
   "object-src 'none'", "base-uri 'none'", "form-action 'self'", "frame-ancestors 'self'",
   "report-uri /api/admin/csp-rapport", "report-to lx-csp"
 ].join("; ");
@@ -301,7 +301,7 @@ function lxEntetesAdmin(resp, chemin) {
     h.set("Content-Security-Policy", (_ch.startsWith("/api/") && _ct.indexOf("application/json") < 0)
       ? "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data: https:" : (_legacy ? LX_ADMIN_CSP : LX_ADMIN_CSP_STRICTE));
     if (!_legacy) h.set("Reporting-Endpoints", 'lx-csp="/api/admin/csp-rapport"');
-    h.set("X-Frame-Options", "SAMEORIGIN"); // aperçus d'impression internes (iframes blob) = même origine
+    h.set("X-Frame-Options", "SAMEORIGIN"); // (contre-audit lot B, M3) aucun iframe dans l'administration : frame-src 'none' (aligné sur la balise meta)
     h.set("X-Content-Type-Options", "nosniff");
     h.set("Referrer-Policy", "no-referrer");
     h.set("X-Robots-Tag", "noindex, nofollow");
