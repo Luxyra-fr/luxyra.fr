@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Mon compte – Luxyra</title>
 <link rel="stylesheet" href="https://luxyra.fr/fonts/luxyra-fonts.css">
-<script src="/lx-client.js?v=20261030-1"></script>
+<script src="/lx-client.js?v=20261031-1"></script>
 <style>
 :root{--bg:#050508;--bg2:#0d0d14;--card:#12121c;--border:rgba(255,255,255,.06);--border2:rgba(255,255,255,.12);--text:#f5f5f7;--text2:#a0a0b0;--text3:#606070;--gold:#c8a84e;--gold-bg:rgba(200,168,78,.08);--gold2:rgba(200,168,78,.15);--green:#4ade80;--red:#f87171;--blue:#60a5fa;--orange:#fb923c;--r:14px;--f1:'DM Sans',sans-serif;--f2:'Playfair Display',serif}
 *{margin:0;padding:0;box-sizing:border-box}
@@ -216,27 +216,64 @@ window.RESET_TOKEN = (function(){ try { var p = new URLSearchParams(window.locat
 window.RESET_RETOUR = (function(){ try { var p = new URLSearchParams(window.location.search); var r = p.get("retour") || ""; var u = new URL(r); return (u.protocol==="https:" && (u.hostname==="luxyra.fr" || /\.luxyra\.fr$/.test(u.hostname))) ? u.toString() : ""; } catch(e){ return ""; } })();
 // 2026-10-14 : lien de confirmation de l'adresse email (?verif=...) — validé sans session (le jeton suffit)
 window.VERIF_TOKEN = (function(){ try { var p = new URLSearchParams(window.location.search); var t = p.get("verif") || ""; return /^[0-9a-f]{64}$/.test(t) ? t : null; } catch(e){ return null; } })();
+// 2026-10-31 (contre-audit 3, M1) : le lien seul ne confirme plus l'adresse. Le serveur exige d'être connecté à CE compte
+// sur cet appareil, ou le mot de passe du compte (page « verif »). Un compte créé par quelqu'un d'autre avec cette adresse
+// ne peut donc plus être confirmé par un simple clic du vrai titulaire de l'adresse.
+var _lxNormMail=function(m){ return String(m||"").trim().toLowerCase(); };
+var _lxCompteAvant=null; try{ _lxCompteAvant=localStorage.getItem("lx_account"); }catch(_eS){}
+function _lxApresVerif(res){
+  if(res && res.status===403 && res.data && res.data.besoin_mot_de_passe){ PAGE="verif"; render(); return; }
+  if(res && res.ok && res.data && res.data.session_token && res.data.user){
+    window.VERIF_TOKEN=null;
+    CLIENT=res.data.user; if(CLIENT.password_hash) delete CLIENT.password_hash; saveSession(); PAGE="dashboard";
+    window._lxVerifMsg={ok:true, t:"\u2705 Adresse email confirm\u00e9e : vos rendez-vous, tickets et points enregistr\u00e9s par vos \u00e9tablissements avec cette adresse sont maintenant visibles."};
+    try{ loadMyRdvs(); }catch(_e){}
+    render(); return;
+  }
+  // r\u00e9ponse d'un ancien serveur (sans jeton) : comportement d'avant
+  var mailVerifie=_lxNormMail(res&&res.data&&res.data.email);
+  var compteLocal=null; try{ compteLocal=_lxCompteAvant?JSON.parse(_lxCompteAvant):null; }catch(_eP){}
+  var mailLocal=_lxNormMail((CLIENT&&CLIENT.email)||(compteLocal&&compteLocal.email));
+  var memeCompte=!!(res&&res.ok&&mailVerifie&&mailLocal&&mailVerifie===mailLocal);
+  if(res&&res.ok&&!memeCompte){
+    try{ if(_lxCompteAvant!==null) localStorage.setItem("lx_account",_lxCompteAvant); else localStorage.removeItem("lx_account"); }catch(_eR){}
+  }
+  if(!res||!res.ok) window._lxVerifMsg={ok:false, t:(res&&res.data&&res.data.error)||"Lien invalide ou expir\u00e9."};
+  else if(memeCompte) window._lxVerifMsg={ok:true, t:"\u2705 Adresse email confirm\u00e9e : vos rendez-vous, tickets et points enregistr\u00e9s par vos \u00e9tablissements avec cette adresse sont maintenant visibles."};
+  else window._lxVerifMsg={ok:true, t:"Adresse email confirm\u00e9e. Connectez-vous avec le compte correspondant \u00e0 cette adresse pour retrouver vos rendez-vous."};
+  if(CLIENT && memeCompte){ CLIENT.email_verified=true; saveSession(); try{ loadMyRdvs(); }catch(_e){} }
+  if(PAGE==="verif") PAGE=CLIENT?"dashboard":"login";
+  window.VERIF_TOKEN=null;
+  render();
+}
 if(window.VERIF_TOKEN){
   try { history.replaceState({}, "", location.pathname); } catch(_eH) {}
-  // 2026-10-14 audit : le compte local (lx_account) n'est marqu\u00e9 \u00ab v\u00e9rifi\u00e9 \u00bb QUE si l'adresse confirm\u00e9e par le
-  // lien est celle du compte connect\u00e9 sur cet appareil (lien ouvert sur l'appareil d'un autre compte = on n'y touche pas).
-  var _lxNormMail=function(m){ return String(m||"").trim().toLowerCase(); };
-  var _lxCompteAvant=null; try{ _lxCompteAvant=localStorage.getItem("lx_account"); }catch(_eS){}
-  LX.verifyEmail(window.VERIF_TOKEN).then(function(res){
-    var mailVerifie=_lxNormMail(res&&res.data&&res.data.email);
-    var compteLocal=null; try{ compteLocal=_lxCompteAvant?JSON.parse(_lxCompteAvant):null; }catch(_eP){}
-    var mailLocal=_lxNormMail((CLIENT&&CLIENT.email)||(compteLocal&&compteLocal.email));
-    var memeCompte=!!(res&&res.ok&&mailVerifie&&mailLocal&&mailVerifie===mailLocal);
-    if(res&&res.ok&&!memeCompte){
-      // lx-client.js marque le compte local v\u00e9rifi\u00e9 sans comparer l'adresse : on r\u00e9tablit l'\u00e9tat d'avant.
-      try{ if(_lxCompteAvant!==null) localStorage.setItem("lx_account",_lxCompteAvant); else localStorage.removeItem("lx_account"); }catch(_eR){}
-    }
-    if(!res||!res.ok) window._lxVerifMsg={ok:false, t:(res&&res.data&&res.data.error)||"Lien invalide ou expir\u00e9."};
-    else if(memeCompte) window._lxVerifMsg={ok:true, t:"\u2705 Adresse email confirm\u00e9e : vos rendez-vous, tickets et points enregistr\u00e9s par vos \u00e9tablissements avec cette adresse sont maintenant visibles."};
-    else window._lxVerifMsg={ok:true, t:"Adresse email confirm\u00e9e. Connectez-vous avec le compte correspondant \u00e0 cette adresse pour retrouver vos rendez-vous."};
-    if(CLIENT && memeCompte){ CLIENT.email_verified=true; saveSession(); try{ loadMyRdvs(); }catch(_e){} }
-    render();
-  });
+  LX.verifyEmail(window.VERIF_TOKEN).then(_lxApresVerif);
+}
+function renderVerif(){
+  var h='<div class="auth-page"><div class="auth-card">';
+  h+='<h1>Confirmer votre adresse</h1>';
+  h+='<div class="sub">Pour votre s\u00e9curit\u00e9, saisissez le mot de passe de votre compte Luxyra pour confirmer cette adresse e-mail.</div>';
+  h+='<div class="err" id="verifErr"></div>';
+  h+='<div class="fg"><label>Mot de passe</label><input id="vPass" type="password" autocomplete="current-password" onkeydown="if(event.key===\'Enter\')doVerifMdp()"></div>';
+  h+='<button class="btn btn-gold" id="btnVerifMdp" onclick="doVerifMdp()">Confirmer mon adresse</button>';
+  h+='<div style="margin-top:18px;padding:12px 14px;border-radius:12px;border:1px solid rgba(248,113,113,.45);background:rgba(248,113,113,.06);font-size:13px;line-height:1.55;color:var(--text2)">';
+  h+='<b style="color:#ff8a80">Vous n\u2019avez pas cr\u00e9\u00e9 de compte Luxyra ?</b> Ne faites rien : rien ne sera reli\u00e9 \u00e0 votre adresse.<br>';
+  h+='<b>Ce compte est \u00e0 vous mais vous n\u2019avez pas (ou plus) le mot de passe ?</b> <a href="#" onclick="event.preventDefault();window.VERIF_TOKEN=null;PAGE=\'forgot\';render()">D\u00e9finir un mot de passe</a> : un lien vous sera envoy\u00e9 et tous les appareils connect\u00e9s \u00e0 ce compte seront d\u00e9connect\u00e9s.';
+  h+='</div>';
+  h+='<div style="text-align:center;margin-top:16px;font-size:14px"><a href="#" onclick="event.preventDefault();window.VERIF_TOKEN=null;PAGE=CLIENT?\'dashboard\':\'login\';render()">Annuler</a></div>';
+  h+='</div></div>';
+  return h;
+}
+async function doVerifMdp(){
+  var p=(document.getElementById("vPass")||{}).value||"";
+  if(!p){ showErr("verifErr","Saisissez votre mot de passe"); return; }
+  var b=document.getElementById("btnVerifMdp"); if(b){ b.disabled=true; b.textContent="V\u00e9rification\u2026"; }
+  var res=await LX.verifyEmail(window.VERIF_TOKEN, p);
+  if(b){ b.disabled=false; b.textContent="Confirmer mon adresse"; }
+  if(!res.ok && !(res.status===403)){ showErr("verifErr",(res.data&&res.data.error)||"Erreur, r\u00e9essayez"); if(res.status!==401&&res.status!==429) _lxApresVerif(res); return; }
+  if(res.status===403){ showErr("verifErr","Saisissez votre mot de passe"); return; }
+  _lxApresVerif(res);
 }
 if(window.RESET_TOKEN){
   PAGE = "reset";
@@ -277,6 +314,7 @@ function render(){
   else if(PAGE==="invite")h+=renderInvite();
   else if(PAGE==="forgot")h+=renderForgot();
   else if(PAGE==="reset")h+=renderReset();
+  else if(PAGE==="verif")h+=renderVerif();
   else if(PAGE==="dashboard")h+=renderDashboard();
   
   h+='<div class="footer">Luxyra \u00a9 2026 \u2014 Tous droits r\u00e9serv\u00e9s</div>';
