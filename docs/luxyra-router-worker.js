@@ -660,7 +660,22 @@ async function handleCreateCheckout(request, env) {
     {
       const _sal = await supabaseGet(env, salon_id);
       if (_sal && !String(_sal.siret || "").trim()) return jsonResponse({ error: "Ajoutez d'abord votre SIRET (Paramètres → Infos établissement) : il est obligatoire pour activer l'abonnement.", code: "siret_requis" }, 400);
+      // 2026-10-31 (contre-audit 4, B3) : jamais un 2e abonnement si un abonnement Stripe vivant (non programmé pour
+      // s'arrêter) existe déjà : le changement de forfait passe par /api/stripe/switch-plan.
+      if (_sal && _sal.stripe_subscription_id) {
+        const _sub = await stripeAPI(env, `subscriptions/${encodeURIComponent(_sal.stripe_subscription_id)}`, null, "GET");
+        if (_sub && !_sub.error && ["active", "trialing", "past_due", "unpaid", "incomplete"].includes(String(_sub.status)) && !_sub.cancel_at_period_end && !_sub.cancel_at) {
+          return jsonResponse({ error: "Vous avez déjà un abonnement Luxyra en cours. Pour changer de formule : Paramètres → « Changer de forfait » (en haut).", code: "abonnement_actif" }, 409);
+        }
+      }
     }
+    // 2026-10-31 (B3) : une seule session de paiement d'abonnement ouverte par établissement (deux onglets = deux paiements sinon)
+    try {
+      const _ouv = await stripeAPI(env, `checkout/sessions?customer=${encodeURIComponent(customerId)}&status=open&limit=20`, null, "GET");
+      for (const _cs of (_ouv && Array.isArray(_ouv.data) ? _ouv.data : [])) {
+        if (_cs && _cs.mode === "subscription" && _cs.metadata && _cs.metadata.salon_id === salon_id) await stripeAPI(env, `checkout/sessions/${encodeURIComponent(_cs.id)}/expire`, {}, "POST");
+      }
+    } catch (e) { console.warn("[create-checkout] expiration des sessions ouvertes:", e?.message); }
     let priceId = plan === "pro" ? CONFIG.PRICE_PRO : CONFIG.PRICE_ESSENTIAL;
     let isFounder = false;
     if (plan === "pro") {
@@ -3765,7 +3780,24 @@ async function updateSalonPlan(env, salonId, plan, subscriptionId, customerId) {
     if (salon && salon.stripe_subscription_id && salon.stripe_subscription_id !== subscriptionId) {
       console.log(`[updateSalonPlan] Annule l'ancienne sub ${salon.stripe_subscription_id} (remplacée par ${subscriptionId})`);
       try {
+        // 2026-10-31 (contre-audit 4, B3) : abonnement remplacé créé il y a MOINS de 24 h (double paiement, deux onglets) :
+        // sa facture payée est remboursée. Jamais pour un abonnement ancien (cas « résilié puis réabonné » : pas de remboursement).
+        let _ancien = null;
+        try { _ancien = await stripeAPI(env, `subscriptions/${encodeURIComponent(salon.stripe_subscription_id)}`, null, "GET"); } catch (_) {}
         await stripeAPI(env, `subscriptions/${salon.stripe_subscription_id}`, null, "DELETE");
+        if (_ancien && !_ancien.error && Number(_ancien.created) > 0 && (Date.now() / 1000 - Number(_ancien.created)) < 86400 && _ancien.latest_invoice) {
+          try {
+            const _inv = await stripeAPI(env, `invoices/${encodeURIComponent(String(_ancien.latest_invoice))}?expand[]=payments`, null, "GET");
+            const _pay = _inv && _inv.payments && Array.isArray(_inv.payments.data) && _inv.payments.data[0] && _inv.payments.data[0].payment;
+            const _pi = (_inv && _inv.payment_intent) || (_pay && _pay.payment_intent) || null;
+            const _ch = (_inv && _inv.charge) || (_pay && _pay.charge) || null;
+            if (_inv && !_inv.error && _inv.status === "paid" && Number(_inv.amount_paid) > 0 && (_pi || _ch)) {
+              const _ref = await stripeAPI(env, "refunds", _pi ? { payment_intent: String(_pi), reason: "duplicate", "metadata[salon_id]": salonId, "metadata[motif]": "abonnement_double" } : { charge: String(_ch), reason: "duplicate", "metadata[salon_id]": salonId, "metadata[motif]": "abonnement_double" }, "POST", null, "lx-abo-double-" + salon.stripe_subscription_id);
+              if (_ref && _ref.error) await reportWorkerError(env, "worker:abonnement-double", new Error("Remboursement de l'abonnement remplacé refusé : " + (_ref.error.message || "?")), { salon_id: salonId, ancien: salon.stripe_subscription_id }, "critical");
+              else await reportWorkerError(env, "worker:abonnement-double", new Error("Abonnement en double annulé et remboursé (" + (Number(_inv.amount_paid) / 100).toFixed(2) + " €)"), { salon_id: salonId, ancien: salon.stripe_subscription_id, nouveau: subscriptionId }, "warning");
+            }
+          } catch (eR) { await reportWorkerError(env, "worker:abonnement-double", eR, { salon_id: salonId, ancien: salon.stripe_subscription_id }, "critical"); }
+        }
       } catch (e) {
         console.warn(`[updateSalonPlan] Échec annulation ancienne sub ${salon.stripe_subscription_id}:`, e?.message);
         // On continue quand même, mais on log l'erreur. L'admin pourra annuler manuellement
@@ -3775,13 +3807,17 @@ async function updateSalonPlan(env, salonId, plan, subscriptionId, customerId) {
   } catch (e) {
     console.warn("[updateSalonPlan] Anti-double-facturation check failed:", e?.message);
   }
-  await supabaseUpdate(env, salonId, {
+  // 2026-10-31 (contre-audit 4, B4) : l'activation est vérifiée — payé mais resté suspendu = alerte critique
+  const _act = await supabaseUpdate(env, salonId, {
     plan,
     status: "active",
     stripe_subscription_id: subscriptionId,
     stripe_customer_id: customerId,
     past_due_since: null
-  });
+  }, true);
+  if (!_act || !_act.ok || !_act.n) {
+    await reportWorkerError(env, "worker:stripe-activation", new Error("Abonnement payé mais établissement NON activé (HTTP " + (_act && _act.status) + ") : " + String((_act && _act.texte) || "").slice(0, 300)), { salon_id: salonId, subscription: subscriptionId, plan }, "critical");
+  }
 }
 async function updateSalonStatus(env, salonId, status) { await supabaseUpdate(env, salonId, { status }); }
 
@@ -3791,12 +3827,17 @@ async function supabaseGet(env, salonId) {
   })).json();
   return data?.[0] || null;
 }
-async function supabaseUpdate(env, salonId, fields) {
-  await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salons?id=eq.${salonId}`, {
+async function supabaseUpdate(env, salonId, fields, verifier) {
+  const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salons?id=eq.${salonId}`, {
     method: "PATCH",
-    headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`, "Content-Type": "application/json", Prefer: "return=minimal" },
+    headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`, "Content-Type": "application/json", Prefer: verifier ? "return=representation" : "return=minimal" },
     body: JSON.stringify(fields),
   });
+  if (!verifier) return { ok: r.ok, status: r.status };
+  // 2026-10-31 (B4) : résultat vérifié (refus d'un déclencheur, ou aucune ligne modifiée)
+  const t = await r.text().catch(() => "");
+  let n = 0; try { const j = JSON.parse(t); n = Array.isArray(j) ? j.length : 0; } catch (_) {}
+  return { ok: r.ok, status: r.status, n, texte: r.ok ? "" : t };
 }
 // Helper: patch site_config (factored from repeated code)
 async function patchSiteConfig(env, salonId, fields) {

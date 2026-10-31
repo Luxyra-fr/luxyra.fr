@@ -413,12 +413,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261031-3"></script>
+<script src="luxyra-supabase.js?v=20261031-4"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261031-3";
+  var attendu="20261031-4";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -3081,7 +3081,8 @@ function checkCgvAndPay(plan){
 async function startCheckout(plan){
   if(lxPlay()){ lxPlayInfo("abo"); return; } // 2026-10-26 appli Google Play : aucun achat
   // 2026-10-11 (NF525) : en essai, le choix « tests / vraies ventes » doit être fait avant tout abonnement (tous les chemins)
-  try{ if(window.LX_MODE_CAISSE==="test" && !window._lxSalonSuspendu /* 31/10 : essai terminé -> paiement direct (l'app n'est pas chargée) */){ var _ov=document.querySelector(".upgrade-overlay"); if(_ov) _ov.remove(); lxPasserEnReel("plan:"+plan); return; } }catch(_eG){}
+  // 31/10 (contre-audit 4, B2) : y compris depuis l'écran de fin d'essai (établissement suspendu) : passage en caisse réelle obligatoire
+  try{ if(window.LX_MODE_CAISSE==="test"){ var _ov=document.querySelector(".upgrade-overlay"); if(_ov) _ov.remove(); lxPasserEnReel(window._lxSalonSuspendu?"":"plan:"+plan); return; } }catch(_eG){}
   // 2026-10-14 audit : anti double appui (deux sessions de paiement Stripe ouvertes pour un seul abonnement)
   if(window._lxCheckoutEnCours){ if(typeof toast==="function") toast("Paiement en cours de pr\u00e9paration\u2026","info"); return; }
   window._lxCheckoutEnCours=true;
@@ -3118,7 +3119,9 @@ async function startCheckout(plan){
       window.location.href=data.url;
     }else{
       console.error("[startCheckout] Worker error", data);
-      showAlert("Erreur : " + (data.error || "Impossible de créer la session de paiement"),"error");
+      // 31/10 (B1) : SIRET manquant sur l'écran de fin d'essai -> le champ SIRET est affiché sur place
+      if(data.code==="siret_requis" && window._lxSalonSuspendu && typeof showTrialExpiredScreen==="function"){ try{ SALON_CONFIG.siret=""; showTrialExpiredScreen({id:sid,nom:SALON_CONFIG.nom||""}); var _fs=document.getElementById("lxFinSiretInp"); if(_fs) _fs.focus(); }catch(_eS){} showAlert("Renseignez d\u2019abord votre num\u00e9ro SIRET (obligatoire pour activer l\u2019abonnement).","warning"); }
+      else showAlert((data.code==="abonnement_actif"?"":"Erreur : ") + (data.error || "Impossible de créer la session de paiement"),data.code==="abonnement_actif"?"info":"error");
       if(btn){btn.textContent="Passer en Pro →";btn.disabled=false;}
       _libere();
     }
