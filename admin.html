@@ -206,6 +206,11 @@ function _b64ToU8(b){b=(b+"=".repeat((4-b.length%4)%4)).replace(/-/g,"+").replac
 function _abToB64(a){if(!a)return null;var b="",u=new Uint8Array(a);for(var i=0;i<u.length;i++)b+=String.fromCharCode(u[i]);return btoa(b).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");}
 async function lxPushSupported(){return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;}
 async function lxPushEnable(){
+  if(window._lxPushEnCours) return false; // 31/10 : un double appui créait 2 abonnements en concurrence (lignes 57 et 58)
+  window._lxPushEnCours=true;
+  try{ return await _lxPushEnable(); } finally { window._lxPushEnCours=false; }
+}
+async function _lxPushEnable(){
   try{
     if(!await lxPushSupported()){alert("Les notifications ne sont pas disponibles sur ce navigateur. Sur iPhone : ajoutez d'abord l'admin à l'écran d'accueil et ouvrez-la depuis l'icône.");return false;}
     if(typeof toast==="function") toast("Activation des notifications…");
@@ -228,13 +233,44 @@ async function lxPushEnable(){
       last_used_at:new Date().toISOString()};
     var _up=await _sb.from("push_subscriptions").upsert(row,{onConflict:"endpoint"});
     if(_up&&_up.error){ alert("Enregistrement de l'appareil impossible : "+_up.error.message); return false; }
-    window._lxAdminPushOk=true;
+    window._lxAdminPushOk=true; window._lxAdminPushEndpoint=sub.endpoint;
+    try{ localStorage.removeItem("lx_admin_push_off"); }catch(_){}
     try{ await lxJournal("PUSH_APPAREIL_AJOUTE",{cible:"push_subscriptions",details:(navigator.userAgent||"").slice(0,120)}); }catch(_){}
     alert("✅ Notifications activées sur cet appareil.");
     if(typeof render==="function")render();
     return true;
   }catch(e){console.error("lxPushEnable",e);alert("Erreur activation push : "+e.message);return false;}
 }
+// 31/10/2026 : RÉPARATION AUTOMATIQUE. Constat en prod : l'abonnement du téléphone était bien enregistré (journal
+// PUSH_APPAREIL_AJOUTE, envoi réussi à 09:25) puis le service de push l'a déclaré « expiré » (HTTP 410) quelques heures
+// plus tard ; send-push le supprimait alors, et rien ne le recréait -> plus aucune notification, bandeau « Activer » à
+// nouveau. Désormais, à chaque ouverture de l'admin : si la permission est accordée, on vérifie que l'abonnement de CET
+// appareil existe ET figure en base ; sinon on le recrée et on l'enregistre, sans fenêtre ni message.
+async function lxPushAutoRepare(){
+  try{
+    if(!_sb||!_online||!_uid||!await lxPushSupported()) return;
+    if(Notification.permission!=="granted") return;
+    try{ if(localStorage.getItem("lx_admin_push_off")==="1") return; }catch(_){}
+    var reg=await navigator.serviceWorker.getRegistration("/admin/");
+    if(!reg){ reg=await navigator.serviceWorker.register("/admin/sw-admin.js",{scope:"/admin/"}); }
+    var _t0=Date.now(); while(!reg.active && Date.now()-_t0<8000){ await new Promise(function(r){setTimeout(r,250);}); }
+    if(!reg.active) return;
+    var sub=await reg.pushManager.getSubscription();
+    var enBase=false;
+    if(sub){ var q=await _sb.from("push_subscriptions").select("id").eq("endpoint",sub.endpoint).eq("target_type","admin").maybeSingle(); enBase=!!(q&&q.data); }
+    if(sub&&enBase){ window._lxAdminPushOk=true; window._lxAdminPushEndpoint=sub.endpoint; return; }
+    if(!sub) sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:_b64ToU8(VAPID_PUBLIC_KEY)});
+    var j=sub.toJSON();
+    var up=await _sb.from("push_subscriptions").upsert({target_type:"admin",admin_user_id:_uid,endpoint:sub.endpoint,p256dh:j.keys.p256dh,auth:j.keys.auth,
+      events_admin_reply:true,events_new_signup:true,events_critical:true,events_payment_failed:true,events_migration:true,last_used_at:new Date().toISOString()},{onConflict:"endpoint"});
+    if(up&&up.error){ console.warn("[push] réparation impossible",up.error.message); return; }
+    window._lxAdminPushOk=true; window._lxAdminPushEndpoint=sub.endpoint;
+    try{ await lxJournal("PUSH_APPAREIL_REPARE",{cible:"push_subscriptions",details:(navigator.userAgent||"").slice(0,120)}); }catch(_){}
+    if(typeof lxRenderPushDevices==="function") lxRenderPushDevices();
+  }catch(e){ console.warn("[push] réparation",e&&e.message); }
+}
+window.lxPushAutoRepare=lxPushAutoRepare;
+try{ if("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("message",function(ev){ if(ev&&ev.data&&ev.data.type==="lx-push-renouvele"){ setTimeout(lxPushAutoRepare,300); } }); }catch(_){}
 async function lxPushDisable(id){
   try{
     if(id){
@@ -246,6 +282,7 @@ async function lxPushDisable(id){
     else{
       var reg=await navigator.serviceWorker.getRegistration("/admin/"); // 2026-10-12 : celui des notifications admin (jamais celui de la caisse)
       var sub=reg&&await reg.pushManager.getSubscription();
+      try{ localStorage.setItem("lx_admin_push_off","1"); }catch(_){} // 31/10 : choix explicite -> pas de réparation automatique
       if(sub){await _sb.from("push_subscriptions").delete().eq("endpoint",sub.endpoint);await sub.unsubscribe();}
     }
     if(typeof render==="function")render();
@@ -264,7 +301,12 @@ async function lxPushTest(){
     var r=await fetch((window.SUPABASE_URL||"https://kxdgjtvrkwugbifgppai.supabase.co")+"/functions/v1/send-push",{
       method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+_jt,"apikey":SUPABASE_KEY},
       body:JSON.stringify({event_type:"chat",title:"🔔 Test Luxyra",body:"Notification push fonctionnelle ✓",url:"https://luxyra.fr/admin",target_user_id:_uid})});
-    var j=await r.json();alert("Envoyées: "+(j.sent||0)+" / Échecs: "+(j.failed||0)+" / Nettoyées: "+(j.cleaned||0));
+    var j=await r.json();
+    var msg="Notification de test envoyée à "+(j.sent||0)+" appareil(s)"+(j.failed?" · "+j.failed+" en échec":"")+(j.cleaned?" · "+j.cleaned+" abonnement(s) expiré(s) retiré(s)":"")+".";
+    msg+= window._lxAdminPushEndpoint ? "\n\nCet appareil est inscrit : la notification « 🔔 Test Luxyra » doit apparaître dans quelques secondes. Si rien n'apparaît, voir la marche à suivre dans l'aide (autorisations Android / économie de batterie)."
+                                      : "\n\nCet appareil n'est PAS inscrit : touchez « 📲 Activer cet appareil ».";
+    alert(msg);
+    if(j.cleaned && typeof lxPushAutoRepare==="function"){ setTimeout(lxPushAutoRepare,500); }
   }catch(e){alert("Erreur test : "+e.message);}
 }
 async function lxPushListDevices(){
@@ -274,14 +316,18 @@ async function lxPushListDevices(){
 async function lxRenderPushDevices(){
   var box=document.getElementById("pushDevicesBox");if(!box)return;
   var devs=await lxPushListDevices();
-  if(!devs.length){box.innerHTML='<div style="padding:10px;color:var(--text3)">Aucun appareil enregistré. Cliquez sur <b>Activer cet appareil</b> ci-dessous.</div>';return;}
+  var _ep=window._lxAdminPushEndpoint||null;
+  try{ if(!_ep && await lxPushSupported()){ var _rg=await navigator.serviceWorker.getRegistration("/admin/"); var _sb2=_rg&&await _rg.pushManager.getSubscription(); _ep=_sb2?_sb2.endpoint:null; } }catch(_){}
+  var _ceDev=_ep?devs.filter(function(d){return d.endpoint===_ep;})[0]:null;
+  var _etat='<div style="padding:8px 10px;margin-bottom:8px;border-radius:8px;font-size:12px;'+(_ceDev?'background:rgba(74,222,128,.1);color:#4ade80">✅ Cet appareil est inscrit depuis le '+new Date(_ceDev.created_at).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})+(_ceDev.last_used_at?' · dernière notification envoyée le '+new Date(_ceDev.last_used_at).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}):''):'background:rgba(248,113,113,.1);color:#f87171">❌ Cet appareil n’est pas inscrit (ou son abonnement a expiré) : touchez « 📲 Activer cet appareil ».')+'</div>';
+  if(!devs.length){box.innerHTML=_etat+'<div style="padding:10px;color:var(--text3)">Aucun appareil enregistré. Cliquez sur <b>Activer cet appareil</b> ci-dessous.</div>';return;}
   var EV=[["events_admin_reply","💬 Chat support"],["events_new_signup","📝 Inscriptions"],["events_critical","🚨 Erreurs / alertes"],["events_payment_failed","💳 Paiements"],["events_migration","📦 Migrations"]];
   var h="";
   devs.forEach(function(d){
     var last=d.last_used_at?new Date(d.last_used_at).toLocaleDateString("fr-FR"):"jamais";
     h+='<div style="padding:10px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px">'
       +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'
-      +'<div style="font-weight:700">'+lxPushNomAppareil(d)+'</div>'
+      +'<div style="font-weight:700">'+lxPushNomAppareil(d)+(_ep&&d.endpoint===_ep?' <span style="font-size:11px;color:#4ade80">· cet appareil</span>':'')+'</div>'
       +'<button class="tb-btn" style="padding:4px 10px;font-size:11px;color:var(--red)" onclick="lxPushDisable(\''+saJs(d.id)+'\')">✖ Retirer</button>'
       +'</div>'
       +'<div style="font-size:11px;color:var(--text3);margin-bottom:8px">Enregistré le '+(d.created_at?new Date(d.created_at).toLocaleDateString("fr-FR"):"?")+' · dernière activité : '+last+'</div>'
@@ -293,7 +339,7 @@ async function lxRenderPushDevices(){
     });
     h+='</div></div>';
   });
-  box.innerHTML=h;
+  box.innerHTML=_etat+h;
 }
 // Nom lisible d'un appareil d'après son service de push (aucune donnée de l'appareil n'est stockée en plus)
 function lxPushNomAppareil(d){
@@ -686,6 +732,7 @@ window.addEventListener('popstate', function(e){
   nav(s.tab||p.get('tab')||'tableau', s.sub||p.get('sub')||null, true);
 });
 function bootRoute(){
+  setTimeout(function(){ try{ lxPushAutoRepare(); }catch(_){} }, 2500); // 31/10 : abonnement push de cet appareil recréé s'il a expiré
   var p=new URLSearchParams(location.search);
   var t=p.get('tab'), s=p.get('sub')||null;
   // anciens liens des notifications : /admin.html#stripe, #sms
