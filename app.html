@@ -407,7 +407,7 @@ if(window._lxDemo && !window._lxDemoTables){
 }
 </script>
 <script src="lx-qrcode.js"></script>
-<script src="lx-bon-cadeau.js?v=20261031-4"></script>
+<script src="lx-bon-cadeau.js?v=20261031-5"></script>
 <script src="lx-nf525-attestation.js?v=20261010-06"></script>
 <!-- luxyra-supabase.js : tag <script src> classique qui bloque nativement le parsing
      HTML (nécessaire pour que checkSession() soit défini AVANT tout inline script de
@@ -24169,17 +24169,22 @@ async function lxBonEcarteEnvoyer(gcId){
   if(!/^[a-z0-9._%+'-]+@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,24}$/.test(to)){ showAlert("Adresse e-mail invalide.","warning"); return; }
   if(window._lxDemo){ showAlert("Démonstration : l’e-carte n’est pas envoyée (rien ne part en mode démo).","info"); return; }
   var bt=document.getElementById("lxEcBtn"); if(bt){ bt.disabled=true; bt.textContent="Envoi…"; }
-  var m=lxBonModele()||"maison", o=_lxBonEcarteDonnees(g);
-  var html=LXBon.emailDocument(m,o);
-  // anti-doublon : un même bon n'est envoyé qu'une fois par adresse et par jour (multi-appareils)
-  var r=await sendEmailViaWorker(to,"", "Votre carte cadeau "+(SALON_CONFIG.nom||"")+" — "+String(Number(g.val).toFixed(2)).replace(".",",")+" €", html, {context:"bon_ecarte", dedupKey:(_salonId||"")+"|ecarte|"+g.code+"|"+to+"|"+new Date().toISOString().slice(0,10)});
+  // 31/10 (-3, contre-audit R1) : route dédiée — le serveur relit le bon (actif, solde, payé, non expiré), construit lui-même
+  // l'e-mail (aucun HTML envoyé par le navigateur), applique un plafond quotidien et l'anti-doublon (clé hachée).
+  var r=null;
+  try{
+    var resp=await fetch("/api/bons/ecarte",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({salon_id:(typeof _salonId!=="undefined"&&_salonId)||"",bon_id:g.id,to:to})});
+    var d={}; try{ d=await resp.json(); }catch(_eJ){}
+    r={ok:resp.ok&&d.success===true,deduplique:!!d.deduplique,error:d.error||("HTTP "+resp.status),status:resp.status};
+  }catch(_eF){ r={ok:false,error:"erreur réseau"}; }
   if(r&&r.ok){
     try{ if(typeof auditLog==="function") auditLog("BON_ECARTE","E-carte du bon "+g.code+" envoyée à "+to.replace(/^(.).*(@.*)$/,"$1***$2")); }catch(_){}
     if(typeof cM==="function") cM();
     showAlert(r.deduplique?"Cette e-carte a déjà été envoyée aujourd’hui à cette adresse.":"E-carte envoyée à "+to+".", r.deduplique?"info":"success");
   } else {
     if(bt){ bt.disabled=false; bt.textContent="Envoyer"; }
-    showAlert("Envoi impossible : "+((r&&r.error)||"erreur réseau")+".","error");
+    var _msg=(r&&r.status===404)?"Bon introuvable sur le serveur (vente pas encore synchronisée ?). Réessayez dans un instant.":((r&&r.error)||"erreur réseau");
+    showAlert("Envoi impossible : "+_msg.replace(/\.$/,"")+".","error");
   }
 }
 function lxBonPartager(gcId){

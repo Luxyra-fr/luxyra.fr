@@ -1,6 +1,9 @@
 // 2026-10-28 (-3) : générateur de QR codes (qrcode-generator, MIT — même fichier que l'application, lx-qrcode.js) pour
 // /api/qr (QR des e-mails de bons cadeaux, sans service tiers). wrangler regroupe ce module au déploiement.
 import lxQrcode from "../lx-qrcode.js";
+// 2026-10-31 (-3, contre-audit bons v2 R1) : rendu de l'e-carte côté serveur (même module que l'application ; présentation
+// uniquement, sans DOM au chargement) -> globalThis.LXBon.emailDocument. wrangler regroupe ce fichier au déploiement.
+import "../lx-bon-cadeau.js";
 // ============================================================
 // LUXYRA WORKER — Cloudflare Worker
 // Gère : Stripe, Brevo Email/SMS, Clean URLs, Subdomains, SMS Native Link, Slugs salons
@@ -126,6 +129,8 @@ async function __wrappedApiHandler(request, url, env) {
       // Endpoint /health (GET) — monitoring externe
       if (url.pathname === "/health" || url.pathname === "/api/health") return await handleHealth(request, env);
       if (url.pathname === "/api/qr" && request.method === "GET") return handleQr(url); // 2026-10-28 (-3)
+      if (url.pathname.startsWith("/api/qr/t/") && request.method === "GET") return await handleQrJeton(url, env); // 2026-10-31 (-3) R3
+      if (url.pathname === "/api/bons/ecarte" && request.method === "POST") return await handleBonEcarte(request, env); // 2026-10-31 (-3) R1
       if (url.pathname === "/api/stripe/create-checkout" && request.method === "POST") return await handleCreateCheckout(request, env);
       if (url.pathname === "/api/stripe/webhook" && request.method === "POST") return await handleWebhook(request, env);
       if (url.pathname === "/api/siret" && request.method === "GET") return await handleSiret(request, env);
@@ -1489,6 +1494,128 @@ function handleQr(url) {
     const bin = atob(b64); const out = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
     return new Response(out, { status: 200, headers: { "Content-Type": "image/gif", "Cache-Control": "public, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff" } });
   } catch (e) { return new Response("QR : erreur", { status: 500, headers: { "Content-Type": "text/plain; charset=utf-8" } }); }
+}
+
+// 2026-10-31 (-3, contre-audit bons v2 R3) — GET /api/qr/t/<jeton> : QR d'un bon par jeton opaque (lx_prive.qr_jetons) ;
+// le code du bon n'apparaît plus dans l'URL de l'image (journaux, proxys d'images, caches partagés). Cache privé.
+async function lxRpc(env, nom, args) {
+  const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/${nom}`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify(args || {}) });
+  if (!r.ok) throw new Error(`rpc ${nom} HTTP ${r.status}`);
+  return await r.json();
+}
+async function lxQrJetonUrl(env, code, salonId) {
+  try { const j = await lxRpc(env, "lx_qr_jeton", { p_code: String(code || ""), p_salon: salonId || null }); return (typeof j === "string" && /^[A-Za-z0-9_-]{24}$/.test(j)) ? `https://luxyra.fr/api/qr/t/${j}` : ""; }
+  catch (e) { return ""; }
+}
+async function handleQrJeton(url, env) {
+  const t = url.pathname.slice("/api/qr/t/".length);
+  const non = (st, m) => new Response(m, { status: st, headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" } });
+  if (!/^[A-Za-z0-9_-]{24}$/.test(t)) return non(400, "QR : jeton invalide");
+  let code = null;
+  try { code = await lxRpc(env, "lx_qr_resoudre", { p_jeton: t }); } catch (e) { return non(503, "QR : indisponible"); }
+  if (typeof code !== "string" || !/^[A-Za-z0-9._-]{1,64}$/.test(code)) return non(404, "QR : inconnu");
+  const u = new URL("https://luxyra.fr/api/qr"); u.searchParams.set("d", code); u.searchParams.set("s", url.searchParams.get("s") || "160");
+  const r = handleQr(u);
+  if (r.status !== 200) return r;
+  return new Response(r.body, { status: 200, headers: { "Content-Type": "image/gif", "Cache-Control": "private, max-age=86400", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer" } });
+}
+
+// 2026-10-31 (-3) — quota quotidien PERSISTANT par établissement (lx_prive.envois_quota, RPC lx_envoi_quota, service_role)
+async function lxQuotaJour(env, id, type, max) {
+  try { const ok = await lxRpc(env, "lx_envoi_quota", { p_salon: id, p_type: type, p_max: max }); return ok === true ? true : (ok === false ? false : null); }
+  catch (e) { console.warn("[quota]", e && e.message); return null; } // null = quota indisponible (l'appelant décide)
+}
+async function lxConfigNombre(env, cle, defaut) {
+  try {
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/app_config?id=eq.1&select=config`, { headers: _sbHeaders(env) });
+    const a = r.ok ? await r.json() : []; const v = a && a[0] && a[0].config ? Number(a[0].config[cle]) : NaN;
+    return (isFinite(v) && v > 0) ? Math.floor(v) : defaut;
+  } catch (e) { return defaut; }
+}
+
+// ============================================================
+// 2026-10-31 (-3, contre-audit bons v2 R1) — POST /api/bons/ecarte {salon_id, bon_id, to}
+// E-carte d'un bon vendu en caisse : propriétaire de l'établissement uniquement ; le bon est RELU ici (établissement de
+// l'appelant, actif, solde > 0, payé, non expiré) et l'e-mail est CONSTRUIT ici (aucun HTML venant du navigateur) ;
+// plafond quotidien persistant par établissement ; anti-doublon (1 envoi / bon / adresse / jour, clé hachée).
+// Présentation uniquement : aucun montant, code, ticket ni TVA n'est modifié.
+// ============================================================
+function lxBonMentionTvaCaisse(b, tauxSalon) {
+  // identique à _lxBonMentionTva (app.html) avec le chargement du bon (luxyra-supabase.js : tvaRate BUM = 0, sinon tva_rate || 0,20)
+  const u = (b && (b.usage_tva || (b.qualif_tva && b.qualif_tva.usage))) || null;
+  const rate = (u === "BUM") ? 0 : (Number(b && b.tva_rate) || 0.20);
+  const tx = rate * 100;
+  let t = (tx <= 0) ? "TVA non applicable, art. 293 B du CGI" : ("TVA " + String(Math.round(tx * 10) / 10).replace(".", ",") + " % incluse");
+  if (u === "BUM") t = "Bon \u00e0 usage multiple \u2013 TVA exigible \u00e0 l\u2019utilisation (CGI art. 256 ter)";
+  if (b && (b.is_offert === true || b.pay_method === "Offert")) t = "Bon offert \u00e0 titre gracieux \u00b7 " + t;
+  return t;
+}
+async function handleBonEcarte(request, env) {
+  try {
+    if (await lxIsInternal(request, env)) return jsonResponse({ error: "Réservé à l'établissement" }, 403);
+    const u = await lxAuthUser(request);
+    if (!u) return jsonResponse({ error: "Authentification requise" }, 401);
+    const b = await readJsonBody(request);
+    const salonId = String(b.salon_id || ""), bonId = String(b.bon_id || "");
+    const to = String(b.to || "").trim().toLowerCase();
+    if (!/^[0-9a-f-]{36}$/i.test(salonId) || !/^[0-9a-f-]{36}$/i.test(bonId)) return jsonResponse({ error: "Paramètres invalides" }, 400);
+    if (to.length > 200 || !/^[a-z0-9._%+'-]+@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,24}$/.test(to)) return jsonResponse({ error: "Adresse e-mail invalide" }, 400);
+    if (!(await lxOwnsSalon(env, u.id, salonId))) return jsonResponse({ error: "Accès refusé" }, 403);
+    if (!checkRateLimit("bon_ecarte_u:" + u.id, 10)) return jsonResponse({ error: "Trop de requêtes. Réessayez dans 1 minute." }, 429);
+    // bon relu côté serveur
+    const rb = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/cartes_cadeaux?select=id,salon_id,code,valeur,restant,status,payment_status,date_expiration,de,pour,message,theme_id,scope,usage_tva,qualif_tva,tva_rate,is_offert,pay_method,tk_num&id=eq.${encodeURIComponent(bonId)}&salon_id=eq.${encodeURIComponent(salonId)}&limit=1`, { headers: _sbHeaders(env) });
+    const ab = rb.ok ? await rb.json() : [];
+    const bon = Array.isArray(ab) ? ab[0] : null;
+    if (!bon) return jsonResponse({ error: "Bon introuvable" }, 404);
+    if (bon.status !== "active") return jsonResponse({ error: "Ce bon n’est plus actif (annulé ou utilisé) : l’e-carte ne peut pas être envoyée.", code: "inactif" }, 409);
+    if (!(Number(bon.restant) > 0.004)) return jsonResponse({ error: "Ce bon est entièrement utilisé.", code: "epuise" }, 409);
+    if (bon.payment_status && bon.payment_status !== "paid") return jsonResponse({ error: "Ce bon n’est pas payé.", code: "non_paye" }, 409);
+    const auj = new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Paris" });
+    if (bon.date_expiration && String(bon.date_expiration).slice(0, 10) < auj) return jsonResponse({ error: "Ce bon est expiré.", code: "expire" }, 409);
+    if (!/^[A-Za-z0-9._-]{1,64}$/.test(String(bon.code || ""))) return jsonResponse({ error: "Code du bon invalide" }, 409);
+    // établissement (sa propre fiche, clé service)
+    const rs = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salons?select=id,nom,sous_titre,adresse,cp,ville,tel,logo,couleur_primaire,siret,taux_tva,email,config_json,ferme_le&id=eq.${encodeURIComponent(salonId)}&limit=1`, { headers: _sbHeaders(env) });
+    const as = rs.ok ? await rs.json() : [];
+    const sal = Array.isArray(as) ? as[0] : null;
+    if (!sal || sal.ferme_le) return jsonResponse({ error: "Établissement introuvable" }, 404);
+    let cfg = sal.config_json; if (typeof cfg === "string") { try { cfg = JSON.parse(cfg); } catch (_) { cfg = null; } }
+    const LXB = globalThis.LXBon;
+    const modele = LXB && LXB.modeleValide ? LXB.modeleValide(cfg && cfg.bonModele) : "";
+    if (!modele || !LXB.emailDocument) return jsonResponse({ error: "Choisissez d’abord un modèle de bon (Bons cadeaux › Modèle des bons).", code: "sans_modele" }, 409);
+    // plafond quotidien par établissement (persistant)
+    const maxJour = await lxConfigNombre(env, "bon_ecarte_max_jour", 50);
+    const q = await lxQuotaJour(env, salonId, "bon_ecarte", maxJour);
+    if (q !== true) return jsonResponse({ error: q === false ? `Limite atteinte : ${maxJour} e-cartes par jour pour un établissement. Réessayez demain.` : "Envoi momentanément indisponible. Réessayez dans une minute.", code: q === false ? "quota" : "quota_indispo" }, q === false ? 429 : 503);
+    const dateExp = bon.date_expiration ? new Date(String(bon.date_expiration).slice(0, 10) + "T12:00:00Z").toLocaleDateString("fr-FR", { timeZone: "Europe/Paris" }) : "";
+    const perimetre = bon.scope === "prestations" ? "Prestations" : (bon.scope === "produits" ? "Produits" : "Prestations et produits");
+    const qrUrl = await lxQrJetonUrl(env, bon.code, salonId);
+    const o = {
+      nom: sal.nom || "", sous: sal.sous_titre || "", logo: (/^https:\/\/[^\s"'<>]+$/i.test(String(sal.logo || "")) ? sal.logo : ""),
+      occasion: (LXB.occasionDepuisTheme && bon.theme_id) ? (LXB.occasionDepuisTheme(bon.theme_id) || "") : "",
+      pour: bon.pour || "", de: bon.de || "", msg: (bon.message && bon.message !== "Bon offert") ? bon.message : "", valeur: Number(bon.valeur) || 0, code: bon.code,
+      dateExp, perimetre, mentionTva: lxBonMentionTvaCaisse(bon, sal.taux_tva), tkNum: bon.tk_num || null,
+      couleur: sal.couleur_primaire || "#c8a84e", palette: (LXB.paletteValide ? LXB.paletteValide(cfg && cfg.bonPalette) : ""),
+      adresse: [sal.adresse, [sal.cp, sal.ville].filter(Boolean).join(" ")].filter(Boolean).join(" "), tel: sal.tel || "", siret: sal.siret || "",
+      intro: "Bonjour,\nvoici votre carte cadeau " + (sal.nom || "") + ". Présentez-la sur place, sur papier ou sur votre téléphone.",
+      qrUrl
+    };
+    const html = LXB.emailDocument(modele, o);
+    const val = (Number(bon.valeur) || 0).toFixed(2).replace(".", ",");
+    const subject = `Votre carte cadeau ${sal.nom || ""} — ${val} €`;
+    const texte = `Bonjour,\n\nVoici votre carte cadeau ${sal.nom || ""} : ${val} €.\nCode : ${bon.code}${dateExp ? `\nValable jusqu'au ${dateExp}` : ""}\nÀ présenter sur place, sur papier ou sur votre téléphone.\n\n${sal.nom || ""}`;
+    // anti-doublon : 1 envoi par bon, adresse et jour (clé HACHÉE : ni code ni adresse en clair dans messaging_log.dedup_key)
+    const h = (await lxSha256Hex(String(bon.code) + "|" + to)).slice(0, 40);
+    const res = await lxEmailReserver(env, { salonId, to, toName: "", subject, html, context: "bon_ecarte", dedupKey: `${salonId}|ecarte|${h}|${auj}` });
+    if (res.doublon) return jsonResponse({ success: true, deduplique: true });
+    let result;
+    try { result = await brevoSendEmail(env, { to, toName: "", senderName: sal.nom || "Luxyra", senderEmail: "contact@luxyra.fr", replyTo: sal.email || undefined, subject, htmlContent: html, textContent: texte, attachment: null, headers: null }); }
+    catch (e) { await lxEmailLiberer(env, res.cle); throw e; }
+    if (result && (result.code || result.message)) { await lxEmailLiberer(env, res.cle); return jsonResponse({ success: false, error: "Envoi refusé par le service d’e-mail" }, 502); }
+    return jsonResponse({ success: true, messageId: result && result.messageId });
+  } catch (e) {
+    await reportWorkerError(env, "worker:bons-ecarte", e, {}, "error");
+    return jsonResponse({ error: "Erreur serveur" }, 500);
+  }
 }
 
 // ============================================================
@@ -4692,6 +4819,20 @@ async function handleEmailCustom(request, env) {
   }
   if (_acces.user && !checkRateLimit("email_custom_u:" + _acces.user.id, 30)) return jsonResponse({ error: "Trop de requêtes. Réessayez dans 1 minute." }, 429);
   const _corps = await request.json();
+  // 2026-10-31 (-3, contre-audit bons v2 R1) : plafond QUOTIDIEN PERSISTANT par établissement (ou par compte sans
+  // établissement) pour les envois depuis le navigateur — protège la réputation de l'expéditeur Brevo. Usage réel
+  // relevé sur 30 jours : 5 e-mails/jour au plus par établissement ; plus grosse base clients avec e-mail : 75.
+  // Valeur réglable : app_config.config.email_custom_max_jour (défaut 500). Quota indisponible : envoi autorisé
+  // (rappels de RDV jamais bloqués par une panne du compteur), alerte journalisée.
+  if (_acces.ok && !_acces.internal && _acces.user && !lxIsAdminUser(_acces.user)) {
+    const _idQuota = (await lxEmailSalonAppelant(env, _acces, _corps.salon_id)) || _acces.user.id;
+    const _maxJ = await lxConfigNombre(env, "email_custom_max_jour", 500);
+    const _q = await lxQuotaJour(env, _idQuota, "email_custom", _maxJ);
+    if (_q === false) {
+      try { await reportWorkerError(env, "worker:email-quota", new Error(`plafond quotidien atteint (${_maxJ})`), { salon: String(_idQuota).slice(0, 8) }, "warning"); } catch (_) {}
+      return jsonResponse({ success: false, error: `Limite quotidienne d'e-mails atteinte (${_maxJ}). Réessayez demain ou contactez Luxyra.`, code: "quota_jour" }, 429);
+    }
+  }
   const { to, toName, salonName, salonEmail, subject, htmlContent, textContent } = _corps;
   if (!to || !subject) return jsonResponse({ error: "to et subject requis" }, 400);
   // 2026-10-15 : anti-doublon multi-appareils (voir lxEmailReserver). Appels serveur : déjà réservés en base.

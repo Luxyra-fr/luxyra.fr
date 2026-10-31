@@ -73,7 +73,9 @@
     var serif = "'Cormorant Garamond',Georgia,'Times New Roman',serif", sans = (modele === "ecrin" ? "'DM Sans'," : "Inter,") + "Arial,Helvetica,sans-serif";
     var msg = o.msg && o.msg !== "Bon offert" ? E(o.msg) : "";
     var mt = lxbMontant(o.valeur), code = String(o.code || "");
-    var qr = "https://luxyra.fr/api/qr?d=" + encodeURIComponent(code) + "&s=160";
+    // 31/10 (-3, contre-audit R3) : QR par jeton opaque (le code du bon ne passe plus dans l'URL de l'image) quand l'appelant
+    // (worker / edge) en fournit un ; sinon ancienne URL (compatibilité).
+    var qr = (typeof o.qrUrl === "string" && /^https:\/\/luxyra\.fr\/api\/qr\/t\/[A-Za-z0-9_-]{24}$/.test(o.qrUrl)) ? o.qrUrl : "https://luxyra.fr/api/qr?d=" + encodeURIComponent(code) + "&s=160";
     var carte;
     if (modele === "maison") {
       carte = '<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;background:' + p.paperA + ';border:2px solid ' + p.accent + '">' +
@@ -335,9 +337,9 @@
       corps = '<div class="feuille a4 centre"><div class="zone ' + (paysage ? "z6p" : "z6") + '">' + a6(modele, bon, etab, { mm: "1mm" }) + coins + "</div>" +
         '<div class="aide bas">Découpez le long des repères : la carte fait ' + (paysage ? "148 × 105" : "105 × 148") + ' mm (format A6, se glisse dans une enveloppe C6). Papier conseillé : 200 à 300 g.</div></div>';
     } else if (format === "pleine") {
-      // 31/10 (-2) : bon pleine page A4 (même dessin que l'A6, à l'échelle 2)
+      // 31/10 (-3, R2) : bon pleine page A4 (même dessin que l'A6, échelle 1,85 = 194 × 274 mm, centré : marges non imprimables respectées)
       page = "@page{size:A4 " + (paysage ? "landscape" : "portrait") + ";margin:0}";
-      corps = '<div class="feuille ' + (paysage ? "a4l" : "a4") + ' pleine">' + a6(modele, bon, etab, { mm: "2mm" }) + "</div>";
+      corps = '<div class="feuille ' + (paysage ? "a4l" : "a4") + ' pleine">' + a6(modele, bon, etab, { mm: "1.85mm" }) + "</div>";
     } else if (format === "plie") {
       // 31/10 (-2) : A4 plié en deux (impression recto simple) : en haut la face avant, en bas le dos imprimé à l'envers ;
       // on plie la moitié basse vers l'arrière, puis on découpe les deux épaisseurs ensemble le long des repères.
@@ -361,9 +363,9 @@
       ".barre{position:sticky;top:0;z-index:5;background:#1c1a17;color:#fff;padding:10px 14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:13px}" +
       ".barre button{border:0;border-radius:8px;padding:9px 16px;font:600 13px Inter,Arial,sans-serif;cursor:pointer;background:#fff;color:#1c1a17}" +
       ".feuille{box-sizing:border-box;background:#fff;margin:18px auto;box-shadow:0 4px 24px rgba(0,0,0,.18);position:relative;overflow:hidden}" +
-      ".feuille.a4{width:210mm;height:297mm;padding-top:30mm}" +
+      ".feuille.a4{width:210mm;height:296.5mm;padding-top:30mm;page-break-after:avoid;break-after:avoid}" +
       ".feuille.a6{width:fit-content}" +
-      ".feuille.a4l{width:297mm;height:210mm}" +
+      ".feuille.a4l{width:297mm;height:209.5mm;page-break-after:avoid;break-after:avoid}" +
       ".feuille.pleine{padding:0;display:flex;align-items:center;justify-content:center}" +
       ".feuille.centre{padding:0;display:flex;flex-direction:column;align-items:center;justify-content:center}" +
       ".zone{position:relative}.zone.z6{width:105mm;height:148mm}.zone.z6p{width:148mm;height:105mm}.zone.zc{width:178.5mm;height:115.5mm}" +
@@ -425,7 +427,7 @@
   }
 
   g.LXBon = {
-    version: "20261031-4", MODELES: MODELES, OCCASIONS: OCCASIONS,
+    version: "20261031-5", MODELES: MODELES, OCCASIONS: OCCASIONS,
     modeleValide: modeleValide, palette: palette, contraste: contraste, css: css, poserCss: poserCss,
     carte: carte, a6: a6, documentImpression: documentImpression, imprimer: imprimer,
     occasionDepuisTheme: occasionDepuisTheme, qrSvg: qrSvg, esc: esc,

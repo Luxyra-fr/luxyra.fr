@@ -1,3 +1,6 @@
+// gc-stripe-webhook v15 — 2026-10-31 (-3, contre-audit bons v2 R3) : QR de l'e-carte par jeton opaque (RPC lx_qr_jeton,
+//    image https://luxyra.fr/api/qr/t/<jeton>) : le code du bon ne passe plus dans l'URL de l'image ; repli sur l'ancienne URL si
+//    le jeton est indisponible. Bloc commun resynchronisé. Paiement, montants, codes, ticket, mention TVA : INCHANGÉS. verify_jwt = false.
 // gc-stripe-webhook v14 — 2026-10-31 (-2) : e-carte = bloc commun de lx-bon-cadeau.js (copie exacte, docs/bons_1031/sync_partage.mjs) :
 //    palettes au choix (config_json.bonPalette), code du bon sur sa propre ligne (jamais coupé), logo sans pastille, échappement
 //    des guillemets (R5), logo https uniquement. Paiement, montants, codes, ticket, mention TVA : INCHANGÉS. verify_jwt = false.
@@ -217,7 +220,9 @@ function qrUrl(code:string){ return `https://luxyra.fr/api/qr?d=${encodeURICompo
     var serif = "'Cormorant Garamond',Georgia,'Times New Roman',serif", sans = (modele === "ecrin" ? "'DM Sans'," : "Inter,") + "Arial,Helvetica,sans-serif";
     var msg = o.msg && o.msg !== "Bon offert" ? E(o.msg) : "";
     var mt = lxbMontant(o.valeur), code = String(o.code || "");
-    var qr = "https://luxyra.fr/api/qr?d=" + encodeURIComponent(code) + "&s=160";
+    // 31/10 (-3, contre-audit R3) : QR par jeton opaque (le code du bon ne passe plus dans l'URL de l'image) quand l'appelant
+    // (worker / edge) en fournit un ; sinon ancienne URL (compatibilité).
+    var qr = (typeof o.qrUrl === "string" && /^https:\/\/luxyra\.fr\/api\/qr\/t\/[A-Za-z0-9_-]{24}$/.test(o.qrUrl)) ? o.qrUrl : "https://luxyra.fr/api/qr?d=" + encodeURIComponent(code) + "&s=160";
     var carte;
     if (modele === "maison") {
       carte = '<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;background:' + p.paperA + ';border:2px solid ' + p.accent + '">' +
@@ -272,17 +277,17 @@ function qrUrl(code:string){ return `https://luxyra.fr/api/qr?d=${encodeURICompo
   var LXB_EMAIL_POLICES = "<style>@font-face{font-family:'Cormorant Garamond';font-style:normal;font-weight:300;src:url(https://luxyra.fr/fonts/cormorant-garamond-latin-300-normal.woff2) format('woff2')}@font-face{font-family:'Cormorant Garamond';font-style:italic;font-weight:400;src:url(https://luxyra.fr/fonts/cormorant-garamond-latin-400-italic.woff2) format('woff2')}@font-face{font-family:'Cormorant Garamond';font-style:normal;font-weight:400;src:url(https://luxyra.fr/fonts/cormorant-garamond-latin-400-normal.woff2) format('woff2')}</style>";
   /*LXB-PARTAGE>>*/
 export const LX_OCCASIONS: Record<string,string> = { anniversaire:"Joyeux anniversaire", noel:"Joyeux Noël", feteMeres:"Bonne fête maman", stValentin:"Avec tout mon amour", roseGold:"Merci" };
-export function buildBonHTMLModele(modele: "maison"|"ecrin", opts: { themeId:string; salonNom:string; salonSous?:string; salonAddr:string; salonTel:string; logoUrl:string|null; couleur?:string|null; palette?:string|null; valeur:number; code:string; de:string; pour:string; message:string; dateExp:string; siret?:string; mentionTva:string; perimetre:string; tkNum?:number|null }): string {
+export function buildBonHTMLModele(modele: "maison"|"ecrin", opts: { themeId:string; salonNom:string; salonSous?:string; salonAddr:string; salonTel:string; logoUrl:string|null; couleur?:string|null; palette?:string|null; qrUrl?:string; valeur:number; code:string; de:string; pour:string; message:string; dateExp:string; siret?:string; mentionTva:string; perimetre:string; tkNum?:number|null }): string {
   const corps = lxbEmailCorps(modele, {
     nom: opts.salonNom || "", sous: opts.salonSous || "", logo: opts.logoUrl || "", occasion: LX_OCCASIONS[opts.themeId] || "",
     pour: opts.pour || "", de: opts.de || "", msg: opts.message || "", valeur: opts.valeur, code: opts.code, dateExp: opts.dateExp,
     perimetre: opts.perimetre, mentionTva: opts.mentionTva, tkNum: opts.tkNum || null, couleur: opts.couleur || null, palette: opts.palette || "",
-    adresse: opts.salonAddr || "", tel: opts.salonTel || "", siret: opts.siret || ""
+    adresse: opts.salonAddr || "", tel: opts.salonTel || "", siret: opts.siret || "", qrUrl: opts.qrUrl || ""
   });
   return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${LXB_EMAIL_POLICES}</head><body style="margin:0;padding:0">${lxMailLayout(corps, { titre: "Votre carte cadeau", salon: esc(opts.salonNom || "") || undefined })}</body></html>`;
 }
 
-function buildBonHTML(opts: { themeId:string; salonNom:string; salonAddr:string; salonTel:string; logoUrl:string|null; valeur:number; code:string; de:string; pour:string; message:string; dateExp:string; siret?:string; mentionTva:string; perimetre:string; tkNum?:number|null }): string {
+function buildBonHTML(opts: { themeId:string; salonNom:string; salonAddr:string; salonTel:string; logoUrl:string|null; qrUrl?:string; valeur:number; code:string; de:string; pour:string; message:string; dateExp:string; siret?:string; mentionTva:string; perimetre:string; tkNum?:number|null }): string {
   const t = THEMES[opts.themeId] || THEMES.classique;
   const sNomCol = t.dark ? "#f5e9c3" : t.acc;
   const sSubCol = t.dark ? "rgba(255,255,255,.55)" : "rgba(0,0,0,.55)";
@@ -319,7 +324,7 @@ function buildBonHTML(opts: { themeId:string; salonNom:string; salonAddr:string;
                   <div style="border:2px solid ${codeBorderCol};background:${codeBgCol};padding:10px 22px;font-family:'Courier New',monospace;font-size:18px;font-weight:800;letter-spacing:5px;color:${codeCol}">${esc(opts.code)}</div>
                 </td>
                 <td valign="middle">
-                  <img src="${qrUrl(opts.code)}" alt="QR ${esc(opts.code)}" width="70" height="70" style="background:#fff;padding:4px;border-radius:6px;display:block">
+                  <img src="${opts.qrUrl || qrUrl(opts.code)}" alt="QR ${esc(opts.code)}" width="70" height="70" style="background:#fff;padding:4px;border-radius:6px;display:block">
                 </td>
               </tr></table>
               <div style="font-size:11px;color:${t.txt};font-weight:600;margin-top:6px">${opts.perimetre}</div>
@@ -416,10 +421,13 @@ Deno.serve(async (req) => {
     let modele: "maison"|"ecrin"|"" = "";
     let bonPalette = "";
     try { let c: any = (salon as any).config_json; if (typeof c === "string") c = JSON.parse(c); if (c && (c.bonModele === "maison" || c.bonModele === "ecrin")) modele = c.bonModele; if (c && typeof c.bonPalette === "string") bonPalette = lxbPaletteValide(c.bonPalette); } catch (_) { modele = ""; }
+    // 2026-10-31 (-3, contre-audit bons v2 R3) : QR par jeton opaque (le code du bon n'est plus dans l'URL de l'image).
+    let qrJ = "";
+    try { const qj = await sb.rpc("lx_qr_jeton", { p_code: String(b.code || ""), p_salon: b.salon_id || null }); if (!qj.error && typeof qj.data === "string" && /^[A-Za-z0-9_-]{24}$/.test(qj.data)) qrJ = `https://luxyra.fr/api/qr/t/${qj.data}`; } catch (_) { qrJ = ""; }
     const buyerHtml = modele ? buildBonHTMLModele(modele, {
       themeId: b.theme_id || "classique",
       salonNom: salon.nom || "", salonSous: (salon as any).sous_titre || "", salonAddr, salonTel: salon.tel || "",
-      logoUrl: salon.logo || null, couleur: (salon as any).couleur_primaire || null, palette: bonPalette,
+      logoUrl: salon.logo || null, couleur: (salon as any).couleur_primaire || null, palette: bonPalette, qrUrl: qrJ,
       valeur: Number(b.valeur), code: b.code,
       de: b.de || "", pour: b.pour || "", message: b.message || "",
       dateExp, siret: salon.siret || undefined,
@@ -427,7 +435,7 @@ Deno.serve(async (req) => {
     }) : buildBonHTML({
       themeId: b.theme_id || "classique",
       salonNom: salon.nom || "Salon", salonAddr, salonTel: salon.tel || "",
-      logoUrl: salon.logo || null,
+      logoUrl: salon.logo || null, qrUrl: qrJ,
       valeur: Number(b.valeur), code: b.code,
       de: b.de || "", pour: b.pour || "", message: b.message || "",
       dateExp, siret: salon.siret || undefined,
