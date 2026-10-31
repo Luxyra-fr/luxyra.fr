@@ -142,3 +142,11 @@ SELECT cron.schedule('lx_signup_code_menage', '17 * * * *', $$select public.lx_s
 -- RETOUR ARRIÈRE : rejouer code_inscription.sql (fonctions v1) puis
 --   select cron.unschedule('lx_signup_code_menage'); drop table public.clients_signup_global;
 --   (les colonnes ajoutées sont sans effet sur les fonctions v1).
+
+-- B4 (appliqué le 31/10 après déploiement : la clé du worker diffère de celle injectée dans les edges) :
+-- preuve qu'un jeton est la clé service, exécutable par service_role uniquement (lx-signup v15 estInterne).
+create or replace function public.lx_est_role_service() returns boolean language sql stable security invoker set search_path = pg_catalog as $$
+  select coalesce(current_setting('request.jwt.claims', true)::jsonb->>'role', '') = 'service_role'
+$$;
+revoke all on function public.lx_est_role_service() from public, anon, authenticated;
+grant execute on function public.lx_est_role_service() to service_role;

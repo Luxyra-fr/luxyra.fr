@@ -1,6 +1,6 @@
 // lx-signup v15 — 2026-10-31 (contre-audit du code) : IPv6 comptée par bloc /64 (M1) ; plafond global, échecs glissants 24 h
 //   et code précédent gardé valable (SQL code_inscription_v2.sql : M1, M2, B1) ; échec Brevo détecté (B2, success:false -> 502) ;
-//   appel interne = égalité EXACTE avec la clé service de l'environnement (B4 : plus de repli client_invites ni de cache ;
+//   appel interne = clé service de l'environnement OU jeton role=service_role confirmé par la base (lx_est_role_service) (B4 : plus de repli client_invites ni de cache ;
 //   verif_interne refusé hors appel interne) ; pas d'e-mail « Confirmez votre adresse » lors d'une invitation (le worker confirme).
 // lx-signup v14 — 2026-10-31 : CODE À 6 CHIFFRES envoyé par e-mail AVANT la création du compte (adresse fausse bloquée tout de suite).
 //   Étape 1 (sans « code ») : contrôles des champs puis envoi du code -> HTTP 428 { code_requis:true } ; aucune ligne créée.
@@ -62,11 +62,20 @@ async function envoyerMail(to: string, subject: string, html: string, text: stri
     return true;
   } catch (e) { await (globalThis as any).__lxReport?.("Email code d'inscription: " + String((e as Error)?.message || e), "warning"); return false; }
 }
-// Appel interne (worker, invitation) : égalité EXACTE avec une clé service de l'environnement, rien d'autre (B4, 31/10)
+// Appel interne (worker, invitation) — B4, 31/10 : égalité EXACTE avec une clé service de l'environnement ; sinon, le jeton doit
+// porter role=service_role ET la base doit le confirmer par lx_est_role_service() (fonction exécutable par service_role
+// SEULEMENT, qui relit le rôle du jeton vérifié par PostgREST). Plus de repli sur client_invites, plus de cache.
+// (La clé du worker est une clé service valide du projet, différente de la valeur injectée dans l'environnement des edges.)
 function egal(a: string, b: string): boolean { if (!a || !b || a.length !== b.length) return false; let d = 0; for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i); return d === 0; }
-function estInterne(bearer: string): boolean {
+function roleDuJeton(t: string): string { try { const p = t.split(".")[1]; if (!p) return ""; const j = JSON.parse(atob(p.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((p.length + 3) % 4))); return String(j && j.role || ""); } catch (_) { return ""; } }
+async function estInterne(bearer: string): Promise<boolean> {
   if (!bearer) return false;
-  return [Deno.env.get("SB_SERVICE_ROLE") || "", Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || ""].some((k) => egal(bearer, k));
+  if ([Deno.env.get("SB_SERVICE_ROLE") || "", Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || ""].some((k) => egal(bearer, k))) return true;
+  if (roleDuJeton(bearer) !== "service_role") return false;
+  try {
+    const r = await fetch(SB_URL + "/rest/v1/rpc/lx_est_role_service", { method: "POST", headers: { "Content-Type": "application/json", apikey: bearer, Authorization: "Bearer " + bearer }, body: "{}" });
+    return r.status === 200 && (await r.text()).trim() === "true";
+  } catch (_) { return false; }
 }
 // Mise en page commune des emails Luxyra (identique à lx-password-reset / worker lxMailLayout)
 function lxMailLayout(corpsHtml: string, titre: string): string {
@@ -105,7 +114,7 @@ Deno.serve(async (req) => {
     if (!body) return json(400, { error: "Invalid JSON body" });
     const bearer = String(req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
     // contrôle de déploiement : le jeton service du worker est-il reconnu ? (ne renvoie qu'un booléen)
-    if (body.action === "verif_interne") return estInterne(bearer) ? json(200, { interne: true }) : json(403, { error: "Accès refusé" }); // B4 : rien hors appel interne
+    if (body.action === "verif_interne") return (await estInterne(bearer)) ? json(200, { interne: true }) : json(403, { error: "Accès refusé" }); // B4 : rien hors appel interne
     const email = String(body.email || "").toLowerCase().trim();
     const password = String(body.password || "");
     const nom = String(body.nom || "").trim();
@@ -116,7 +125,7 @@ Deno.serve(async (req) => {
     if (!nom || !prenom) return json(400, { error: "Nom et prénom requis" });
     if (await isPasswordPwned(password)) return json(400, { error: "Ce mot de passe a été exposé dans une fuite de données connue. Choisissez-en un autre plus unique." });
     // 31/10/2026 : appel interne du worker (invitation) = jeton service -> pas de code (l'invitation reçue prouve l'adresse)
-    const interne = estInterne(bearer);
+    const interne = await estInterne(bearer);
     const champs = { nom: nom.slice(0, 80), prenom: prenom.slice(0, 80), telephone, date_naissance: body.date_naissance || null, genre: body.genre || null, sms_ok: body.sms_ok ?? true, email_ok: body.email_ok ?? true, adresse: _txt(body.adresse, 200), cp: _txt(body.cp, 10), ville: _txt(body.ville, 80), pays: PAYS.includes(String(body.pays || "")) ? String(body.pays) : "France" };
     if (!interne) {
       const code = String(body.code ?? "").replace(/\s/g, "");

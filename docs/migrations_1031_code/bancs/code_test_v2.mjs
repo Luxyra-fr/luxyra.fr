@@ -19,6 +19,7 @@ await db.exec("set search_path = public, extensions;"); await db.exec(SQL); // r
 const SQL2 = fs.readFileSync(W + "migrations_1031_code/code_inscription_v2.sql", "utf8").split("-- B3 : tâche planifiée")[0];
 await db.exec("set search_path = public, extensions;"); await db.exec(SQL2);
 await db.exec("set search_path = public, extensions;"); await db.exec(SQL2); // rejouable
+await db.exec("set search_path = public, extensions;"); await db.exec(fs.readFileSync(W + "migrations_1031_code/code_inscription_v2.sql", "utf8").split("-- B4 (appliqué")[1].split("\n").slice(2).join("\n"));
 const monde = creerMonde(db);
 monde.worker = (await import("/tmp/em/worker_bundle_code2.mjs?" + Math.random())).default;
 const signup = await chargerEdge("/tmp/em/edge_signup_code2.mjs");
@@ -121,6 +122,9 @@ await garde("interne", async () => {
   ok("verif_interne : jeton service reconnu, anon -> 403 (B4)", v.body.interne === true && v2.status === 403 && v2.body.interne === undefined, [v.body, v2.status]);
   const v3 = await appel({ action: "verif_interne" }, { bearer: SERVICE + "x" }); const v4 = await appel({ action: "verif_interne" }, { bearer: SERVICE.slice(0, -1) });
   ok("B4 : égalité exacte seulement (clé voisine refusée)", v3.status === 403 && v4.status === 403, [v3.status, v4.status]);
+  const faux = "eyJhbGciOiJIUzI1NiJ9." + Buffer.from(JSON.stringify({ role: "service_role" })).toString("base64url") + ".signature-fausse";
+  const v5 = await appel({ action: "verif_interne" }, { bearer: faux }); const v6 = await appel(champs("forge@exemple.test"), { bearer: faux });
+  ok("B4 : jeton forgé role=service_role refusé (la base ne confirme pas) et passe par le code", v5.status === 403 && v6.status === 428 && !(await compte("forge@exemple.test")), [v5.status, v6.status]);
   const nE = monde.emails.length;
   const fiche = (await db.query(`update clients set client_luxyra_id=null where id=(select id from clients where salon_id=$1 and client_luxyra_id is not null order by id desc limit 1) returning id`, [S])).rows[0];
   const inv = (await db.query(`insert into client_invites(salon_id,client_id,email) values ($1,$2,'invite.code@exemple.test') returning token`, [S, fiche.id])).rows[0];
