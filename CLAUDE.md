@@ -1864,7 +1864,7 @@ Ensuite : Alexandre supprime le Salon Démo (admin) → entrée registre.
 
 ## 2026-10-14 — Audit sécurité (branche fix1014-secu) — À DÉPLOYER DANS L'ORDRE
 SQL `docs/migrations_1014/secu.sql` (idempotent) -> edge functions `docs/edge_1014/*` -> worker -> pages.
-- **Comptes clients** : email vérifié par lien (`?verif=` dans compte.html, 48 h, renvoi limité 2 min / 5 par jour).
+- **Comptes clients** : depuis le 31/10/2026, code à 6 chiffres par e-mail AVANT la création (lx-signup v14, voir rubrique « Code à 6 chiffres ») ; comptes plus anciens non confirmés : email vérifié par lien (`?verif=` dans compte.html, 48 h, renvoi limité 2 min / 5 par jour).
   Tant que `email_verified` est faux, le worker ne rattache RIEN par email (`lxEmailVerifie(session)`) : seulement par
   `client_luxyra_id`. Rattachement automatique des fiches (`fn_autolink_clients_luxyra`) : seulement quand l'email devient
   vérifié, et seulement par email (plus jamais par téléphone). Lien fiche existante <- compte depuis l'app pro
@@ -2230,3 +2230,11 @@ Audit approuvé : `docs/admin-audit-1015.md` (P1 + P2, sauf le chat support fait
 - Page publique `bons-cadeaux.html` : `body.lxm` + occasion (`LXBon.OCCASIONS`) → `theme_id` HISTORIQUE valide (classique/anniversaire/noel/feteMeres/stValentin/roseGold) : gc-create-checkout inchangée.
 - Confirmation : `/api/bons-cadeaux/statut` renvoie `carte` (de/pour/message saisis par l'acheteur, données publiques de l'établissement ; logo omis s'il dépasse 400 000 caractères) SEULEMENT si un modèle est choisi.
 - E-mail : `gc-stripe-webhook` v13 → `buildBonHTMLModele` (tableaux, sans Google Fonts, objet sans emoji) si modèle choisi ; sinon `buildBonHTML` historique. Logo base64 jamais mis dans l'e-mail (bloqué par Gmail/Outlook).
+
+## 31/10/2026 — Inscription client : code à 6 chiffres AVANT la création du compte (accord d'Alexandre « on part sur l'option 1 »)
+- **lx-signup v14** (verify_jwt FALSE, avant : `docs/edge_1031_code/avant/lx-signup`). Étape 1 sans `code` : tous les contrôles des champs (ASCII strict, 8 caractères, mot de passe divulgué) puis code envoyé → **HTTP 428** `{code_requis, renvoi_s, expire_min}` ; aucune ligne `clients_luxyra`. Étape 2 avec `code` : `lx_signup_code_verifier` puis insertion **`email_verified=true`** (le déclencheur `trg_autolink_clients_luxyra` rattache les fiches comme une confirmation). Pas de lien `?verif=` envoyé.
+- **Réponse neutre** : adresse déjà inscrite → même 428, mais l'e-mail dit « Vous avez déjà un compte » (aucun code) ; 409 seulement à l'étape 2 (impossible sans boîte mail). Le texte d'erreur du 428 n'a ni « déjà » ni « existe » (anciennes pages en cache : compte.html les transformait en « compte existe »).
+- **Base** (`docs/migrations_1031_code/code_inscription.sql`, appliqué) : `clients_signup_codes` (empreinte sha256(secret|signup|email|code), 15 min, 5 essais puis code effacé, usage unique), `clients_signup_ip` (empreinte d'IP) ; fonctions `lx_signup_code_demander` (60 s entre deux envois, 3/h/adresse, 10/h/IP, verrou de ligne) / `_verifier` / `_menage` (> 2 jours) — service_role uniquement, RLS sans règle.
+- **Appel interne du worker (invitation)** : jeton service (exact ou validé par lecture de `client_invites`, réservée au rôle service) → ancien chemin inchangé (compte non confirmé + lien, puis le worker confirme). Contrôle : `{"action":"verif_interne"}` ne renvoie qu'un booléen.
+- **Front** : `lx-client.js` (v=20261031-2) ouvre la fenêtre « Vérifiez votre e-mail » sur un 428 (champ unique `one-time-code`, collage nettoyé, validation auto à 6 chiffres, « Renvoyer le code » après 60 s, « Modifier l'adresse » = annulation → `{status:499, annule:true}`). Aucune page à modifier : compte.html et site.html appellent `LX.signup` comme avant.
+- Banc : /tmp/em/code_test.mjs (24/24), UI /sessions/quirky-affectionate-hypatia/shot/code_ui.mjs (8/8). Retour arrière : redéployer lx-signup « avant » puis le DROP en fin du fichier SQL.

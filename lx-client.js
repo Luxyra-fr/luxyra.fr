@@ -78,10 +78,70 @@
 
   // ------------------------ Public API ------------------------
 
+  // 2026-10-31 : inscription en 2 temps. 1) le serveur envoie un CODE À 6 CHIFFRES par e-mail (HTTP 428 code_requis) ;
+  // 2) la fenêtre ci-dessous le fait saisir puis rappelle lx-signup avec { code } -> compte créé déjà confirmé.
+  // La fenêtre est commune à toutes les pages qui inscrivent un client (compte.html, site.html…).
+  // Annulation : { ok:false, status:499, data:{ error, annule:true } }.
   async function lxSignup(fields){
     var res = await call("lx-signup", fields);
+    if (res.status === 428 && res.data && res.data.code_requis && typeof document !== "undefined") res = await saisirCode(fields, res.data);
     if (res.ok && res.data && res.data.session_token) ouvrirSession(res.data.session_token, res.data.user); // 2026-10-14 audit
     return res;
+  }
+  function escH(t){ return String(t == null ? "" : t).replace(/[&<>"']/g, function(c){ return { "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]; }); }
+  function saisirCode(fields, info){
+    return new Promise(function(resolve){
+      var old = document.getElementById("lxCodeBg"); if (old) old.remove();
+      var bg = document.createElement("div"); bg.id = "lxCodeBg";
+      bg.setAttribute("style", "position:fixed;inset:0;z-index:2147483000;background:rgba(10,10,12,.72);display:flex;align-items:center;justify-content:center;padding:16px;font-family:-apple-system,'Segoe UI',Arial,sans-serif");
+      bg.innerHTML = '<div role="dialog" aria-modal="true" aria-labelledby="lxCodeT" style="width:100%;max-width:400px;background:#fff;color:#1a1a1a;border-radius:18px;padding:26px 22px 20px;box-shadow:0 18px 50px rgba(0,0,0,.35);text-align:center;border-top:4px solid #c8a84e">'
+        + '<div id="lxCodeT" style="font-family:Georgia,\'Times New Roman\',serif;font-size:21px;margin-bottom:8px">Vérifiez votre e-mail</div>'
+        + '<div style="font-size:14px;line-height:1.55;color:#444">Nous avons envoyé un code à 6 chiffres à<br><b style="color:#111;word-break:break-all">' + escH(fields.email) + '</b></div>'
+        + '<input id="lxCodeIn" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]*" maxlength="6" aria-label="Code à 6 chiffres" placeholder="••••••" style="display:block;width:100%;box-sizing:border-box;margin:18px 0 6px;padding:14px 10px;font-size:30px;letter-spacing:12px;text-align:center;border:1.5px solid #d9cfb4;border-radius:12px;outline:none;font-family:Georgia,serif;color:#111;background:#fdfbf6">'
+        + '<div id="lxCodeMsg" role="alert" style="min-height:20px;font-size:13px;color:#b3261e;margin:4px 0 8px"></div>'
+        + '<button id="lxCodeOk" type="button" style="width:100%;padding:14px;border:none;border-radius:30px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#111;font-weight:800;font-size:15px;cursor:pointer">Valider et créer mon compte</button>'
+        + '<div style="font-size:12.5px;color:#777;margin-top:12px;line-height:1.5">Valable 15 minutes. Pensez à regarder vos courriers indésirables.</div>'
+        + '<div style="display:flex;justify-content:space-between;gap:10px;margin-top:12px;font-size:13px">'
+        +   '<button id="lxCodeRe" type="button" disabled style="background:none;border:none;color:#9a7b2c;font-weight:700;cursor:pointer;padding:6px 0">Renvoyer le code</button>'
+        +   '<button id="lxCodeX" type="button" style="background:none;border:none;color:#666;text-decoration:underline;cursor:pointer;padding:6px 0">Modifier l\u2019adresse</button>'
+        + '</div></div>';
+      document.body.appendChild(bg);
+      var inp = document.getElementById("lxCodeIn"), msg = document.getElementById("lxCodeMsg"), bOk = document.getElementById("lxCodeOk"), bRe = document.getElementById("lxCodeRe"), bX = document.getElementById("lxCodeX");
+      var fini = false, minuteur = null, occupe = false;
+      function fin(r){ if (fini) return; fini = true; if (minuteur) clearInterval(minuteur); try { bg.remove(); } catch(_){} resolve(r); }
+      function attendre(sec){
+        var n = Math.max(1, Number(sec) || 60); bRe.disabled = true; bRe.style.color = "#aaa";
+        if (minuteur) clearInterval(minuteur);
+        bRe.textContent = "Renvoyer le code (" + n + " s)";
+        minuteur = setInterval(function(){ n--; if (n <= 0) { clearInterval(minuteur); minuteur = null; bRe.disabled = false; bRe.style.color = "#9a7b2c"; bRe.textContent = "Renvoyer le code"; } else bRe.textContent = "Renvoyer le code (" + n + " s)"; }, 1000);
+      }
+      attendre(info && info.renvoi_s || 60);
+      inp.addEventListener("input", function(){ var v = inp.value.replace(/\D/g, "").slice(0, 6); if (v !== inp.value) inp.value = v; msg.textContent = ""; if (v.length === 6) valider(); });
+      inp.addEventListener("keydown", function(e){ if (e.key === "Enter") valider(); });
+      setTimeout(function(){ try { inp.focus(); } catch(_){} }, 50);
+      async function valider(){
+        if (occupe) return; var c = inp.value.replace(/\D/g, "");
+        if (c.length !== 6) { msg.textContent = "Saisissez les 6 chiffres reçus par e-mail."; return; }
+        occupe = true; bOk.disabled = true; bOk.textContent = "Vérification…";
+        var r = await call("lx-signup", Object.assign({}, fields, { code: c }));
+        occupe = false; bOk.disabled = false; bOk.textContent = "Valider et créer mon compte";
+        if (r.ok && r.data && r.data.session_token) { fin(r); return; }
+        var d = r.data || {};
+        if (r.status === 409 || r.status === 0 || r.status >= 500) { fin(r); return; } // compte existant / réseau : la page affiche le message
+        msg.textContent = d.error || "Code incorrect.";
+        if (d.code_expire) { inp.value = ""; bRe.disabled = false; bRe.style.color = "#9a7b2c"; bRe.textContent = "Renvoyer le code"; if (minuteur) { clearInterval(minuteur); minuteur = null; } }
+        else { try { inp.select(); } catch(_){} }
+      }
+      bOk.onclick = valider;
+      bRe.onclick = async function(){
+        if (bRe.disabled) return; bRe.disabled = true; msg.style.color = "#444"; msg.textContent = "Envoi d\u2019un nouveau code…";
+        var r = await call("lx-signup", fields); var d = r.data || {};
+        if (r.status === 428) { msg.style.color = "#2e7d32"; msg.textContent = "Nouveau code envoyé."; inp.value = ""; attendre(d.renvoi_s || 60); }
+        else { msg.style.color = "#b3261e"; msg.textContent = d.error || "Envoi impossible."; if (d.attente_s) attendre(d.attente_s); else { bRe.disabled = false; } }
+        setTimeout(function(){ msg.style.color = "#b3261e"; }, 4000);
+      };
+      bX.onclick = function(){ fin({ ok: false, status: 499, data: { error: "Inscription non terminée : vérifiez votre adresse e-mail puis recommencez.", annule: true } }); };
+    });
   }
 
   async function lxLogin(email, password){

@@ -1,3 +1,10 @@
+// lx-signup v14 — 2026-10-31 : CODE À 6 CHIFFRES envoyé par e-mail AVANT la création du compte (adresse fausse bloquée tout de suite).
+//   Étape 1 (sans « code ») : contrôles des champs puis envoi du code -> HTTP 428 { code_requis:true } ; aucune ligne créée.
+//     Réponse NEUTRE : si un compte existe déjà, l'e-mail envoyé dit « vous avez déjà un compte » (pas de code), même réponse HTTP.
+//   Étape 2 (avec « code ») : code vérifié en base (lx_signup_code_verifier : 15 min, 5 essais, usage unique, verrou de ligne)
+//     puis compte créé DIRECTEMENT confirmé (email_verified=true -> rattachement par trg_autolink comme une confirmation).
+//   Appel interne du worker (invitation, jeton service) : inchangé (l'invitation reçue par e-mail prouve déjà l'adresse).
+//   Limites (lx_signup_code_demander, atomique) : 60 s entre deux envois, 3 envois / heure / adresse, 10 / heure / IP.
 // lx-signup v13 — 2026-10-31 (contre-audit 3) : adresse ASCII stricte (m4) ; e-mail : « si vous n'avez pas créé de compte, ne cliquez pas » (M1).
 // lx-signup v12 — 2026-10-30 (contre-audit 2) : lien de confirmation lié à l'adresse (verification_email), écriture conditionnelle, e-mail sans prénom.
 // lx-signup v10 — 2026-10-14 : version FUSIONNÉE des lots « secu » et « site » (intégration integ1014).
@@ -28,6 +35,25 @@ async function signSession(lx_id: string, email: string, sv: number): Promise<st
 async function isPasswordPwned(password: string): Promise<boolean> { try { const sha1 = await crypto.subtle.digest("SHA-1", new TextEncoder().encode(password)); const hashHex = toHex(sha1).toUpperCase(); const prefix = hashHex.slice(0,5); const suffix = hashHex.slice(5); const res = await fetch(`https://api.pwnedpasswords.com/range/${prefix}`, { headers: { "Add-Padding":"true","User-Agent":"Luxyra-LX" } }); if (!res.ok) return false; const text = await res.text(); for (const line of text.split("\n")) { const parts = line.trim().split(":"); if (parts[0] === suffix && parseInt(parts[1],10) > 0) return true; } return false; } catch { return false; } }
 const _txt = (v: unknown, max: number) => { const s = String(v == null ? "" : v).trim().slice(0, max); return s || null; };
 function esc(s:unknown){return String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
+// 31/10/2026 : code à 6 chiffres (tirage uniforme), empreinte HMAC-like (secret serveur + adresse + code), IP hachée
+function code6(): string { const b = new Uint32Array(1); for (;;) { crypto.getRandomValues(b); if (b[0] < 4294000000) return String(b[0] % 1000000).padStart(6, "0"); } }
+async function empreinteCode(email: string, code: string): Promise<string> { return await sha256Hex(LX_SECRET + "|signup|" + email + "|" + code); }
+function ipDe(req: Request): string { const h = req.headers; return (h.get("cf-connecting-ip") || (h.get("x-forwarded-for") || "").split(",")[0] || h.get("x-real-ip") || "").trim().slice(0, 64); }
+async function envoyerMail(to: string, subject: string, html: string, text: string): Promise<boolean> {
+  try { const r = await fetch(`${WORKER_BASE}/api/email/custom`, { method: "POST", headers: { "Content-Type": "application/json", "x-lx-internal": SB_SR }, body: JSON.stringify({ to, toName: "", salonName: "Luxyra", subject, htmlContent: html, textContent: text }) });
+    if (!r.ok) { await (globalThis as any).__lxReport?.("Email code d'inscription HTTP " + r.status, "warning"); return false; } return true;
+  } catch (e) { await (globalThis as any).__lxReport?.("Email code d'inscription: " + String((e as Error)?.message || e), "warning"); return false; }
+}
+// Appel interne (worker) : jeton service exact, sinon vérification auprès de la base (seul le rôle service lit client_invites)
+const _internes = new Map<string, boolean>();
+async function estInterne(bearer: string): Promise<boolean> {
+  if (!bearer) return false;
+  if (bearer === SB_SR || bearer === (Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "")) return true;
+  if (_internes.has(bearer)) return _internes.get(bearer)!;
+  let ok = false;
+  try { const r = await fetch(SB_URL + "/rest/v1/client_invites?select=token&limit=1", { headers: { apikey: bearer, Authorization: "Bearer " + bearer } }); ok = r.status === 200; } catch (_) { ok = false; }
+  if (_internes.size > 20) _internes.clear(); _internes.set(bearer, ok); return ok;
+}
 // Mise en page commune des emails Luxyra (identique à lx-password-reset / worker lxMailLayout)
 function lxMailLayout(corpsHtml: string, titre: string): string {
   return `<div style="background:#f4f1ea;padding:24px 10px;margin:0">
@@ -63,6 +89,9 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json().catch(() => null);
     if (!body) return json(400, { error: "Invalid JSON body" });
+    const bearer = String(req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
+    // contrôle de déploiement : le jeton service du worker est-il reconnu ? (ne renvoie qu'un booléen)
+    if (body.action === "verif_interne") return json(200, { interne: await estInterne(bearer) });
     const email = String(body.email || "").toLowerCase().trim();
     const password = String(body.password || "");
     const nom = String(body.nom || "").trim();
@@ -72,16 +101,58 @@ Deno.serve(async (req) => {
     if (password.length < 8) return json(400, { error: "Mot de passe trop court (8 caractères minimum)" }); // 2026-10-14 audit site
     if (!nom || !prenom) return json(400, { error: "Nom et prénom requis" });
     if (await isPasswordPwned(password)) return json(400, { error: "Ce mot de passe a été exposé dans une fuite de données connue. Choisissez-en un autre plus unique." });
+    // 31/10/2026 : appel interne du worker (invitation) = jeton service -> pas de code (l'invitation reçue prouve l'adresse)
+    const interne = await estInterne(bearer);
+    const champs = { nom: nom.slice(0, 80), prenom: prenom.slice(0, 80), telephone, date_naissance: body.date_naissance || null, genre: body.genre || null, sms_ok: body.sms_ok ?? true, email_ok: body.email_ok ?? true, adresse: _txt(body.adresse, 200), cp: _txt(body.cp, 10), ville: _txt(body.ville, 80), pays: PAYS.includes(String(body.pays || "")) ? String(body.pays) : "France" };
+    if (!interne) {
+      const code = String(body.code ?? "").replace(/\s/g, "");
+      if (!code) {
+        // ---- Étape 1 : envoi du code (réponse identique que l'adresse ait déjà un compte ou non) ----
+        try { await sb.rpc("lx_signup_code_menage"); } catch (_) {}
+        const c = code6();
+        const ip = ipDe(req);
+        const { data: dem, error: demErr } = await sb.rpc("lx_signup_code_demander", { p_email: email, p_code_hash: await empreinteCode(email, c), p_ip_hash: ip ? await sha256Hex(LX_SECRET + "|ip|" + ip) : null });
+        if (demErr || !dem) { await (globalThis as any).__lxReport?.("lx_signup_code_demander: " + (demErr?.message || "vide"), "error"); return json(500, { error: "Envoi du code impossible pour le moment. Réessayez dans un instant." }); }
+        if (!dem.ok) {
+          if (dem.raison === "attendre") return json(429, { error: "Un code vient d'être envoyé. Patientez " + (dem.attente_s || 60) + " s avant d'en demander un autre.", attente_s: dem.attente_s || 60, code_requis: true });
+          if (dem.raison === "trop_envois") return json(429, { error: "Trop de codes demandés pour cette adresse. Réessayez dans une heure." });
+          if (dem.raison === "trop_ip") return json(429, { error: "Trop d'inscriptions depuis cette connexion. Réessayez dans une heure." });
+          return json(400, { error: "Email invalide" });
+        }
+        const { data: existe } = await sb.from("clients_luxyra").select("id").eq("email", email).limit(1);
+        let envoye: boolean;
+        if (existe && existe.length) {
+          envoye = await envoyerMail(email, "Votre compte Luxyra", lxMailLayout(`<p style="font-size:15px">Bonjour,</p><p style="font-size:15px;line-height:1.6">Une inscription vient d'être demandée avec cette adresse, mais <b>vous avez déjà un compte Luxyra</b>. Connectez-vous avec votre mot de passe actuel, ou utilisez « Mot de passe oublié » sur la page de connexion.</p><p style="text-align:center;margin:22px 0"><a href="https://luxyra.fr/compte.html" style="display:inline-block;background:#c8a84e;color:#111;text-decoration:none;font-weight:700;padding:13px 26px;border-radius:30px">Me connecter</a></p><p style="font-size:13px;color:#8a8a8a">Si vous n'êtes pas à l'origine de cette demande, ignorez ce message : rien n'a été modifié.</p>`, "Vous avez déjà un compte"), "Bonjour,\n\nUne inscription vient d'être demandée avec cette adresse, mais vous avez déjà un compte Luxyra. Connectez-vous sur https://luxyra.fr/compte.html (ou « Mot de passe oublié »).\n\nSi vous n'êtes pas à l'origine de cette demande, ignorez ce message.\n\nLuxyra");
+        } else {
+          envoye = await envoyerMail(email, "Votre code de confirmation Luxyra", lxMailLayout(`<p style="font-size:15px">Bonjour,</p><p style="font-size:15px;line-height:1.6">Voici votre code pour créer votre compte Luxyra :</p><p style="text-align:center;margin:20px 0"><span style="display:inline-block;font-family:Georgia,'Times New Roman',serif;font-size:34px;letter-spacing:10px;font-weight:700;color:#111;background:#faf6ec;border:1px solid #e6dcc3;border-radius:12px;padding:12px 22px">${c}</span></p><p style="font-size:14px;line-height:1.6">Saisissez-le sur la page d'inscription. Il est valable <b>15 minutes</b>.</p><p style="font-size:13px;color:#8a8a8a">Si vous n'êtes pas à l'origine de cette demande, ignorez ce message : aucun compte ne sera créé.</p>`, "Votre code de confirmation"), "Bonjour,\n\nVotre code pour créer votre compte Luxyra : " + c + "\n(valable 15 minutes)\n\nSi vous n'êtes pas à l'origine de cette demande, ignorez ce message : aucun compte ne sera créé.\n\nLuxyra");
+        }
+        if (!envoye) return json(502, { error: "L'e-mail n'a pas pu être envoyé. Vérifiez l'adresse et réessayez." });
+        // texte pour les anciennes pages encore en cache (elles affichent « error ») : sans « déjà » ni « existe »
+        return json(428, { code_requis: true, email, expire_min: 15, renvoi_s: 60, error: "Un code à 6 chiffres vous a été envoyé par e-mail. Rechargez la page puis recommencez l'inscription pour le saisir." });
+      }
+      // ---- Étape 2 : vérification du code (verrou en base, usage unique) ----
+      if (!/^\d{6}$/.test(code)) return json(400, { error: "Le code comporte 6 chiffres.", code_faux: true });
+      const { data: ver, error: verErr } = await sb.rpc("lx_signup_code_verifier", { p_email: email, p_code_hash: await empreinteCode(email, code) });
+      if (verErr || !ver) { await (globalThis as any).__lxReport?.("lx_signup_code_verifier: " + (verErr?.message || "vide"), "error"); return json(500, { error: "Vérification impossible pour le moment. Réessayez." }); }
+      if (!ver.ok) {
+        if (ver.raison === "faux") return json(400, { error: "Code incorrect" + (ver.reste ? " (" + ver.reste + " essai" + (ver.reste > 1 ? "s" : "") + " restant" + (ver.reste > 1 ? "s" : "") + ")." : "."), code_faux: true, reste: ver.reste });
+        if (ver.raison === "bloque") return json(429, { error: "Trop d'essais : demandez un nouveau code.", code_expire: true });
+        return json(400, { error: "Code expiré ou déjà utilisé : demandez un nouveau code.", code_expire: true });
+      }
+    }
     const { data: existing } = await sb.from("clients_luxyra").select("id").eq("email", email).limit(1);
     if (existing && existing.length > 0) return json(409, { error: "Un compte existe déjà avec cet email. Connectez-vous." });
     const password_hash = await hashPassword(password);
-    const pays = PAYS.includes(String(body.pays || "")) ? String(body.pays) : "France";
-    const { data: user, error } = await sb.from("clients_luxyra").insert({ email, password_hash, nom: nom.slice(0, 80), prenom: prenom.slice(0, 80), telephone, date_naissance: body.date_naissance || null, genre: body.genre || null, sms_ok: body.sms_ok ?? true, email_ok: body.email_ok ?? true, email_verified: false, adresse: _txt(body.adresse, 200), cp: _txt(body.cp, 10), ville: _txt(body.ville, 80), pays }).select().single();
-    if (error) { console.error("lx-signup insert error", error); await (globalThis as any).__lxReport?.("Insert clients_luxyra échec: "+error.message, "error", undefined, { email }); return json(500, { error: error.message }); }
-    const envoye = await envoyerVerification(user.id, user.email, user.prenom || "");
+    const verifie = !interne; // code saisi = adresse prouvée
+    const { data: user, error } = await sb.from("clients_luxyra").insert({ email, password_hash, ...champs, email_verified: verifie }).select().single();
+    if (error) {
+      if (String((error as any).code) === "23505") return json(409, { error: "Un compte existe déjà avec cet email. Connectez-vous." }); // course : double inscription
+      console.error("lx-signup insert error", error); await (globalThis as any).__lxReport?.("Insert clients_luxyra échec: "+error.message, "error", undefined, { email }); return json(500, { error: "Création du compte impossible pour le moment." });
+    }
+    const envoye = verifie ? false : await envoyerVerification(user.id, user.email, user.prenom || "");
     const session_token = await signSession(user.id, user.email, Number(user.session_version) || 0);
     const { password_hash: _ph, verification_code: _vc, verification_email: _ve, ...safe } = user;
-    return json(200, { user: { ...safe, email_verified: false }, session_token, verification_envoyee: envoye });
+    return json(200, { user: { ...safe, email_verified: verifie }, session_token, verification_envoyee: envoye, email_verifie: verifie });
   } catch (e) {
     console.error("lx-signup unexpected", e);
     return json(500, { error: String((e as Error)?.message || e) });

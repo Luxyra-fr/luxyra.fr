@@ -847,3 +847,8 @@ secours, deux appareils), aucune application du SQL, aucune publication.
 - R2 mention « Bon offert à titre gracieux » et R3 libellé BUM (CGI art. 256 ter) sur les modèles Maison/Écrin ; R1 écriture forcée du choix du modèle + avertissement si un autre appareil a choisi autre chose ; R4 vue admin en lecture seule ; R7 liserés visibles pour une couleur presque blanche (couleurs habituelles inchangées).
 - R5 (échappement des guillemets dans l'e-mail gc-stripe-webhook) : NON déployé, reporté (risque faible : seul l'établissement contrôle son logo).
 - Banc : docs/bons_1031/bancs/xss_bons_test.mjs (charges malveillantes, anciens et nouveaux rendus : 0 exécution). Garde 20261031-6.
+
+### 2026-10-31 — Inscription client : code à 6 chiffres (hors périmètre fiscal)
+- Aucune table, fonction ni déclencheur fiscal touché. Nouvelles tables `clients_signup_codes`, `clients_signup_ip` + 3 fonctions (service_role) : docs/migrations_1031_code/code_inscription.sql (appliqué).
+- lx-signup v14 (verify_jwt false) : code à 6 chiffres envoyé avant la création du compte ; compte créé confirmé. Invitation du worker inchangée. lx-client.js v=20261031-2 (fenêtre de saisie).
+- Bancs : /tmp/em/code_test.mjs 24/24 (limites, brute force, expiration, autre adresse, course, réponse neutre, rattachement des fiches, invitation), UI téléphone 8/8.
