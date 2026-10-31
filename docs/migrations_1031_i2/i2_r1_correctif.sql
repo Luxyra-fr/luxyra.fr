@@ -1,0 +1,5 @@
+-- 31/10/2026 — contre-audit I2, R1 (appliqué en prod) :
+-- 1) lx_admin_salon_changer_proprietaire refuse un compte administrateur (soi-même, admin_users, support@luxyra.fr) comme
+--    nouveau propriétaire (sinon contournement du retrait d'écriture caisse) ; variable lx.changer_proprietaire retirée.
+-- 2) lx_prive.salons_user_id_garde : plus d'exception par variable de session (seul postgres/service via fonctions DEFINER passe).
+-- Voir le code exact déployé : select pg_get_functiondef('public.lx_admin_salon_changer_proprietaire'::regproc);
