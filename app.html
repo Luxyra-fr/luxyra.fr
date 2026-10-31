@@ -407,18 +407,19 @@ if(window._lxDemo && !window._lxDemoTables){
 }
 </script>
 <script src="lx-qrcode.js"></script>
+<script src="lx-bon-cadeau.js?v=20261031-1"></script>
 <script src="lx-nf525-attestation.js?v=20261010-06"></script>
 <!-- luxyra-supabase.js : tag <script src> classique qui bloque nativement le parsing
      HTML (nécessaire pour que checkSession() soit défini AVANT tout inline script de
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261031-4"></script>
+<script src="luxyra-supabase.js?v=20261031-5"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261031-4";
+  var attendu="20261031-5";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -17583,6 +17584,7 @@ function rSettings(){
     h+='<span style="font-size:15px">\ud83c\udf81 <strong>Bons cadeaux en ligne</strong>'+(_cnxOk?"":' <span style="font-size:11px;color:#ef9a9a;font-weight:600">(Stripe Connect requis)</span>')+'</span>';
     h+='<div style="position:relative;width:48px;height:26px"><input type="checkbox" '+(_bcOn?"checked":"")+' '+(_cnxOk?"":"disabled")+' onchange="toggleBonsCadeauxOnline(this.checked)" style="width:48px;height:26px;cursor:'+(_cnxOk?"pointer":"not-allowed")+'"></div>';
     h+='</label>';
+    try{ if(window.LXBon){ var _bm2=lxBonModele(); h+='<div style="display:flex;align-items:center;justify-content:space-between;padding:0 0 12px;font-size:13px;color:var(--text3)"><span>Modèle des bons cadeaux : <b style="color:var(--text)">'+(_bm2?LXBon.MODELES[_bm2]:'actuel')+'</b></span><button class="btn" style="font-size:12px;padding:6px 12px" onclick="lxBonChoisirModele()">Choisir</button></div>'; } }catch(_eBm2){} // 2026-10-31
     h+='</div>';
     
     // URL du site (slug personnalisable)
@@ -23939,6 +23941,15 @@ function rGifts(){
       h+='</div>';
     }
   }catch(e){console.warn("[rGifts] banner online error",e);}
+  // 2026-10-31 : modèle des bons cadeaux (Maison / Écrin / actuel)
+  try{ if(window.LXBon && (typeof hasPermission!=="function"||hasPermission("settings"))){
+    var _bm=lxBonModele();
+    h+='<div style="margin-bottom:14px;border-radius:12px;background:rgba(255,255,255,.03);border:1px solid var(--border2,rgba(255,255,255,.1));padding:12px 14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">';
+    h+='<div style="flex:1;min-width:180px"><div style="font-size:11px;color:var(--text3);font-weight:800;letter-spacing:1px;text-transform:uppercase">Modèle des bons</div>';
+    h+='<div style="font-size:14px;font-weight:700;margin-top:2px">'+(_bm?LXBon.MODELES[_bm]:'Modèle actuel')+'</div></div>';
+    h+='<button class="btn" style="font-size:12px;padding:8px 14px" onclick="lxBonChoisirModele()">'+(_bm?'Changer':'Découvrir Maison et Écrin')+'</button>';
+    h+='</div>';
+  } }catch(_eBm){}
   // Stats
   var totalActif=0,totalUsed=0,nbActif=0,nbUsed=0,nbExpired=0,nbVoided=0;
   GC.forEach(function(g){
@@ -24083,7 +24094,110 @@ function printByCode(code){
   if(gcId)chooseGiftTheme(gcId);
 }
 
+// ============================================================
+// 2026-10-31 — MODÈLES DE BONS CADEAUX « Maison » / « Écrin » (au choix de chaque établissement)
+// Présentation uniquement (lx-bon-cadeau.js). Aucun montant, code, ticket ni TVA n'est recalculé ici :
+// la mention TVA reprend EXACTEMENT la règle de printGiftThemed (taux enregistré sur le bon, BUM).
+// SALON_CONFIG.bonModele : "maison" | "ecrin" | "" (vide = rendu historique, inchangé).
+// ============================================================
+function lxBonModele(){ var m=(window.SALON_CONFIG&&SALON_CONFIG.bonModele)||""; return (window.LXBon&&LXBon.modeleValide)?LXBon.modeleValide(m):""; }
+function _lxBonEtab(){
+  var S=window.SALON_CONFIG||{};
+  var logo=S.logo||"";
+  return {nom:S.nom||"", sous:S.sousTitre||"", adresse:S.adresse||"", cpv:[S.cp,S.ville].filter(Boolean).join(" "), tel:S.tel||"", logo:logo, couleur:S.couleurPrimaire||"#c8a84e"};
+}
+function _lxBonMentionTva(g){
+  var _txB=(g&&g.tvaRate!=null&&!isNaN(Number(g.tvaRate)))?Number(g.tvaRate)*100:lxTauxTVA();
+  var t=(_txB<=0)?"TVA non applicable, art. 293 B du CGI":("TVA "+(Math.round(_txB*10)/10).toString().replace(".",",")+" % incluse");
+  if(g && lxBonUsage(g)==="BUM") t="Bon à usage multiple, TVA due à l’utilisation";
+  return t;
+}
+function _lxBonPourRendu(g){
+  var scope=!g.scope||g.scope==="tout"?"Prestations et produits":(g.scope==="prestations"?"Prestations uniquement":"Produits uniquement");
+  var occ=""; try{ occ=(window.LXBon&&g.themeId)?LXBon.occasionDepuisTheme(g.themeId):""; }catch(_e){}
+  return {code:g.code||"", val:Number(g.val)||0, de:g.from||"", pour:g.to||"", msg:(g.msg&&g.msg!=="Bon offert")?g.msg:"",
+    exp:g.exp?new Date(g.exp).toLocaleDateString("fr-FR"):"", scope:scope, tva:_lxBonMentionTva(g), tk:g.tkNum||"", occasion:occ};
+}
+function _lxBonExemple(){
+  var d=new Date(); d.setFullYear(d.getFullYear()+1);
+  return {code:"BC-EXEMPL", val:80, de:"Camille", pour:"Léa", msg:"Un moment rien que pour toi.", exp:d.toLocaleDateString("fr-FR"),
+    scope:"Prestations et produits", tva:_lxBonMentionTva(null), tk:"", occasion:"Joyeux anniversaire"};
+}
+function lxBonImprimerModele(gcId, format){
+  var g=null;for(var i=0;i<GC.length;i++){if(GC[i].id===gcId){g=GC[i];break;}}
+  if(!g||!window.LXBon)return;
+  var m=lxBonModele()||"maison";
+  if(typeof cM==="function")cM();
+  if(!LXBon.imprimer(m,_lxBonPourRendu(g),_lxBonEtab(),format)){ if(typeof toast==="function")toast("Autorisez les fenêtres pop-up pour imprimer","warning"); }
+}
+// Réglage : fenêtre de choix du modèle avec aperçu en direct (recto / verso) aux couleurs et au logo de l'établissement
+function lxBonChoisirModele(){
+  if(!window.LXBon){ showAlert("Module des bons cadeaux non chargé : rechargez la page.","error"); return; }
+  if(typeof hasPermission==="function" && !hasPermission("settings")){ showAlert("Réservé au responsable de l’établissement.","warning"); return; }
+  LXBon.poserCss();
+  window._lxBonModeleChoix = lxBonModele();
+  _lxBonRendreChoix();
+}
+function _lxBonRendreChoix(){
+  var cur=window._lxBonModeleChoix||"", etab=_lxBonEtab(), bon=_lxBonExemple();
+  var opts=[{id:"",t:"Modèle actuel",d:"Le rendu que vous utilisez aujourd’hui (10 thèmes au choix à l’impression). Rien ne change."},
+            {id:"maison",t:"Maison",d:"Papeterie sobre : papier ivoire, double liseré à votre couleur. S’imprime parfaitement sur une imprimante de bureau."},
+            {id:"ecrin",t:"Écrin",d:"Graphique : aplat profond de votre couleur, grande initiale, montant en grand. Idéal à l’écran et chez un imprimeur."}];
+  var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="max-width:760px;max-height:92vh;overflow-y:auto">';
+  h+='<h2 style="text-align:center;margin-bottom:4px">Modèle de vos bons cadeaux</h2>';
+  h+='<div style="font-size:12.5px;color:var(--text3);text-align:center;margin-bottom:14px">Aux couleurs de votre établissement (Paramètres › couleur principale) et avec votre logo. Utilisé pour l’impression en caisse, la page de vente en ligne et la page de confirmation.</div>';
+  h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">';
+  opts.forEach(function(o){ var on=(o.id===cur);
+    h+='<button class="btn" onclick="window._lxBonModeleChoix=\''+o.id+'\';_lxBonRendreChoix()" style="flex:1;min-width:180px;text-align:left;padding:12px 14px;border-radius:12px;border:1.5px solid '+(on?'var(--gold)':'var(--border2,rgba(255,255,255,.12))')+';background:'+(on?'rgba(200,168,78,.12)':'transparent')+'">';
+    h+='<div style="width:100%;text-align:left"><div style="font-weight:800;font-size:14px;color:'+(on?'var(--gold)':'var(--text)')+'">'+(on?'● ':'○ ')+o.t+'</div><div style="font-size:11.5px;color:var(--text3);margin-top:4px;line-height:1.4;white-space:normal;font-family:Nunito,Inter,sans-serif;font-weight:400;letter-spacing:0">'+o.d+'</div></div></button>';
+  });
+  h+='</div>';
+  h+='<div style="background:#ECE8E0;border-radius:14px;padding:18px;display:flex;gap:16px;flex-wrap:wrap;justify-content:center;align-items:center;min-height:200px">';
+  if(cur){ h+='<div>'+LXBon.carte(cur,"recto",bon,etab,{mm:3.6})+'</div><div>'+LXBon.carte(cur,"verso",bon,etab,{mm:3.6})+'</div>'; }
+  else { h+='<div style="color:#5E5850;font-size:13px;text-align:center;max-width:380px">Rendu historique conservé : à l’impression, vous choisissez un des 10 thèmes (Luxe noir et or, Noël, Saint-Valentin…).</div>'; }
+  h+='</div>';
+  h+='<div style="font-size:11px;color:var(--text3);margin-top:8px;text-align:center">Exemple fictif. Les bons déjà vendus ne changent pas : seule leur présentation à l’impression suit le modèle choisi.</div>';
+  h+='<div style="display:flex;gap:8px;margin-top:14px"><button class="btn" style="flex:1" onclick="cM()">Annuler</button><button class="btn bg" style="flex:2" onclick="lxBonEnregistrerModele()">Enregistrer ce modèle</button></div>';
+  h+='</div></div>';
+  document.getElementById("modal").innerHTML=h;
+}
+async function lxBonEnregistrerModele(){
+  var v=window._lxBonModeleChoix||""; if(v!=="maison"&&v!=="ecrin") v="";
+  var avant=lxBonModele();
+  SALON_CONFIG.bonModele=v;
+  var ok=true; try{ var r=await saveSalonConfig(); if(r===false) ok=false; }catch(e){ ok=false; }
+  if(!ok){ SALON_CONFIG.bonModele=avant; showAlert("Modèle non enregistré. Vérifiez la connexion et réessayez.","error"); return; }
+  try{ if(typeof auditLog==="function") auditLog("BON_MODELE", "Modèle des bons cadeaux : "+(v?LXBon.MODELES[v]:"actuel (historique)")); }catch(_){}
+  if(typeof cM==="function")cM();
+  showAlert("Modèle des bons cadeaux enregistré : "+(v?LXBon.MODELES[v]:"modèle actuel")+".","success");
+  try{ if(typeof go==="function") go(window._currentPage||"gifts"); }catch(_){}
+}
+// Fenêtre « Imprimer » quand un modèle Maison / Écrin est choisi
+function _lxBonChoixImpression(g){
+  var m=lxBonModele(), etab=_lxBonEtab(), bon=_lxBonPourRendu(g);
+  LXBon.poserCss();
+  var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="max-width:640px;max-height:92vh;overflow-y:auto">';
+  h+='<h2 style="text-align:center">Imprimer '+LXBon.esc(g.code)+'</h2>';
+  h+='<div style="font-size:13px;color:var(--text3);text-align:center;margin-bottom:12px">Modèle « '+LXBon.MODELES[m]+' » · '+LXBon.esc(String(Number(g.val).toFixed(0)))+' €'+(g.from?' · de '+LXBon.esc(g.from):'')+(g.to?' pour '+LXBon.esc(g.to):'')+'</div>';
+  if(_salonId==='e0cf27c7-d402-4d76-8e91-9ef5231b3582'){
+    h+='<div onclick="printGiftTexteSeul(\''+g.id+'\')" style="cursor:pointer;border-radius:12px;border:1.5px solid var(--gold);background:rgba(200,168,78,.12);padding:12px 14px;margin-bottom:12px"><div style="font-weight:800;color:var(--gold);font-size:13px">Mes bons pré-imprimés (texte seul)</div><div style="font-size:11.5px;color:var(--text3)">Imprime seulement les informations, calées sur vos bons papier.</div></div>';
+  }
+  h+='<div style="background:#ECE8E0;border-radius:14px;padding:16px;display:flex;gap:12px;flex-wrap:wrap;justify-content:center">'+LXBon.carte(m,"recto",bon,etab,{mm:3.2})+LXBon.carte(m,"verso",bon,etab,{mm:3.2})+'</div>';
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px">';
+  h+='<button class="btn bg" style="padding:12px;white-space:normal" onclick="lxBonImprimerModele(\''+g.id+'\',\'carte\')"><div style="width:100%;text-align:center"><div style="font-weight:800">Carte 85 × 55 mm</div><div style="font-size:11px;font-weight:400;font-family:Nunito,Inter,sans-serif;letter-spacing:0;margin-top:2px">recto et verso, à découper et plier</div></div></button>';
+  h+='<button class="btn bg" style="padding:12px;white-space:normal" onclick="lxBonImprimerModele(\''+g.id+'\',\'a6\')"><div style="width:100%;text-align:center"><div style="font-weight:800">Carte A6</div><div style="font-size:11px;font-weight:400;font-family:Nunito,Inter,sans-serif;letter-spacing:0;margin-top:2px">avec le message, pour une enveloppe</div></div></button>';
+  h+='</div>';
+  h+='<div style="display:flex;gap:8px;margin-top:10px"><button class="btn" style="flex:1" onclick="cM()">Annuler</button><button class="btn" style="flex:1;font-size:12px" onclick="chooseGiftThemeAncien(\''+g.id+'\')">Anciens thèmes</button>'+((typeof hasPermission!=="function"||hasPermission("settings"))?'<button class="btn" style="flex:1;font-size:12px" onclick="lxBonChoisirModele()">Changer de modèle</button>':'')+'</div>';
+  h+='</div></div>';
+  document.getElementById("modal").innerHTML=h;
+}
 function chooseGiftTheme(gcId){
+  var g=null;for(var i=0;i<GC.length;i++){if(GC[i].id===gcId){g=GC[i];break;}}
+  if(!g)return;
+  if(lxBonModele() && window.LXBon){ _lxBonChoixImpression(g); return; } // 2026-10-31 : modèle Maison / Écrin choisi par l'établissement
+  chooseGiftThemeAncien(gcId);
+}
+function chooseGiftThemeAncien(gcId){
   var g=null;for(var i=0;i<GC.length;i++){if(GC[i].id===gcId){g=GC[i];break;}}
   if(!g)return;
   var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="max-height:90vh;overflow-y:auto">';
@@ -32296,7 +32410,9 @@ var LX_CFG_SECTIONS = [
   // créées sans produit -> enregistrées (avant : en mémoire seulement, perdues au rechargement)
   {k:"prodicons", mem:function(){return (window.PRODICONS && typeof window.PRODICONS==="object")?window.PRODICONS:undefined;}, set:function(v){window.PRODICONS=(v&&typeof v==="object")?v:{};}},
   {k:"app_bg_op", mem:function(){return (window._bgOp!=null && isFinite(+window._bgOp))?Number(window._bgOp):undefined;}, set:function(v){ window._bgOp=Number(v); try{ var b=document.getElementById("appBg"); if(b&&isFinite(+v)) b.style.opacity=(+v)/100; }catch(_e){} }},
-  {k:"pcats", mem:function(){return Array.isArray(window.PCATS_EXTRA)?window.PCATS_EXTRA:undefined;}, set:function(v){ window.PCATS_EXTRA=Array.isArray(v)?v.slice():[]; _lxPcatsFusion(); }}
+  {k:"pcats", mem:function(){return Array.isArray(window.PCATS_EXTRA)?window.PCATS_EXTRA:undefined;}, set:function(v){ window.PCATS_EXTRA=Array.isArray(v)?v.slice():[]; _lxPcatsFusion(); }},
+  // 2026-10-31 : modele des bons cadeaux ("maison" | "ecrin" | "" = rendu historique). Valeur vide ecrite elle aussi (retour au rendu historique).
+  {k:"bonModele", mem:function(){ return (SALON_CONFIG && typeof SALON_CONFIG.bonModele==="string") ? SALON_CONFIG.bonModele : undefined; }, set:function(v){ SALON_CONFIG.bonModele=(v==="maison"||v==="ecrin")?v:""; }}
 ].concat(["metier","modeActivite","domicile","migrationStatus","migrationRequestedAt","migrationRequestId","migrationDataScope","migrationSourceSoftware","migrationRgpdSentAt","facebookUrl","instagramUrl","tiktokUrl"].map(function(n){
   var _vide=/Url$/.test(n); // 2026-10-11 : un lien de réseau social effacé ("") doit rester effacé
   return {k:n, mem:function(){ return (SALON_CONFIG && SALON_CONFIG[n]!==undefined && SALON_CONFIG[n]!==null && (_vide || SALON_CONFIG[n]!=="")) ? SALON_CONFIG[n] : undefined; },

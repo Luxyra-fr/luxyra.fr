@@ -1805,7 +1805,7 @@ async function handleBonCadeauStatut(request, env) {
     const b = await readJsonBody(request);
     const sid = String(b.session_id || "");
     if (!/^cs_(test|live)_[A-Za-z0-9]{10,}$/.test(sid)) return jsonResponse({ error: "Session invalide" }, 400);
-    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/cartes_cadeaux?select=id,code,valeur,payment_status,buyer_email,acheteur_luxyra_id,date_expiration&stripe_session_id=eq.${encodeURIComponent(sid)}&limit=1`, { headers: _sbHeaders(env) });
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/cartes_cadeaux?select=id,salon_id,code,valeur,payment_status,buyer_email,acheteur_luxyra_id,date_expiration,de,pour,message,theme_id,scope,usage_tva,tva_rate&stripe_session_id=eq.${encodeURIComponent(sid)}&limit=1`, { headers: _sbHeaders(env) });
     const a = r.ok ? await r.json() : [];
     const bc = Array.isArray(a) ? a[0] : null;
     if (!bc) return jsonResponse({ ok: true, paye: false });
@@ -1816,7 +1816,19 @@ async function handleBonCadeauStatut(request, env) {
         if (sess && sess.lx_id) await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/cartes_cadeaux?id=eq.${encodeURIComponent(bc.id)}&acheteur_luxyra_id=is.null`, { method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify({ acheteur_luxyra_id: sess.lx_id }) });
       } catch (_) {}
     }
-    return jsonResponse({ ok: true, paye: true, code: bc.code, valeur: Number(bc.valeur) || 0, date_expiration: bc.date_expiration || null, email: lxMasquerEmail(bc.buyer_email) });
+    // 2026-10-31 : de quoi afficher la carte au modèle de l'établissement (« Maison » / « Écrin ») sur la page de confirmation.
+    // De / pour / message : saisis par l'acheteur lui-même (seul détenteur de la session Stripe). Établissement : données publiques (salons_public).
+    let carte = null;
+    try {
+      const sr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salons_public?select=nom,sous_titre,adresse,cp,ville,tel,logo,couleur_primaire,taux_tva,config_json&id=eq.${encodeURIComponent(bc.salon_id)}&limit=1`, { headers: _sbHeaders(env) });
+      const sa = sr.ok ? await sr.json() : [];
+      const s0 = Array.isArray(sa) ? sa[0] : null;
+      let cfg = s0 && s0.config_json; if (typeof cfg === "string") { try { cfg = JSON.parse(cfg); } catch (_) { cfg = null; } }
+      const modele = cfg && (cfg.bonModele === "maison" || cfg.bonModele === "ecrin") ? cfg.bonModele : "";
+      if (s0 && modele) carte = { modele, de: bc.de || "", pour: bc.pour || "", message: bc.message || "", theme_id: bc.theme_id || "", scope: bc.scope || "tout", usage_tva: bc.usage_tva || null, tva_rate: bc.tva_rate,
+        salon: { nom: s0.nom || "", sous_titre: s0.sous_titre || "", adresse: s0.adresse || "", cp: s0.cp || "", ville: s0.ville || "", tel: s0.tel || "", logo: (s0.logo && String(s0.logo).length <= 400000) ? s0.logo : "", /* logo trop lourd : carte typographique */ couleur_primaire: s0.couleur_primaire || "", taux_tva: s0.taux_tva } };
+    } catch (_) { carte = null; }
+    return jsonResponse({ ok: true, paye: true, code: bc.code, valeur: Number(bc.valeur) || 0, date_expiration: bc.date_expiration || null, email: lxMasquerEmail(bc.buyer_email), carte });
   } catch (e) { return jsonResponse({ error: "Erreur serveur" }, 500); }
 }
 // POST /api/client/bons-cadeaux {session_token}
