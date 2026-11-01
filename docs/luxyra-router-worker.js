@@ -5065,8 +5065,15 @@ async function handleAdminSmsStop(request, env) {
 // 2026-10-10 : nouvel endpoint Brevo `/v3/transactionalSMS/send` (l'ancien `/sms` est déprécié) avec accusés de
 // réception (webUrl) et un tag par salon. Repli automatique sur l'ancien endpoint si le nouveau est indisponible
 // (5xx / 404) : un rappel ne doit jamais être perdu à cause du changement.
+function lxSmsExpediteur(v) {
+  const x = String(v || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Za-z0-9 ]+/g, "").replace(/\s+/g, " ").trim().slice(0, 11).trim();
+  return /[A-Za-z]/.test(x) ? x : "Luxyra";
+}
 async function brevoSendSms(env, { to, content, sender, tag, webUrl, marketing }) {
   content = lxSmsGsm(content);
+  // 01/11/2026 : expéditeur conforme Brevo (lettres/chiffres/espaces, 11 caractères max, sans accent) :
+  // « O'R STUDIO » était refusé (« Invalid sender name. Special characters are not allowed ») -> « OR STUDIO ».
+  sender = lxSmsExpediteur(sender);
   // 2026-10-17 : SMS publicitaire -> type marketing. Plus de mention Brevo « STOP au [STOP_CODE] » (décision du 17/10) :
   // le lien « Stop SMS: luxyra.fr/s/<code> » est déjà dans le contenu (file SQL ou handleSmsCustom).
   const typeSms = marketing ? "marketing" : "transactional";
