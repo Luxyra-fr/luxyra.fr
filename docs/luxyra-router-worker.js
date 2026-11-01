@@ -5066,7 +5066,7 @@ async function handleAdminSmsStop(request, env) {
 // réception (webUrl) et un tag par salon. Repli automatique sur l'ancien endpoint si le nouveau est indisponible
 // (5xx / 404) : un rappel ne doit jamais être perdu à cause du changement.
 function lxSmsExpediteur(v) {
-  const x = String(v || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Za-z0-9 ]+/g, "").replace(/\s+/g, " ").trim().slice(0, 11).trim();
+  const x = String(v || "").replace(/ß/g, "ss").replace(/[Ææ]/g, m => m === "Æ" ? "AE" : "ae").replace(/[Œœ]/g, m => m === "Œ" ? "OE" : "oe").replace(/[Øø]/g, m => m === "Ø" ? "O" : "o").replace(/[Łł]/g, m => m === "Ł" ? "L" : "l").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/\s/g, " ").replace(/[^A-Za-z0-9 ]+/g, "").replace(/\s+/g, " ").trim().slice(0, 11).trim();
   return /[A-Za-z]/.test(x) ? x : "Luxyra";
 }
 async function brevoSendSms(env, { to, content, sender, tag, webUrl, marketing }) {
