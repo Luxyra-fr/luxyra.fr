@@ -1451,7 +1451,8 @@ async function handleSwitchPlan(request, env) {
     if (!sub?.items?.data?.[0]) return jsonResponse({ error: "Impossible de lire l'abonnement" }, 500);
     const _r = await lxChangerFormuleSub(env, salon, plan, sub);
     if (_r.ok) return jsonResponse({ success: true, plan });
-    return jsonResponse({ error: "Erreur Stripe: " + JSON.stringify(_r.updated) }, 500);
+    try { await reportWorkerError(env, "worker:switch-plan", new Error("changement de formule refusé par Stripe"), { salon_id: salon.id, reponse: JSON.stringify(_r.updated || null).slice(0, 400) }, "error"); } catch (_) {}
+    return jsonResponse({ error: "Le changement de formule n'a pas pu être fait. Réessayez dans un instant ou contactez le support." }, 500);
   } catch(e) { { try { await reportWorkerError(env, "worker:api", e, { route: 'Switch error' }, "error"); } catch (_) {} return jsonResponse({ error: "Erreur interne, réessayez dans un instant." }, 500); } }
 }
 // 2026-10-31 (contre-audit 5, R2) : cœur du changement de formule, partagé par switch-plan et la reprise d'un abonnement
@@ -1563,7 +1564,7 @@ async function handleConnectOnboard(request, env) {
       type: "account_onboarding",
     });
 
-    if (!link?.url) return jsonResponse({ error: "Erreur lien onboarding: " + JSON.stringify(link) }, 500);
+    if (!link?.url) { try { await reportWorkerError(env, "worker:connect-onboard", new Error("lien d'inscription Stripe non créé"), { reponse: JSON.stringify(link || null).slice(0, 400) }, "error"); } catch (_) {} return jsonResponse({ error: "Le lien d'inscription Stripe n'a pas pu être créé. Réessayez dans un instant." }, 500); }
     return jsonResponse({ url: link.url, account_id: account.id });
   } catch(e) { { try { await reportWorkerError(env, "worker:api", e, { route: 'Connect onboard error' }, "error"); } catch (_) {} return jsonResponse({ error: "Erreur interne, réessayez dans un instant." }, 500); } }
 }
@@ -1656,6 +1657,7 @@ async function handleConnectPayment(request, env) {
     // 2026-10-14 audit : le montant d'un acompte / d'une empreinte n'est plus celui envoyé par le navigateur : il est relu en
     // base (rdv_online.acompte_montant / empreinte_amount) ; un écart avec le montant demandé est refusé.
     let amount = _body.amount;
+    let _rdvLib = null;
     if (!salon_id || !amount) return jsonResponse({ error: "salon_id et amount requis" }, 400);
     // 01/11/2026 (audit global serveur I2) : route publique -> seulement acompte / empreinte / carte d'abonnement d'un RDV
     // ou d'une carte réellement en attente (montant relu en base) ; description écrite ici ; UUID validé ; débit limité.
@@ -1693,7 +1695,7 @@ async function handleConnectPayment(request, env) {
       if (_type === "acompte" || _type === "empreinte" || capture_method === "manual") {
         const _rid = String(metadata?.rdv_id || "");
         if (!/^[0-9a-f-]{36}$/i.test(_rid)) return jsonResponse({ error: "rdv_id requis" }, 400);
-        const _r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=id,salon_id,status,acompte_paye,acompte_montant,empreinte_amount,empreinte_status&id=eq.${encodeURIComponent(_rid)}&limit=1`, { headers: _sbHeaders(env) });
+        const _r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=id,salon_id,status,acompte_paye,acompte_montant,empreinte_amount,empreinte_status,service_nom,date_rdv,heure_rdv&id=eq.${encodeURIComponent(_rid)}&limit=1`, { headers: _sbHeaders(env) });
         const _a = _r.ok ? await _r.json() : [];
         if (!Array.isArray(_a) || !_a[0] || String(_a[0].salon_id) !== String(salon_id)) return jsonResponse({ error: "Rendez-vous introuvable pour ce salon" }, 400);
         // 2026-10-11 : jamais de paiement pour un RDV annulé / refusé / terminé, ni d'acompte déjà payé
@@ -1712,6 +1714,7 @@ async function handleConnectPayment(request, env) {
           return jsonResponse({ error: "Montant incohérent avec le rendez-vous : rechargez la page." }, 409);
         }
         amount = _mtBase / 100;
+        _rdvLib = _a[0]; // 01/11 (contre-audit S2) : prestation / date / heure relues en base pour le libellé du paiement
       }
     }
 
@@ -1722,7 +1725,14 @@ async function handleConnectPayment(request, env) {
       const _tp = metadata?.type || "acompte";
       const _nom = String(salon.nom || "Établissement").replace(/[\u0000-\u001f<>]/g, "").slice(0, 60);
       const _lib = _tp === "carte_abo" ? "Carte d'abonnement" : ((_tp === "empreinte" || capture_method === "manual") ? "Empreinte bancaire (garantie du rendez-vous)" : "Acompte du rendez-vous");
-      _body.__desc = `${_lib} — ${_nom}`;
+      let _det = "";
+      if (_rdvLib) {
+        const _pr = String(_rdvLib.service_nom || "").replace(/[\u0000-\u001f<>]/g, "").slice(0, 60);
+        const _dt = /^\d{4}-\d{2}-\d{2}$/.test(String(_rdvLib.date_rdv || "")) ? String(_rdvLib.date_rdv).split("-").reverse().join("/") : "";
+        const _hr = String(_rdvLib.heure_rdv || "").slice(0, 5);
+        _det = [_pr, _dt && ("le " + _dt + (/^\d{2}:\d{2}$/.test(_hr) ? " à " + _hr : ""))].filter(Boolean).join(" ");
+      }
+      _body.__desc = `${_lib}${_det ? " : " + _det : ""} — ${_nom}`.slice(0, 200);
     }
 
     // Check Connect account is active
@@ -2417,10 +2427,12 @@ async function handleCcAction(request, env) {
       if (!["pending_payment", "a_preparer", "prete"].includes(cmd.status)) return jsonResponse({ error: "Commande non annulable (" + cmd.status + ")" }, 409);
       let refundId = null;
       if (cmd.paye && cmd.payment_intent_id) {
-        const rf = cmd.stripe_account
-          ? await stripeAPI(env, "refunds", { payment_intent: cmd.payment_intent_id, "metadata[commande_id]": cmd.id }, "POST", cmd.stripe_account, `lx_cc_rbt_${cmd.id}`)
-          : await stripeAPI(env, "refunds", { payment_intent: cmd.payment_intent_id, reverse_transfer: "true", "metadata[commande_id]": cmd.id }, "POST", null, `lx_cc_rbt_${cmd.id}`);
-        if (!rf?.id) return jsonResponse({ error: "Remboursement refusé par Stripe : " + (rf?.error?.message || "erreur") }, 502);
+        // 01/11 (contre-audit S2 I-3) : remboursement déjà fait (reprise) -> repris ; sinon clé avec tranche de 10 min
+        const _fdC = await lxRemboursementsFaits(env, cmd.payment_intent_id, cmd.stripe_account || null);
+        const rf = (_fdC && _fdC.premier && _fdC.total >= Math.round((Number(cmd.total) || 0) * 100)) ? { id: _fdC.premier } : (cmd.stripe_account
+          ? await stripeAPI(env, "refunds", { payment_intent: cmd.payment_intent_id, "metadata[commande_id]": cmd.id }, "POST", cmd.stripe_account, lxIdemTranche(`lx_cc_rbt_${cmd.id}`))
+          : await stripeAPI(env, "refunds", { payment_intent: cmd.payment_intent_id, reverse_transfer: "true", "metadata[commande_id]": cmd.id }, "POST", null, lxIdemTranche(`lx_cc_rbt_${cmd.id}`)));
+        if (!rf?.id) { try { await reportWorkerError(env, "worker:cc-annulation", new Error("remboursement refusé : " + String(rf?.error?.message || "erreur").slice(0, 200)), { commande_id: cmd.id }, "warning"); } catch (_) {} return jsonResponse({ error: "Le remboursement n'a pas pu être fait pour le moment. Réessayez dans quelques minutes ou contactez le support." }, 502); }
         refundId = rf.id;
       }
       // FIX 2026-10-09 : si la commande n'était pas payée à la lecture, on n'annule que si elle ne l'est toujours pas
@@ -2603,7 +2615,8 @@ async function lxConnectEvenementLegitime(env, compte, md) {
   try {
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     const sid = String(md.salon_id || "");
-    const lire = async (q) => { const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/${q}`, { headers: _sbHeaders(env) }); return r.ok ? await r.json() : null; };
+    // 01/11 (contre-audit S2 I-1a) : base indisponible -> exception -> 500 (Stripe rejoue) ; false = introuvable / incohérent seulement
+    const lire = async (q) => { const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/${q}`, { headers: _sbHeaders(env) }); if (!r.ok) throw new Error("lecture " + r.status); const j = await r.json(); if (!Array.isArray(j)) throw new Error("lecture invalide"); return j; };
     let salonObjet = null, compteObjet = null;
     if (md.type === "click_collect") {
       if (!uuid.test(String(md.commande_id || ""))) return false;
@@ -2616,7 +2629,9 @@ async function lxConnectEvenementLegitime(env, compte, md) {
     } else if (md.type === "rdv_demande_acompte") {
       const tk = String(md.proposal_token || ""); if (!/^[A-Za-z0-9_-]{10,200}$/.test(tk)) return false;
       const c = await lire(`rdv_demandes?proposal_token=eq.${encodeURIComponent(tk)}&select=salon_id&limit=1`);
-      if (!c || !c[0]) return false; salonObjet = c[0].salon_id;
+      // 01/11 (I-1b) : lien remplacé (jeton disparu) -> on continue avec md.salon_id contrôlé contre le compte Connect,
+      // pour que la finalisation rembourse automatiquement le paiement orphelin
+      if (c[0]) salonObjet = c[0].salon_id;
     } else if (md.rdv_id) {
       if (!uuid.test(String(md.rdv_id))) return false;
       const c = await lire(`rdv_online?id=eq.${md.rdv_id}&select=salon_id,stripe_account&limit=1`);
@@ -2628,7 +2643,7 @@ async function lxConnectEvenementLegitime(env, compte, md) {
     if (compteObjet && compteObjet === compte) return true;
     const s = await lire(`salons?id=eq.${salonId}&select=stripe_connect_id&limit=1`);
     return !!(s && s[0] && s[0].stripe_connect_id && s[0].stripe_connect_id === compte);
-  } catch (_) { return false; }
+  } catch (e) { throw e; } // erreur technique : remonte au gestionnaire (500, Stripe rejoue)
 }
 
 async function handleWebhookConnect(request, env) {
@@ -3200,7 +3215,7 @@ async function handleAdminStripe(request, env) {
       if (!motif) return jsonResponse({ error: "Motif obligatoire" }, 400);
       const params = { payment_intent: pi.id, amount: String(montant), "metadata[par]": admin, "metadata[motif]": motif };
       if (estClient && !piCompte) params.reverse_transfer = "true";
-      const rf = await stripeAPI(env, "refunds", params, "POST", piCompte, `lx_adm_rbt_${pi.id}_${reste}_${montant}`); // 01/11 : idempotent (double clic)
+      const rf = await stripeAPI(env, "refunds", params, "POST", piCompte, lxIdemTranche(`lx_adm_rbt_${pi.id}_${reste}_${montant}`)); // 01/11 : idempotent (double clic), tranche 10 min
       if (!rf?.id) return jsonResponse({ error: "Stripe : " + (rf?.error?.message || "remboursement refusé") }, 502);
       await saLog(env, "STRIPE_REMBOURSEMENT", salon.id, `${saEur(montant)} € sur ${pi.id} (${piCompte ? "paiement client sur le compte du salon" : estClient ? "paiement client (ancien mode), repris au salon" : "abonnement Luxyra"}) par ${admin} — ${motif}`);
       return jsonResponse({ ok: true, refund_id: rf.id, montant: saEur(montant) });
@@ -4537,6 +4552,26 @@ async function stripeAPI(env, endpoint, params, method = "POST", compte = null, 
   return _res;
 }
 
+// 01/11/2026 (contre-audit S2 I-3) : clé d'idempotence avec tranche de 10 min — Stripe garde aussi la réponse d'ÉCHEC d'une clé
+// pendant 24 h ; une tranche courte permet de réessayer après correction (ex. solde Connect réapprovisionné) sans double
+// remboursement (les appelants vérifient en plus les remboursements déjà faits).
+function lxIdemTranche(cle) { return String(cle) + "_t" + Math.floor(Date.now() / 6e5); }
+// Remboursements déjà faits (non échoués) sur un paiement : { total (centimes), premier (id) } — null si lecture impossible
+async function lxRemboursementsFaits(env, piId, compte) {
+  try {
+    const ex = await stripeAPI(env, `refunds?payment_intent=${encodeURIComponent(piId)}&limit=100`, null, "GET", compte || null);
+    if (!ex || !Array.isArray(ex.data)) return null;
+    const ok = ex.data.filter((x) => x && x.id && !["failed", "canceled"].includes(String(x.status || "")));
+    // Stripe liste du plus récent au plus ancien : « premier » = le remboursement le plus récent
+    return { total: ok.reduce((a, x) => a + (Number(x.amount) || 0), 0), premier: ok[0] ? ok[0].id : null, statut: ok[0] ? ok[0].status : null, n: ok.length };
+  } catch (_) { return null; }
+}
+// Erreur Stripe « à rejouer » (course entre deux appels ou panne passagère) : on ne doit rien enregistrer
+function lxStripeErreurTransitoire(r) {
+  const e = r && r.error; if (!e) return false;
+  return e.code === "idempotency_key_in_use" || e.type === "api_error" || e.type === "upstream_non_json" || (Number(e.http_status) >= 500);
+}
+
 async function getOrCreateStripeCustomer(env, email, salonId) {
   try {
     const salon = await supabaseGet(env, salonId);
@@ -5402,7 +5437,7 @@ async function handleEmailTicket(request, env) {
   if (!ticketHtml) return jsonResponse({ error: "ticketHtml requis" }, 400);
   // 01/11/2026 (audit global serveur I3) : destinataire unique valide, n° de ticket simple, noms nettoyés ; pour un établissement,
   // nom et adresse de réponse lus en base et plafond quotidien persistant (300/jour, réglable email_ticket_max_jour).
-  if (typeof clientEmail !== "string" || !/^[^\s@<>,;]{1,64}@[^\s@<>,;]{1,190}\.[A-Za-z]{2,24}$/.test(clientEmail.trim())) return jsonResponse({ error: "Adresse e-mail invalide" }, 400);
+  if (typeof clientEmail !== "string" || !/^[^\s@<>,;]{1,64}@[^\s@<>,;]{1,190}\.[A-Za-z0-9-]{2,63}$/.test(clientEmail.trim())) return jsonResponse({ error: "Adresse e-mail invalide" }, 400);
   clientEmail = clientEmail.trim();
   ticketNum = String(ticketNum).replace(/[^A-Za-z0-9 _.\/-]/g, "").slice(0, 40);
   if (!ticketNum) return jsonResponse({ error: "ticketNum invalide" }, 400);
@@ -5412,11 +5447,10 @@ async function handleEmailTicket(request, env) {
   if (_acces.ok && !_acces.internal && _acces.user && !lxIsAdminUser(_acces.user)) {
     const _sidT = await lxEmailSalonAppelant(env, _acces, body.salon_id);
     if (!_sidT) return jsonResponse({ error: "Envoi réservé à l'établissement." }, 403);
-    try { const _st = await supabaseGet(env, _sidT); if (_st) { salonName = _np(_st.nom || salonName, 70); salonEmail = /^[^\s@<>]+@[^\s@<>]+\.[A-Za-z]{2,24}$/.test(String(_st.email || "")) ? String(_st.email) : null; } } catch (_) {}
+    try { const _st = await supabaseGet(env, _sidT); if (_st) { salonName = _np(_st.nom || salonName, 70); salonEmail = /^[^\s@<>]+@[^\s@<>]+\.[A-Za-z0-9-]{2,63}$/.test(String(_st.email || "")) ? String(_st.email) : null; } } catch (_) {}
     const _qT = await lxQuotaJour(env, _sidT, "email_ticket", await lxConfigNombre(env, "email_ticket_max_jour", 300));
     if (_qT === false) return jsonResponse({ success: false, error: "Limite du jour atteinte pour l'envoi des tickets par e-mail.", code: "quota_jour" }, 429);
-    if (_qT !== true) return jsonResponse({ success: false, error: "Envoi momentanément indisponible : réessayez dans quelques minutes." }, 503);
-    _quotaTk = _sidT;
+    if (_qT === true) _quotaTk = _sidT; // compteur indisponible (null) : ticket transactionnel envoyé quand même (alerte levée)
   } else if (!_acces.ok) { salonName = _np(salonName, 70); }
   // FIX 2026-05-14 : lien désinscription RGPD obligatoire si clientId fourni
   let unsubLink = "";
@@ -5541,7 +5575,7 @@ async function handleEmailCustom(request, env) {
   // 01/11/2026 (audit global serveur I3) : un seul destinataire valide ; depuis le navigateur, un destinataire LIBRE n'est permis
   // qu'au propriétaire d'un établissement actif (nom d'expéditeur et adresse de réponse lus en base) ; sinon seulement l'équipe
   // Luxyra ou sa propre adresse. Noms nettoyés (pas de balise, pas de saut de ligne).
-  if (typeof to !== "string" || !/^[^\s@<>,;]{1,64}@[^\s@<>,;]{1,190}\.[A-Za-z]{2,24}$/.test(to.trim())) return jsonResponse({ error: "Adresse du destinataire invalide" }, 400);
+  if (typeof to !== "string" || !/^[^\s@<>,;]{1,64}@[^\s@<>,;]{1,190}\.[A-Za-z0-9-]{2,63}$/.test(to.trim())) return jsonResponse({ error: "Adresse du destinataire invalide" }, 400);
   to = to.trim();
   const _nomPropre = (v, n) => String(v || "").replace(/[\u0000-\u001f<>"]/g, "").replace(/\s+/g, " ").trim().slice(0, n);
   toName = _nomPropre(toName, 80); salonName = _nomPropre(salonName, 70); subject = String(subject).replace(/[\r\n]+/g, " ").slice(0, 200);
@@ -5555,9 +5589,9 @@ async function handleEmailCustom(request, env) {
     if (!_equipeOuSoi && !_actif) return jsonResponse({ error: "Envoi réservé à un établissement actif." }, 403);
     if (_actif && !_equipeOuSoi) {
       salonName = _nomPropre(_sal.nom || "Luxyra", 70);
-      salonEmail = /^[^\s@<>]+@[^\s@<>]+\.[A-Za-z]{2,24}$/.test(String(_sal.email || "")) ? String(_sal.email) : undefined;
+      salonEmail = /^[^\s@<>]+@[^\s@<>]+\.[A-Za-z0-9-]{2,63}$/.test(String(_sal.email || "")) ? String(_sal.email) : undefined;
     } else if (!_equipeOuSoi) { salonName = "Luxyra"; salonEmail = undefined; }
-    if (salonEmail && !/^[^\s@<>]+@[^\s@<>]+\.[A-Za-z]{2,24}$/.test(String(salonEmail))) salonEmail = undefined;
+    if (salonEmail && !/^[^\s@<>]+@[^\s@<>]+\.[A-Za-z0-9-]{2,63}$/.test(String(salonEmail))) salonEmail = undefined;
   }
   // 2026-10-15 : anti-doublon multi-appareils (voir lxEmailReserver). Appels serveur : déjà réservés en base.
   let _res = { cle: null };
@@ -5582,7 +5616,9 @@ async function handleEmailCustom(request, env) {
       return jsonResponse({ success: false, error: `Limite du jour atteinte (${_maxJ} e-mails). Réessayez demain ou contactez Luxyra.`, code: "quota_jour" }, 429);
     }
     if (_q === true) _quotaId = _idQuota;
-    else if (_q !== false) return jsonResponse({ success: false, error: "Envoi momentanément indisponible : réessayez dans quelques minutes.", code: "quota_indisponible" }, 503); // 01/11 : plus d'envoi sans compteur (navigateur seulement ; les rappels serveur ne passent pas ici)
+    // 01/11 (contre-audit S2 I-4) : compteur indisponible -> les e-mails TRANSACTIONNELS (confirmation, rappel, ticket…) partent
+    // quand même (alerte déjà levée par lxQuotaJour, 1/h) ; seuls les envois marketing / de masse attendent le compteur.
+    else if (_q !== false && LX_EMAIL_CONTEXTES_MARKETING.has(String(_corps.context || ""))) return jsonResponse({ success: false, error: "Envoi momentanément indisponible : réessayez dans quelques minutes.", code: "quota_indisponible" }, 503);
   }
   // 2026-10-17 audit réglages (#4) : campagnes / anniversaires / relances -> lien « Se désinscrire » + en-tête List-Unsubscribe.
   // Lien fourni par le serveur (appel interne, déjà présent dans le HTML) ou calculé ici pour la fiche du salon de l'appelant.
@@ -6993,7 +7029,7 @@ async function handleAcompteFinalize(request, env, opts) {
         // 01/11/2026 (audit global I6) : remboursement TOTAL immédiat (même schéma que le montant incohérent ci-dessus : l'acompte
         // n'est pas enregistré, donc aucun ticket « Acompte en ligne » ; idempotent par payment_intent ; page + webhook = 1 seul).
         const _cptI = _compteA || null;
-        let _rbtI = null;
+        let _rbtI = null, _transI = false;
         try {
           if (piId) {
             const _exI = await stripeAPI(env, `refunds?payment_intent=${encodeURIComponent(piId)}&limit=10`, null, "GET", _cptI);
@@ -7001,15 +7037,26 @@ async function handleAcompteFinalize(request, env, opts) {
             if (_okI) _rbtI = _okI.id;
             else {
               const _rfI = _cptI
-                ? await stripeAPI(env, "refunds", { payment_intent: piId, "metadata[rdv_id]": String(rdv_id), "metadata[motif]": "rdv_inactif" }, "POST", _cptI, "lx_acompte_inactif_" + piId)
-                : await stripeAPI(env, "refunds", { payment_intent: piId, reverse_transfer: "true", "metadata[rdv_id]": String(rdv_id), "metadata[motif]": "rdv_inactif" }, "POST", null, "lx_acompte_inactif_" + piId);
+                ? await stripeAPI(env, "refunds", { payment_intent: piId, "metadata[rdv_id]": String(rdv_id), "metadata[motif]": "rdv_inactif" }, "POST", _cptI, lxIdemTranche("lx_acompte_inactif_" + piId))
+                : await stripeAPI(env, "refunds", { payment_intent: piId, reverse_transfer: "true", "metadata[rdv_id]": String(rdv_id), "metadata[motif]": "rdv_inactif" }, "POST", null, lxIdemTranche("lx_acompte_inactif_" + piId));
               _rbtI = (_rfI && _rfI.id) ? _rfI.id : null;
+              if (!_rbtI) {
+                // 01/11 (contre-audit S2 I-2) : page + webhook simultanés -> l'autre appel a peut-être déjà remboursé : relire
+                _transI = lxStripeErreurTransitoire(_rfI);
+                await new Promise((ok) => setTimeout(ok, 1000));
+                const _re = await lxRemboursementsFaits(env, piId, _cptI);
+                if (_re && _re.premier) _rbtI = _re.premier;
+              }
             }
           }
-        } catch (_eI) { _rbtI = null; }
+        } catch (_eI) { _rbtI = null; _transI = true; }
+        // erreur passagère (clé en cours d'utilisation, panne Stripe) : RIEN n'est enregistré, l'appel sera rejoué (Stripe / page)
+        if (!_rbtI && _transI) return jsonResponse({ error: "Vérification du paiement en cours, réessayez dans un instant.", en_cours: true }, 503);
         if (_rbtI) {
           try { await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?id=eq.${encodeURIComponent(rdv_id)}&acompte_paye=not.is.true`, { method: "PATCH", headers: _sbHeaders(env, { "Prefer": "return=minimal" }), body: JSON.stringify({ refund_id: _rbtI, refund_error: "rdv_inactif " + String(piId || ""), stripe_account: _cptI }) }); } catch (_) {}
-          await reportWorkerError(env, "worker:acompte-finalize", new Error("Acompte payé sur un RDV " + _rdv.status + " : remboursé automatiquement"), { rdv_id, payment_intent: piId, remboursement: _rbtI }, "warning");
+          // 01/11 (contre-audit S2) : RDV « terminé » (encaissé en caisse) ou absent -> alerte CRITIQUE : l'établissement doit vérifier
+          // qu'il n'a pas déduit cet acompte à la main en caisse (sinon il perd ce montant)
+          await reportWorkerError(env, "worker:acompte-finalize", new Error("Acompte payé sur un RDV " + _rdv.status + " : remboursé automatiquement" + (String(_rdv.status) === "done" ? " — RDV déjà encaissé : vérifier la caisse" : "")), { rdv_id, payment_intent: piId, remboursement: _rbtI }, String(_rdv.status) === "done" ? "critical" : "warning");
           return jsonResponse({ error: "Ce rendez-vous n'est plus actif : votre paiement a été remboursé.", rembourse: true }, 409);
         }
         // remboursement impossible -> ancien comportement (acompte enregistré + alerte critique pour remboursement manuel)
@@ -7166,7 +7213,10 @@ async function attemptAcompteRefund(env, rdv) {
     }
     // 2026-10-09 : paiement direct sur le compte du salon -> remboursement sur ce compte, sans reverse_transfer
     if (rdv.stripe_account && rdv.payment_intent_id) {
-      const rfd = await stripeAPI(env, "refunds", { payment_intent: rdv.payment_intent_id, "metadata[rdv_id]": String(rdv.id || ""), "metadata[salon_id]": String(rdv.salon_id || "") }, "POST", rdv.stripe_account, `lx_rbt_total_${String(rdv.id || "")}_${rdv.payment_intent_id}`);
+      // 01/11 (contre-audit S2 I-3) : déjà remboursé chez Stripe (reprise après un échec d'écriture en base) -> on le reprend
+      const _fdT = await lxRemboursementsFaits(env, rdv.payment_intent_id, rdv.stripe_account);
+      if (_fdT && _fdT.premier && _fdT.total >= Math.round(montant * 100)) return { refunded: true, refund_id: _fdT.premier, payment_intent: rdv.payment_intent_id, status: _fdT.statut };
+      const rfd = await stripeAPI(env, "refunds", { payment_intent: rdv.payment_intent_id, "metadata[rdv_id]": String(rdv.id || ""), "metadata[salon_id]": String(rdv.salon_id || "") }, "POST", rdv.stripe_account, lxIdemTranche(`lx_rbt_total_${String(rdv.id || "")}_${rdv.payment_intent_id}`));
       if (!rfd || rfd.error || !rfd.id) return { refunded: false, error: (rfd && rfd.error && rfd.error.message) || "échec refund Stripe", payment_intent: rdv.payment_intent_id };
       return { refunded: true, refund_id: rfd.id, payment_intent: rdv.payment_intent_id, status: rfd.status };
     }
@@ -7176,12 +7226,14 @@ async function attemptAcompteRefund(env, rdv) {
     if (!piId) return { refunded: false, error: "payment_intent introuvable (aucune correspondance unique côté Stripe)" };
 
     // 4) Remboursement Stripe (destination charge → reverse_transfer)
+    const _fdD = await lxRemboursementsFaits(env, piId, null);
+    if (_fdD && _fdD.premier && _fdD.total >= Math.round(montant * 100)) return { refunded: true, refund_id: _fdD.premier, payment_intent: piId, status: _fdD.statut };
     const refund = await stripeAPI(env, "refunds", {
       payment_intent: piId,
       reverse_transfer: "true",
       "metadata[rdv_id]": String(rdv.id || ""),
       "metadata[salon_id]": String(rdv.salon_id || "")
-    }, "POST", null, `lx_rbt_total_${String(rdv.id || "")}_${piId}`);
+    }, "POST", null, lxIdemTranche(`lx_rbt_total_${String(rdv.id || "")}_${piId}`));
     if (!refund || refund.error || !refund.id) {
       const e = refund && refund.error;
       const msg = (e && (e.message || e)) || "échec refund Stripe";
@@ -7274,7 +7326,15 @@ async function lxRembourserAcompteStripe(env, rdv, cents) {
     const meta = { "metadata[rdv_id]": String(rdv.id || ""), "metadata[salon_id]": String(rdv.salon_id || "") };
     // 01/11/2026 (audit global I5) : clé d'idempotence = RDV + déjà remboursé (en base) + montant -> un second clic ou une reprise
     // après un échec d'écriture en base renvoie le MÊME remboursement, jamais un deuxième.
-    const _idemR = `lx_rbt_${String(rdv.id || "")}_${Math.round((Number(rdv.acompte_rembourse_montant) || 0) * 100)}_${cents}`;
+    const _dejaBase = Math.round((Number(rdv.acompte_rembourse_montant) || 0) * 100);
+    const _idemR = lxIdemTranche(`lx_rbt_${String(rdv.id || "")}_${_dejaBase}_${cents}`);
+    // 01/11 (contre-audit S2 I-3) : Stripe a déjà remboursé PLUS que ce que la base connaît (écriture en base échouée après le
+    // remboursement) -> on reprend ce remboursement au lieu d'en créer un second (la tranche de 10 min ne protège plus au-delà)
+    const _piPre = rdv.payment_intent_id || ((rdv.stripe_payment_id && String(rdv.stripe_payment_id).startsWith("pi_")) ? rdv.stripe_payment_id : null);
+    if (_piPre) {
+      const _fdP = await lxRemboursementsFaits(env, _piPre, (rdv.stripe_account && rdv.payment_intent_id) ? rdv.stripe_account : null);
+      if (_fdP && _fdP.premier && _fdP.total >= _dejaBase + cents) return { ok: true, refund_id: _fdP.premier, payment_intent: _piPre, status: _fdP.statut, repris: true };
+    }
     if (rdv.stripe_account && rdv.payment_intent_id) {
       const rf = await stripeAPI(env, "refunds", { payment_intent: rdv.payment_intent_id, amount: String(cents), ...meta }, "POST", rdv.stripe_account, _idemR);
       if (!rf || rf.error || !rf.id) return { ok: false, error: (rf && rf.error && rf.error.message) || "échec refund Stripe", payment_intent: rdv.payment_intent_id };
@@ -7817,7 +7877,7 @@ async function handleClientInvite(request, env) {
     const _salI = await supabaseGet(env, salon_id).catch(() => null);
     const _qI = await lxQuotaJour(env, salon_id, "client_invite", await lxConfigNombre(env, "client_invite_max_jour", 100));
     if (_qI === false) return jsonResponse({ error: "Limite du jour atteinte pour les invitations." }, 429);
-    if (_qI !== true) return jsonResponse({ error: "Envoi momentanément indisponible : réessayez dans quelques minutes." }, 503);
+    const _quotaI = _qI === true; // compteur indisponible : invitation envoyée quand même (alerte levée par lxQuotaJour)
 
     // Insert l'invitation (token UUID auto via DEFAULT gen_random_uuid())
     const insertRes = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/client_invites`, {
@@ -7833,11 +7893,12 @@ async function handleClientInvite(request, env) {
     if (!insertRes.ok) {
       const t = await insertRes.text();
       console.error("client_invites insert failed:", insertRes.status, t);
+      if (_quotaI) await lxQuotaRendre(env, salon_id, "client_invite"); // 01/11 : unité rendue, l'invitation n'existe pas
       return jsonResponse({ error: "Erreur création invitation" }, 500);
     }
     const inserted = await insertRes.json();
     const token = inserted[0]?.token;
-    if (!token) return jsonResponse({ error: "Token non généré" }, 500);
+    if (!token) { if (_quotaI) await lxQuotaRendre(env, salon_id, "client_invite"); return jsonResponse({ error: "Token non généré" }, 500); }
 
     const inviteUrl = `https://luxyra.fr/compte?invite=${token}`;
     const _e = (v) => String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -7987,7 +8048,7 @@ async function handleSalonAvailability(request, env) {
     const headers = { "apikey": sbKey, "Authorization": "Bearer " + sbKey, "Content-Type": "application/json" };
     // 01/11/2026 (audit global I7) : route publique -> débit limité et fenêtre bornée (veille .. +366 j = délai de réservation
     // maximal réglable dans l'app) ; plus de lecture de l'historique ni de période illimitée.
-    if (!checkRateLimit("availability:" + (request.headers.get("cf-connecting-ip") || "?"), 40)) return jsonResponse({ error: "Trop de requêtes. Réessayez dans 1 minute." }, 429);
+    if (!checkRateLimit("availability:" + (request.headers.get("cf-connecting-ip") || "?"), 40)) return jsonResponse({ error: "Trop de requêtes. Réessayez dans 1 minute.", code: "rate_limited", garder_donnees: true }, 429); // 01/11 : code explicite (le site garde ses créneaux précédents)
     const _auj = lxParisAujourdhui();
     const _min = new Date(new Date(_auj + "T12:00:00Z").getTime() - 86400000).toISOString().slice(0, 10);
     const _max = new Date(new Date(_auj + "T12:00:00Z").getTime() + 366 * 86400000).toISOString().slice(0, 10);
