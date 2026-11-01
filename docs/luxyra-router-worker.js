@@ -8310,12 +8310,12 @@ async function lxAnnuairePage(metierSlug, villeSlug) {
     const rows = await lxSeoFetch(`salons_public?or=(metier.in.(${M.luxyra.join(",")}),metiers_autres.ov.{${M.luxyra.join(",")}})&select=id,nom,slug,adresse,cp,ville,note_moyenne,nb_avis,mode_activite,sous_titre&limit=500`); // 2026-10-13 : métiers secondaires inclus
     // 2026-10-13 : site désactivé par l'établissement -> absent de l'annuaire
     let off = new Set();
-    try { off = new Set(((await lxSeoFetch(`site_config?site_actif=eq.false&select=salon_id&limit=1000`)) || []).map((x) => x.salon_id)); } catch (_) {}
+    try { off = new Set(((await lxSeoFetch(`site_config_public?site_actif=eq.false&select=salon_id&limit=1000`)) || []).map((x) => x.salon_id)); } catch (_) {}
     for (const s of (rows || [])) if (s.slug && !off.has(s.id) && lxAnnSlug(s.ville) === villeSlug) lx.push(s);
     // 2026-10-14 audit : réglages réels de chaque établissement (confirmation automatique, annulation en ligne)
     if (lx.length) {
       try {
-        const cf = (await lxSeoFetch(`site_config?salon_id=in.(${lx.map((x) => x.id).join(",")})&select=salon_id,confirmation_auto,politique_annulation&limit=500`)) || [];
+        const cf = (await lxSeoFetch(`site_config_public?salon_id=in.(${lx.map((x) => x.id).join(",")})&select=salon_id,confirmation_auto,politique_annulation&limit=500`)) || [];
         const parId = {}; for (const c of cf) parId[c.salon_id] = c;
         for (const x of lx) x._cfg = parId[x.id] || {};
       } catch (_) {}
@@ -8448,7 +8448,7 @@ async function lxBuildSalonSeo(slug, reserverIntent) {
 
     const [cfgRows, svcRows] = await Promise.all([
       lxSeoFetch(
-        `site_config?salon_id=eq.${encodeURIComponent(s.id)}` +
+        `site_config_public?salon_id=eq.${encodeURIComponent(s.id)}` + /* 01/11 : lecture publique par la vue (S3) */
         `&select=horaires_salon,description_salon,slogan,site_actif,reservation_active,photo_hero,confirmation_auto,politique_annulation&limit=1`
       ),
       lxSeoFetch(
