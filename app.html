@@ -36605,6 +36605,11 @@ async function doModifTicket(id,isPast){
   if(!_okJm) return;
   // 2026-10-17 retour partiel : retour enregistré sur un autre appareil -> pas de modification (contre-ticket total)
   try{ var _oMr=null; for(var _imr=0;_imr<AP.length;_imr++){ if(AP[_imr].id===id){ _oMr=AP[_imr]; break; } } if(_oMr&&typeof _lxRetoursEnBase==="function"){ var _rtM=await _lxRetoursEnBase(_oMr); if(_rtM===null){ showAlert(LX_RETOUR_CTRL_IMPOSSIBLE,"warning"); return; } /* 2026-10-17 retour partiel (audit) : contrôle impossible en ligne -> pas de contre-ticket */ if(_rtM&&_rtM.length){ showAlert("Ce ticket a déjà fait l’objet d’un retour partiel (ticket n°"+_rtM.map(function(r){ return r.tk||r.num||"--"; }).join(", n°")+") : il ne peut plus être modifié.","warning"); return; } } }catch(_eRtM){}
+  // 01/11/2026 (N6) : contre-ticket déjà enregistré pour ce ticket (autre appareil) -> pas de modification
+  try{ var _oMc=null; for(var _imc=0;_imc<AP.length;_imc++){ if(AP[_imc].id===id){ _oMc=AP[_imc]; break; } }
+    if(_oMc){ var _ctM=await _lxContraEnBase(_oMc); if(_ctM===null){ showAlert(LX_CONTRA_CTRL_IMPOSSIBLE,"warning"); return; }
+      if(_ctM.length){ showAlert("Le ticket n°"+(_oMc.tkNum||"--")+" est déjà annulé sur un autre appareil : modification impossible. Rechargez la liste des tickets.","warning"); return; } } }catch(_eCM){}
+  var _enLigneM=_lxEnLigneCaisse();
   var newPr=parseFloat(document.getElementById("mtVal").value);
   var newSId=parseInt(document.getElementById("mtSvc").value);
   var newStId=parseInt(document.getElementById("mtSt").value);
@@ -36622,15 +36627,22 @@ async function doModifTicket(id,isPast){
         // = newPr (oldPr passe - oldPr aujourd hui + newPr aujourd hui).
         // FIX 2026-07-11 : + cancelReason -> persiste le motif en DB (colonne cancel_reason),
         // comme la branche meme-jour ci-dessous. Sans lui le motif etait perdu au rechargement.
-        old.cancelled=true;old.cancelMotif=motif;old.cancelReason=motif;old.cancelDate=TD;old.cancelTs=new Date().toISOString();
-        if(typeof saveAppointment==="function")saveAppointment(old);
+        var _lxMarquerOld=function(){ old.cancelled=true;old.cancelMotif=motif;old.cancelReason=motif;old.cancelDate=TD;old.cancelTs=new Date().toISOString();
+        if(typeof saveAppointment==="function")saveAppointment(old); };
+        if(!_enLigneM) _lxMarquerOld(); // en ligne : après acceptation du contre-ticket (N6)
         var _tkContra=nextTicketNum();
-        var contraTk={id:U(),cId:old.cId,sId:old.sId,stId:old.stId,date:TD,time:new Date().toTimeString().slice(0,5),ts:new Date().toISOString(),pr:-(old.pr||0),brutTotal:-(old.brutTotal||old.pr||0),remise:0,items:[{name:"ANNULATION (modif) #"+(old.tkNum||"--"),price:-(old.pr||0),qty:1,remise:0}],st:"done",met:old.met||"",tkNum:_tkContra,isCancel:true,cancelRef:old.tkNum||old.id,cancelMotif:motif,fromCaisse:true};
+        var contraTk={id:U(),cId:old.cId,sId:old.sId,stId:old.stId,date:TD,time:new Date().toTimeString().slice(0,5),ts:new Date().toISOString(),pr:-(old.pr||0),brutTotal:-(old.brutTotal||old.pr||0),remise:0,items:[{name:"ANNULATION (modif) #"+(old.tkNum||"--"),price:-(old.pr||0),qty:1,remise:0}],st:"done",met:old.met||"",tkNum:_tkContra,isCancel:true,cancelRef:old.tkNum||old.id,cancelRefId:old.id,cancelMotif:motif,fromCaisse:true};
         if(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR){contraTk.operator_id=CURRENT_OPERATOR.id;contraTk.operator_name=CURRENT_OPERATOR.prenom+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:"");}
         chainTicket(contraTk);
+        if(_enLigneM){ // 01/11/2026 (N6) : contre-ticket au journal AVANT l'annulation de l'original et le nouveau ticket
+          var _rM=await _lxContraEnregistrerAvant(contraTk, _tkContra);
+          if(!_rM.ok){ try{ auditLog("TICKET_MODIF_REFUSEE","Modification #"+(old.tkNum||"--")+" non enregistrée : "+_rM.msg); }catch(_eA){}
+            showAlert("Modification NON enregistrée : "+_rM.msg+"\n\nAucun ticket n’a été créé et le ticket n°"+(old.tkNum||"--")+" n’est pas modifié.","error"); return; }
+          _lxMarquerOld();
+        }
         AP.push(contraTk);
         if(typeof saveAppointment==="function")saveAppointment(contraTk);
-        if(typeof saveTicketToDb==="function")saveTicketToDb(contraTk);
+        if(!_enLigneM&&typeof saveTicketToDb==="function")saveTicketToDb(contraTk);
         var _tkNew=nextTicketNum();
         var _svN=(typeof gS==="function")?gS(newSId||old.sId):null;
         var newModTk={id:U(),cId:old.cId,sId:newSId||old.sId,stId:newStId||old.stId,date:TD,time:old.time,ts:new Date().toISOString(),pr:newPr||old.pr,brutTotal:newPr||old.pr,remise:0,items:[{name:(_svN?_svN.n:"Prestation"),price:(newPr||old.pr),qty:1,remise:0}],st:"done",met:newMet||old.met,tkNum:_tkNew,modifFrom:old.tkNum||"--",modifMotif:motif,fromCaisse:true};
@@ -36659,15 +36671,22 @@ async function doModifTicket(id,isPast){
         // _lxExclCA/_lxIsSameDayContra) nette a ZERO : le CA et la cloture Z du jour ne retiennent
         // que le NOUVEAU montant, et CA du jour == somme des tickets scelles du jour
         // (oldPr - oldPr + newPr = newPr).
-        old.cancelled=true;old.cancelMotif=motif;old.cancelReason=motif;old.cancelDate=TD;old.cancelTs=new Date().toISOString();
-        if(typeof saveAppointment==="function")saveAppointment(old);
+        var _lxMarquerOld=function(){ old.cancelled=true;old.cancelMotif=motif;old.cancelReason=motif;old.cancelDate=TD;old.cancelTs=new Date().toISOString();
+        if(typeof saveAppointment==="function")saveAppointment(old); };
+        if(!_enLigneM) _lxMarquerOld(); // en ligne : après acceptation du contre-ticket (N6)
         var _tkContraSD=nextTicketNum();
-        var contraSD={id:U(),cId:old.cId,sId:old.sId,stId:old.stId,date:TD,time:new Date().toTimeString().slice(0,5),ts:new Date().toISOString(),pr:-(old.pr||0),brutTotal:-(old.brutTotal||old.pr||0),remise:0,items:[{name:"ANNULATION (modif) #"+(old.tkNum||"--"),price:-(old.pr||0),qty:1,remise:0}],st:"done",met:old.met||"",tkNum:_tkContraSD,isCancel:true,cancelRef:old.tkNum||old.id,cancelMotif:motif,contraSameDay:true,fromCaisse:true};
+        var contraSD={id:U(),cId:old.cId,sId:old.sId,stId:old.stId,date:TD,time:new Date().toTimeString().slice(0,5),ts:new Date().toISOString(),pr:-(old.pr||0),brutTotal:-(old.brutTotal||old.pr||0),remise:0,items:[{name:"ANNULATION (modif) #"+(old.tkNum||"--"),price:-(old.pr||0),qty:1,remise:0}],st:"done",met:old.met||"",tkNum:_tkContraSD,isCancel:true,cancelRef:old.tkNum||old.id,cancelRefId:old.id,cancelMotif:motif,contraSameDay:true,fromCaisse:true};
         if(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR){contraSD.operator_id=CURRENT_OPERATOR.id;contraSD.operator_name=CURRENT_OPERATOR.prenom+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:"");}
         chainTicket(contraSD);
+        if(_enLigneM){ // 01/11/2026 (N6) : contre-ticket au journal AVANT l'annulation de l'original et le nouveau ticket
+          var _rM=await _lxContraEnregistrerAvant(contraSD, _tkContraSD);
+          if(!_rM.ok){ try{ auditLog("TICKET_MODIF_REFUSEE","Modification #"+(old.tkNum||"--")+" non enregistrée : "+_rM.msg); }catch(_eA){}
+            showAlert("Modification NON enregistrée : "+_rM.msg+"\n\nAucun ticket n’a été créé et le ticket n°"+(old.tkNum||"--")+" n’est pas modifié.","error"); return; }
+          _lxMarquerOld();
+        }
         AP.push(contraSD);
         if(typeof saveAppointment==="function")saveAppointment(contraSD);
-        if(typeof saveTicketToDb==="function")saveTicketToDb(contraSD);
+        if(!_enLigneM&&typeof saveTicketToDb==="function")saveTicketToDb(contraSD);
         var _tkNewSD=nextTicketNum();
         var _svNSD=(typeof gS==="function")?gS(newSId||old.sId):null;
         var newModTk={id:U(),cId:old.cId,sId:newSId||old.sId,stId:newStId||old.stId,date:TD,time:old.time,ts:new Date().toISOString(),pr:newPr||old.pr,brutTotal:newPr||old.pr,remise:0,items:[{name:(_svNSD?_svNSD.n:"Prestation"),price:(newPr||old.pr),qty:1,remise:0}],st:"done",met:newMet||old.met,tkNum:_tkNewSD,modifFrom:old.tkNum||"--",modifMotif:motif,fromCaisse:true};
@@ -40165,6 +40184,42 @@ function cancelSecureTicket(id,motif){
 // 2026-10-14 : verrou PAR TICKET d'origine, tenu de l'entrée jusqu'au scellement du contre-ticket (et à l'inversion
 // des effets), libéré dans finally. Avant : seul _lxContraEnCours (global, relâché 1,5 s après le contrôle du jour)
 // -> deux appuis espacés pouvaient produire DEUX contre-tickets pour le même ticket.
+// 01/11/2026 (N6, contre-audit N5 B2) : un contre-ticket refusé par le serveur ne doit laisser AUCUNE trace locale (ticket d'origine
+// non marqué annulé, RDV non relibéré, effets de gestion non inversés). En ligne : contrôle préalable « déjà annulé » + enregistrement
+// au journal AVANT tout effet local. Hors connexion : comportement antérieur (file de secours ; la base refusera un doublon).
+var LX_CONTRA_CTRL_IMPOSSIBLE="Vérification impossible auprès du serveur (annulation déjà faite sur un autre appareil ?). Rien n’a été enregistré. Réessayez dans un instant.";
+function _lxEnLigneCaisse(){
+  try{ if(window._lxDemo) return false; if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId) return false;
+    if(typeof _isOnline!=="undefined"&&_isOnline===false) return false; if(typeof navigator!=="undefined"&&navigator.onLine===false) return false; return true; }catch(_e){ return false; }
+}
+async function _lxContraEnBase(orig){
+  try{
+    if(!orig||!orig.id||!_lxEnLigneCaisse()) return [];
+    var ids=_lxRetourIdsVariantes(orig.id);
+    var r1=_sb.from("tickets").select("id,num,tk:raw_data->>tkNum").eq("salon_id",_salonId).eq("raw_data->>isCancel","true").in("raw_data->>cancelRefId",ids).limit(5);
+    var refs=ids.slice(), partage=false;
+    try{ if(orig.tkNum!=null&&String(orig.tkNum)!==""){ var nb=0; AP.forEach(function(t){ if(t&&!t.isCancel&&String(t.tkNum)===String(orig.tkNum)) nb++; }); partage=nb>1; if(!partage) refs.push(String(orig.tkNum)); } }catch(_eP){}
+    var r2=_sb.from("tickets").select("id,num,tk:raw_data->>tkNum,rid:raw_data->>cancelRefId").eq("salon_id",_salonId).eq("raw_data->>isCancel","true").in("raw_data->>cancelRef",refs).limit(5);
+    var R=await Promise.all([_lxAvecDelai(r1,6000),_lxAvecDelai(r2,6000)]);
+    for(var i=0;i<R.length;i++){ if(!R[i]||R[i].__delai||R[i].error||!Array.isArray(R[i].data)) return null; }
+    // un contre-ticket qui désigne explicitement une AUTRE origine (cancelRefId) ne compte pas
+    var l2=(R[1].data||[]).filter(function(x){ return !x.rid || ids.indexOf(String(x.rid))>=0; });
+    return (R[0].data||[]).concat(l2);
+  }catch(_e){ return null; }
+}
+// Enregistre le contre-ticket au journal AVANT les effets locaux (en ligne). {ok:true,res} | {ok:false,msg} | {ok:true,differe:true} (hors connexion)
+async function _lxContraEnregistrerAvant(tk, numPris){
+  if(!_lxEnLigneCaisse()) return {ok:true, differe:true};
+  var res=null; try{ res=await saveTicketToDb(tk); }catch(_eS){ res=null; }
+  var _enFile=false; try{ _enFile=(window._walGetAll?window._walGetAll():[]).some(function(e){ return e&&!e.synced&&e.type==="ticket"&&e.data&&e.data.id===tk.id; }); }catch(_eW){}
+  if((res&&res.refusDefinitif)||(!res&&!tk.dbId&&!_enFile)){
+    try{ if(typeof tkN!=="undefined"&&tkN===numPris) tkN=numPris-1; }catch(_eN){}
+    try{ if(_lastTicketHash===tk.hash) _lastTicketHash=tk.prevHash; }catch(_eH){}
+    var m=(res&&res.error&&res.error.message)?String(res.error.message).replace(/^.*LX_RETOUR_REFUSE\s*:?\s*/,""):"connexion perdue pendant l’enregistrement";
+    return {ok:false, msg:m};
+  }
+  return {ok:true, res:res};
+}
 async function _cancelSecureTicketDo(id,motif){
   var _kV=String(id==null?"":id); window._lxContraVol=window._lxContraVol||{};
   if(_kV&&window._lxContraVol[_kV]){ try{ toast("Annulation de ce ticket d\u00e9j\u00e0 en cours\u2026","info"); }catch(_t){} return; }
@@ -40227,15 +40282,21 @@ async function _cancelSecureTicketDoUneFois(id,motif){
   var _planEffets=null;
   try{ _planEffets=await _lxEffetsPlanInverse(orig); }catch(_ePl){ console.warn("[annulation] effets",_ePl); }
   if(_lxAnnulationRefusee(orig)){ showAlert(_lxAnnulationRefusee(orig),"warning"); return; } // relu après l'attente
+  // 01/11/2026 (N6) : contre-ticket déjà enregistré pour ce ticket (autre appareil) -> rien n'est fait
+  var _ctB=await _lxContraEnBase(orig);
+  if(_ctB===null){ showAlert(LX_CONTRA_CTRL_IMPOSSIBLE,"warning"); return; }
+  if(_ctB.length){ showAlert("Le ticket n°"+(orig.tkNum||"--")+" est déjà annulé sur un autre appareil (contre-ticket n°"+(_ctB[0].tk||_ctB[0].num)+"). Rechargez la liste des tickets.","warning"); return; }
+  var _enLigneC=_lxEnLigneCaisse();
   // Mark original as cancelled
   // FIX 2026-07-11 : le motif n etait pose QUE sur cancelMotif (memoire seule) -> la colonne DB
   // cancel_reason (ecrite par saveAppointment depuis appt.cancelReason) restait vide, et le motif
   // disparaissait de l app + des exports au premier rechargement (il ne survivait que dans
   // audit_log). cancelReason/cancelDate sont AUTORISES sur une ligne scellee (cancel_reason /
   // cancel_date ne sont pas des champs proteges par appointments_nf525_protect).
-  orig.cancelled=true;orig.cancelDate=TD;orig.cancelMotif=motif;orig.cancelReason=motif;orig.cancelTs=new Date().toISOString();
   var _pOrig=null;
-  if(typeof saveAppointment==="function")_pOrig=saveAppointment(orig);
+  var _lxMarquerOrig=function(){ orig.cancelled=true;orig.cancelDate=TD;orig.cancelMotif=motif;orig.cancelReason=motif;orig.cancelTs=new Date().toISOString();
+    if(typeof saveAppointment==="function")_pOrig=saveAppointment(orig); };
+  if(!_enLigneC) _lxMarquerOrig(); // hors connexion : comportement antérieur ; en ligne : après acceptation du contre-ticket (N6)
   // NF525: Create counter-ticket (annulation) with negative amount
   var tkN=nextTicketNum();
   var cancelTicket={
@@ -40277,7 +40338,7 @@ async function _cancelSecureTicketDoUneFois(id,motif){
       return P;
     })(),
     st:"done",met:orig.met||"",tkNum:tkN,
-    isCancel:true,cancelRef:orig.tkNum||orig.id,cancelMotif:motif,
+    isCancel:true,cancelRef:orig.tkNum||orig.id,cancelRefId:orig.id,cancelMotif:motif, /* 01/11 (N6) : id de l'origine (n° imprimé parfois partagé entre deux postes) */
     // FIX 2026-07-11 : le contre-ticket porte lui-meme le marqueur "annulation du MEME JOUR"
     // (persiste en DB : appointments.contra_same_day). La paire (original + contra) nette a ZERO
     // dans tous les totaux du jour, SANS dependre de l etat de l original ni d un scan d AP,
@@ -40298,11 +40359,23 @@ async function _cancelSecureTicketDoUneFois(id,motif){
     cancelTicket.operator_name=CURRENT_OPERATOR.prenom+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:"");
   }
   chainTicket(cancelTicket);
+  var _pTkCancel=null;
+  if(_enLigneC){
+    // 01/11/2026 (N6) : en ligne, le contre-ticket est enregistré au journal AVANT tout effet local ; refusé -> rien n'est fait
+    var _rC=await _lxContraEnregistrerAvant(cancelTicket, tkN);
+    if(!_rC.ok){
+      try{ auditLog("TICKET_ANNULATION_REFUSEE","Annulation #"+(orig.tkNum||"--")+" non enregistrée : "+_rC.msg); }catch(_eA){}
+      showAlert("Annulation NON enregistrée : "+_rC.msg+"\n\nAucun contre-ticket n’a été créé et le ticket n°"+(orig.tkNum||"--")+" n’est pas annulé. Rechargez la liste des tickets puis réessayez.","error");
+      return;
+    }
+    _pTkCancel=_rC.res;
+    _lxMarquerOrig();
+  }
   AP.push(cancelTicket);
   if(typeof saveAppointment==="function")saveAppointment(cancelTicket);
   // FIX 2026-07-09 (NF525) : scelle le contre-ticket dans le journal tickets (mirror annulerAcompte).
   // Avant, l annulation n etait ecrite que dans appointments -> jamais dans la table tickets scellee.
-  var _pTkCancel=(typeof saveTicketToDb==="function")?saveTicketToDb(cancelTicket):null; // 01/11/2026 : attendu avant l'annulation des bons vendus (la base exige le contre-ticket)
+  if(!_enLigneC) _pTkCancel=(typeof saveTicketToDb==="function")?saveTicketToDb(cancelTicket):null; // 01/11/2026 : attendu avant l'annulation des bons vendus (la base exige le contre-ticket)
   // === FIX 2026-07-11 : RELIBERATION DU RDV (annulation MEME JOUR d un vrai RDV) ===
   // La ligne "orig" EST le ticket scelle (n\u00b0 de ticket, montant, items, hash) : on n y
   // touche PAS (elle reste visible "Annule" dans Gestion des tickets, reimprimable, et son
@@ -41132,7 +41205,7 @@ async function _lxRetourValiderUneFois(ctx){
 // (le ticket n'est ajouté à la caisse qu'après la réponse du serveur, cf. _lxRetourValiderUneFois).
 async function _lxRetourRefuseEcarter(tk, msg){
   try{
-    if(!tk||!tk.id||!_lxEstRetour(tk)) return false;
+    if(!tk||!tk.id||!(_lxEstRetour(tk)||tk.isCancel===true)) return false; // 01/11 (N6) : aussi un contre-ticket refusé au rejeu
     var ix=-1; for(var i=0;i<AP.length;i++){ if(AP[i]&&AP[i].id===tk.id){ ix=i; break; } }
     if(ix<0) return false;
     var loc=AP[ix]; AP.splice(ix,1);
