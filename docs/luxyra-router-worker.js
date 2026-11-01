@@ -6210,7 +6210,7 @@ async function handleSmsRappel(request, env) {
     return jsonResponse({ error: gate.error }, gate.status);
   }
   let phone = telephone.replace(/[\s.\-]/g, ""); if (phone.startsWith("0")) phone = "+33" + phone.slice(1);
-  const env1 = await lxEnvoyerSmsFacture(env, salon_id, gate, phone, contenuRappel, (salonName||"Luxyra").slice(0,11).trim());
+  const env1 = await lxEnvoyerSmsFacture(env, salon_id, gate, phone, contenuRappel, (salonName||"Luxyra") /* 01/11 : nettoyage + 11 car. dans lxSmsExpediteur */);
   if (!env1.ok) return jsonResponse({ success: false, error: env1.error, result: env1.result, remainingCredits: env1.remaining, smsDebites: 0 }, 502);
   return jsonResponse({ success: true, result: env1.result, remainingCredits: env1.remaining, smsDebites: env1.debites });
 }
@@ -6272,7 +6272,7 @@ async function handleSmsCustom(request, env) {
     return jsonResponse({ error: gate.error }, gate.status);
   }
   let phone = telephone.replace(/[\s.\-]/g, ""); if (phone.startsWith("0")) phone = "+33" + phone.slice(1);
-  const env1 = await lxEnvoyerSmsFacture(env, salon_id, gate, phone, contenu, (salonName||"Luxyra").slice(0,11).trim(), { marketing: _pub });
+  const env1 = await lxEnvoyerSmsFacture(env, salon_id, gate, phone, contenu, (salonName||"Luxyra") /* 01/11 : nettoyage + 11 car. dans lxSmsExpediteur */, { marketing: _pub });
   if (!env1.ok) return jsonResponse({ success: false, error: env1.error, result: env1.result, remainingCredits: env1.remaining, smsDebites: 0 }, 502);
   return jsonResponse({ success: true, result: env1.result, remainingCredits: env1.remaining, smsDebites: env1.debites, publicitaire: _pub, requalifie: _requalifie });
 }
