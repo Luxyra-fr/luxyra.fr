@@ -5772,7 +5772,9 @@ async function lxEnvoyerSmsFacture(env, salonId, gate, phone, contenu, sender, o
   try {
     const _salS = await supabaseGet(env, salonId);
     if (_salS) {
-      const _cfgS = _salS.config_json && _salS.config_json.sms_config && _salS.config_json.sms_config.smsSender;
+      // 01/11 (contre-audit S2, B-1) : config_json est souvent stocké en CHAÎNE JSON -> l'analyser avant de lire sms_config
+      let _cjS = _salS.config_json; if (typeof _cjS === "string") { try { _cjS = JSON.parse(_cjS); } catch (_) { _cjS = null; } }
+      const _cfgS = _cjS && _cjS.sms_config && _cjS.sms_config.smsSender;
       sender = (typeof _cfgS === "string" && _cfgS.trim()) ? _cfgS : (_salS.nom || "Luxyra");
     }
   } catch (_) {}
