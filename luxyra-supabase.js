@@ -4,7 +4,7 @@
 // BUILD: 20260426-04 — fix CSS options dropdown lisibles
 window.__LUXYRA_BUILD = "20260426-04";
 // 2026-10-14 : version de la couche donnees, comparee par app.html (evite un melange ancienne/nouvelle version via le cache)
-window.LX_DATA_VERSION = "20261101-1"; // 01/11 (-1) : champs saisis par les clients sans < > " (audit global, lot S1). // 31/10 (-14) : vue établissement, garde-fou de navigation (window.open, liens et formulaires externes bloqués). // 31/10 (-13) : vue établissement, secrets jamais lus (vues lxv_*), opérateurs non chargés, ancienne vue luxyra.fr supprimée. // 31/10 (-12) : vue établissement sur vue.luxyra.fr (jeton de lecture 15 min, relais /sb, plus jamais la session admin). // 31/10 (-11) : vue admin, /api/stripe/fees retiré de la liste de lecture (refusé par le serveur). // 31/10 (-10) : factures Luxyra rendues par le serveur (FR complet). // 31/10 (-9) : e-mails en série espacés + nouvelle tentative, limite du jour affichée (couche données inchangée). Précédent -8 : // 31/10 (-8) : bons cadeaux, palettes + e-carte en caisse + formats A4. // 31/10 (-7) : tarif Fondateur sur l écran fin d essai. // 31/10 (-6) : bons cadeaux, échappement des champs acheteur (H1) + réserves R1-R7. // 2026-10-31 (-5) : modele des bons cadeaux (config_json.bonModele) lu au chargement. Precedent : "20261031-4"
+window.LX_DATA_VERSION = "20261101-2"; // 01/11 (-2) : annulation refusée par le serveur relue depuis meta (lxAnnulRefusee), lien de modification. // 01/11 (-1) : champs saisis par les clients sans < > " (audit global, lot S1). // 31/10 (-14) : vue établissement, garde-fou de navigation (window.open, liens et formulaires externes bloqués). // 31/10 (-13) : vue établissement, secrets jamais lus (vues lxv_*), opérateurs non chargés, ancienne vue luxyra.fr supprimée. // 31/10 (-12) : vue établissement sur vue.luxyra.fr (jeton de lecture 15 min, relais /sb, plus jamais la session admin). // 31/10 (-11) : vue admin, /api/stripe/fees retiré de la liste de lecture (refusé par le serveur). // 31/10 (-10) : factures Luxyra rendues par le serveur (FR complet). // 31/10 (-9) : e-mails en série espacés + nouvelle tentative, limite du jour affichée (couche données inchangée). Précédent -8 : // 31/10 (-8) : bons cadeaux, palettes + e-carte en caisse + formats A4. // 31/10 (-7) : tarif Fondateur sur l écran fin d essai. // 31/10 (-6) : bons cadeaux, échappement des champs acheteur (H1) + réserves R1-R7. // 2026-10-31 (-5) : modele des bons cadeaux (config_json.bonModele) lu au chargement. Precedent : "20261031-4"
 // (historique) "20261028-3"; // 2026-10-28 (-3, Luxyra 6.8.1 : version de l'application transmise dans chaque ticket (raw_data.lxVersion, contrôlée par le serveur), série de n° imprimés propre au serveur (meta.tkNumServeur), copies serveur jamais réécrites, refus LX_APP_OBSOLETE / LX_TKNUM_SERIE_SERVEUR / LX_CC_DEJA_EN_CAISSE)
 // (historique) "20261028-2"; // 2026-10-28 (-2, Luxyra 6.8.0 : recettes en ligne enregistrées en caisse par le serveur — champs meta serveur / recetteKey…, refus définitif LX_CC_DEJA_EN_CAISSE)
 // (historique) "20261028-1"; // 2026-10-28 (-1 : bons cadeaux à usage unique / multiple — qualification TVA du bon (usage_tva, qualif_tva, repli historique), ticket v2 HT/TVA par ventilation de l'app, taux_tva 0 pour une vente de BUM seule, bonsUtil conservé dans appointments.meta) ; 2026-10-27 (-3 : rapport du mois en vrai PDF + correctifs d’exports comptables, app.html seulement ; -2 : envoi au comptable — FEC + pack Excel + rapport par défaut, ZIP en option, app.html seulement ; -1 : envoi automatique au comptable — changement dans app.html seulement, couche données inchangée) ; 2026-10-17 (-2 : audit réglages — taux TVA produits brut (tvaProduitsColonne), familles produit sans produit (pcats), ancien saveSalonConfig renommé ; -1 : retour / remboursement partiel — champs du ticket de retour conservés dans appointments.meta, refus définitif LX_RETOUR_REFUSE jamais rejoué, ticket de retour refusé au rejeu écarté de la caisse) ; 2026-10-16 (-1 : incident Z n°128 — 1 réservation en ligne = 1 entrée, Z refusée par la base si différente du journal, annotations correctives) ; 2026-10-15 (-3 : multi-appareils, champs modifiés seulement + lignes supprimées ailleurs jamais recréées ; -2 : plus aucun enregistrement muet, lxEcritureVerifiee ; -1 : « Prix à partir de » + sur devis sur les forfaits) ; 2026-10-14 (-8 : correctifs revue d intégration) intégration des audits (données, sécurité, planning, clients, caisse, site, réglages)
@@ -1571,6 +1571,9 @@ function lxMapApptRow(a) {
   // 2026-10-28 (-3, v6.8.1) : copie d'un ticket créé par le serveur (paiement en ligne) : appointments.ticket_num est vide
   // (les versions < 6.8.1 ne voient donc jamais la série 900001+), le n° imprimé est dans meta.tkNumServeur.
   if ((_ap.tkNum === null || _ap.tkNum === undefined) && Number(_ap.tkNumServeur) > 0) _ap.tkNum = Number(_ap.tkNumServeur);
+  // 01/11/2026 (N8, I-b) : annulation locale dont le contre-ticket a été REFUSÉ par le serveur (jamais au journal) : la base garde
+  // cancelled=true (une annulation ne se retire pas) mais le journal fait foi -> le ticket est ENCAISSÉ (Z = journal, réannulation possible)
+  if (_ap.lxAnnulRefusee && _ap.cancelled) { _ap.cancelled = false; delete _ap.cancelDate; delete _ap.cancelMotif; _ap.cancelReason = ""; }
   return _ap;
 }
 if (typeof window !== "undefined") window.lxMapApptRow = lxMapApptRow;
@@ -3492,7 +3495,7 @@ async function _saveAppointmentUneFois(appt) {
     prev_hash: appt.prevHash || "", hash_algo: appt.hashAlgo || "",
     items: _lxItemsAvecAcompteEnLigne(appt), comment: appt.comment || "",
     a_phases: appt.aPhases || appt.phases || [],
-    cancelled: appt.cancelled || false, cancel_reason: appt.cancelReason || "",
+    cancelled: appt.cancelled || !!appt.lxAnnulRefusee || false, cancel_reason: appt.cancelReason || "", // 01/11 (N8) : jamais renvoyer false sur une annulation refusée (la base la garde)
     // FIX 2026-07-11 : persiste les marqueurs du contre-ticket d'annulation (voir loader).
     // Un appointment normal ecrit is_cancel=false / contra_same_day=false (= defaut colonne)
     // -> aucun changement de comportement pour les tickets et RDV existants.
@@ -3637,7 +3640,7 @@ async function _saveAppointmentUneFois(appt) {
 // 2026-10-14 (NF525) : champs de ticket à conserver dans appointments.meta (jsonb), uniquement s'ils ont une valeur.
 var _LX_APPT_META_KEYS = ["operator_id","operator_name","poste","ts","extraClients","clientNom","clientPrenom",
   "isAcompte","isAcompteCancel","apptId","isRetenue","retenueKey","retenueRdv","origTkNum","origTkNums",
-  "bonVenduRemise","offertRemise","dbNum","bonsUtil", // 2026-10-28 (v6.7.0) : bons utilisés au modèle v2 (imputation, bon à usage multiple)
+  "bonVenduRemise","offertRemise","dbNum","bonsUtil","lxAnnulRefusee","lxModifContra", // 01/11 (N8) : annulation refusée par le serveur / lien modification // 2026-10-28 (v6.7.0) : bons utilisés au modèle v2 (imputation, bon à usage multiple)
   "isAcompteEnLigne","acompteKey","acompteRdv","datePaiement","dateRemboursement","refundId", // 2026-10-14 (NF525 acompte en ligne)
   "lxEffets","lxEffetsAnnules","lxEffetsInverses","lxDoublonDe", // 2026-10-14 audit : effets de gestion d'un ticket (inversés à l'annulation), doublon d'acompte écarté
   "isRetour","retourRefId","retourRefTk","retourRefDate","retourMotif","lxEffetsRetour", // 2026-10-17 retour partiel
@@ -4247,8 +4250,12 @@ async function saveTicketToDb(tk) {
     if (res.error && /LX_TKNUM_SERIE_SERVEUR/.test(String(res.error.message || ""))) {
       try { tk._dbError = { at: new Date().toISOString(), msg: String(res.error.message || ""), code: "LX_TKNUM_SERIE_SERVEUR", permanent: true }; } catch(_eT0){}
       try { if (typeof saveAuditEntry === "function") saveAuditEntry("DB_ERROR", JSON.stringify({ fn: "saveTicketToDb", gravite: "critical", code: "LX_TKNUM_SERIE_SERVEUR", msg: String(res.error.message || "").slice(0, 300), tk_num: tk.tkNum || null, tk_id: tk.id || null }).slice(0, 2000)); } catch(_eT1){}
-      try { if (typeof showAlert === "function") showAlert("Ticket n°" + (tk.tkNum || "?") + " NON enregistré : ce n° est réservé aux paiements en ligne. Rechargez l'application puis refaites l'encaissement.", "error"); } catch(_eT2){}
-      return null;
+      // 01/11/2026 (N8, m5) : refus DÉFINITIF -> retiré de la file (sinon rejoué jusqu'au blocage de la Z) ; un contre-ticket est écarté de la caisse
+      if (_walId) { _walMarkSynced(_walId); try { if (typeof saveAuditEntry === "function") saveAuditEntry("WAL_ABANDON", JSON.stringify({ wal_id: _walId, type: "ticket", raison: "refus définitif du serveur (n° de la série serveur)", tk_num: tk.tkNum || null })); } catch(_eT3){} }
+      if (tk.isCancel === true) { try { if (typeof window._lxRetourRefuseEcarter === "function") window._lxRetourRefuseEcarter(tk, String(res.error.message || "")); } catch(_eT4){} }
+      else { try { if (typeof showAlert === "function") showAlert("Ticket n°" + (tk.tkNum || "?") + " NON enregistré : ce n° est réservé aux paiements en ligne. Rechargez l'application puis refaites l'encaissement.", "error"); } catch(_eT2){} }
+      // résultat explicite seulement pour un contre-ticket (appelants N6+) ; les autres appelants gardent l'ancien « null » (= non enregistré)
+      return tk.isCancel === true ? { ok: false, refusDefinitif: true, error: { message: String(res.error.message || ""), code: "LX_TKNUM_SERIE_SERVEUR" } } : null;
     }
     if (res.error && /LX_CC_DEJA_EN_CAISSE/.test(String(res.error.message || ""))) {
       try { tk._dbError = { at: new Date().toISOString(), msg: String(res.error.message || ""), code: "LX_CC_DEJA_EN_CAISSE", permanent: true }; } catch(_eC0){}
