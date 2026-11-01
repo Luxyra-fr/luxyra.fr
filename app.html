@@ -30572,6 +30572,7 @@ async function aCl(){
 }
 
 async function aGi(){
+  if(typeof _lxContraBloqueVente==="function"&&_lxContraBloqueVente()) return; /* 01/11 (N7, M1) */
   if(guardDoubleClick("bon cadeau")) return;
   var v=parseFloat(document.getElementById("gv").value);
   if(!v||v<=0){showAlert("Indiquez un montant","info");return;}
@@ -30654,6 +30655,7 @@ var PAY_METHODS=["CB","Especes","Cheque","Bon cadeau"];
 var _tk={step:0,stId:null,cId:null,items:[],comment:"",remise:0};
 
 function annulerAcompte(apptId){
+  if(typeof _lxContraBloqueVente==="function"&&_lxContraBloqueVente()) return; /* 01/11 (N7, M1) */
   if(!_lxPermOuAdmin("refund","Rembourser / annuler un acompte",function(){ annulerAcompte(apptId); })) return; // 2026-10-17 audit réglages (#16)
   if(guardDoubleClick("annulation acompte")) return;
   var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===apptId){a=AP[i];break;}}
@@ -30788,6 +30790,7 @@ function showAcompteForm(apptId){
 }
 
 async function doSaveAcompte(apptId){
+  if(typeof _lxContraBloqueVente==="function"&&_lxContraBloqueVente()) return; /* 01/11 (N7, M1) */
   if(guardDoubleClick("acompte")) return;
   var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===apptId){a=AP[i];break;}}
   if(!a)return;
@@ -34044,6 +34047,7 @@ function applyPayAmount(method){
 }
 
 function finalizePay(method){
+  if(typeof _lxContraBloqueVente==="function"&&_lxContraBloqueVente()) return; /* 01/11 (N7, M1) */
   // 2026-10-13 : une prestation « sur devis » arrivée par le RDV sans prix -> on demande le prix convenu avant tout encaissement
   try{ for(var _di=0;_di<(_tk.items||[]).length;_di++){ var _it=_tk.items[_di], _sv=(_it&&_it.sId&&!_it.isSep)?gS(_it.sId):null;
     if(_sv&&_sv.devis&&!(Number(_it.price)>0)){ (function(it,sv){ _lxPrixDevis(sv,function(x){ it.price=x; it.devis=true; showCaisse(); }); })(_it,_sv); return; } } }catch(_eDv){}
@@ -36594,7 +36598,18 @@ function modifTicket(id){
   ta.addEventListener("input",function(){btn.style.opacity=ta.value.trim().length>0?"1":".5";});
 }
 
+// 01/11/2026 (N7, contre-audit N6 I1) : même verrou PAR TICKET que l'annulation (_lxContraVol), tenu jusqu'à la fin de
+// l'enregistrement (contre-ticket attendu en ligne) ; bouton « Valider » désactivé pendant ce temps (plus de 2e contre-ticket).
 async function doModifTicket(id,isPast){
+  var _kV=String(id==null?"":id); window._lxContraVol=window._lxContraVol||{};
+  if(_kV&&window._lxContraVol[_kV]){ try{ toast("Modification ou annulation de ce ticket d\u00e9j\u00e0 en cours\u2026","info"); }catch(_t){} return; }
+  var _btM=null; try{ _btM=document.getElementById("mtSubmit"); if(_btM){ _btM.disabled=true; _btM.style.opacity=".5"; } }catch(_eB){}
+  if(_kV) window._lxContraVol[_kV]=true;
+  try{ return await _doModifTicketUneFois(id,isPast); }
+  finally{ if(_kV) delete window._lxContraVol[_kV]; try{ if(_btM&&document.body.contains(_btM)){ _btM.disabled=false; _btM.style.opacity=""; } }catch(_eB2){} }
+}
+async function _doModifTicketUneFois(id,isPast){
+  if(typeof _lxContraBloqueVente==="function"&&_lxContraBloqueVente()) return; /* 01/11 (N7, M1) */
   if(guardDoubleClick("modification ticket")) return;
   var motif=document.getElementById("mtMotif").value.trim();
   if(!motif){document.getElementById("mtMotif").style.borderColor="var(--red)";document.getElementById("mtMotif").focus();return;}
@@ -40197,25 +40212,60 @@ async function _lxContraEnBase(orig){
     if(!orig||!orig.id||!_lxEnLigneCaisse()) return [];
     var ids=_lxRetourIdsVariantes(orig.id);
     var r1=_sb.from("tickets").select("id,num,tk:raw_data->>tkNum").eq("salon_id",_salonId).eq("raw_data->>isCancel","true").in("raw_data->>cancelRefId",ids).limit(5);
-    var refs=ids.slice(), partage=false;
-    try{ if(orig.tkNum!=null&&String(orig.tkNum)!==""){ var nb=0; AP.forEach(function(t){ if(t&&!t.isCancel&&String(t.tkNum)===String(orig.tkNum)) nb++; }); partage=nb>1; if(!partage) refs.push(String(orig.tkNum)); } }catch(_eP){}
-    var r2=_sb.from("tickets").select("id,num,tk:raw_data->>tkNum,rid:raw_data->>cancelRefId").eq("salon_id",_salonId).eq("raw_data->>isCancel","true").in("raw_data->>cancelRef",refs).limit(5);
-    var R=await Promise.all([_lxAvecDelai(r1,6000),_lxAvecDelai(r2,6000)]);
+    // 01/11/2026 (N7, M4) : le n° imprimé est-il partagé ? décidé par la BASE (journal), plus par les seuls tickets chargés
+    var _tkS=(orig.tkNum!=null&&String(orig.tkNum)!=="")?String(orig.tkNum):null;
+    var refs=ids.slice(); if(_tkS) refs.push(_tkS);
+    var r2=_sb.from("tickets").select("id,num,tk:raw_data->>tkNum,rid:raw_data->>cancelRefId").eq("salon_id",_salonId).eq("raw_data->>isCancel","true").in("raw_data->>cancelRef",refs).limit(10);
+    var r3=_tkS?_sb.from("tickets").select("id,isc:raw_data->>isCancel").eq("salon_id",_salonId).eq("raw_data->>tkNum",_tkS).limit(6):null;
+    var R=await Promise.all([_lxAvecDelai(r1,6000),_lxAvecDelai(r2,6000)].concat(r3?[_lxAvecDelai(r3,6000)]:[]));
     for(var i=0;i<R.length;i++){ if(!R[i]||R[i].__delai||R[i].error||!Array.isArray(R[i].data)) return null; }
-    // un contre-ticket qui désigne explicitement une AUTRE origine (cancelRefId) ne compte pas
-    var l2=(R[1].data||[]).filter(function(x){ return !x.rid || ids.indexOf(String(x.rid))>=0; });
+    var partage=!!(r3&&(R[2].data||[]).filter(function(x){ return String(x.isc)!=="true"; }).length>1);
+    // un contre-ticket qui désigne explicitement une AUTRE origine (cancelRefId) ne compte pas ; une ancienne référence par n°
+    // imprimé seul (sans id) ne compte que si ce n° n'est pas partagé (sinon la base tranche : référence ambiguë)
+    var l2=(R[1].data||[]).filter(function(x){ if(x.rid) return ids.indexOf(String(x.rid))>=0||ids.indexOf(String(x.rid).replace(/^online_/,""))>=0; return !partage; });
     return (R[0].data||[]).concat(l2);
   }catch(_e){ return null; }
 }
 // Enregistre le contre-ticket au journal AVANT les effets locaux (en ligne). {ok:true,res} | {ok:false,msg} | {ok:true,differe:true} (hors connexion)
+// 01/11/2026 (N7, contre-audit N6) :
+//  - M1 : pendant l'enregistrement, aucun encaissement n'est accepté (_lxContraEnregEnCours) -> pas de n° imprimé perdu ;
+//    si le n° ne peut quand même pas être rendu (compteur avancé), il est tracé au journal (TKNUM_PERDU).
+//  - M2 : message d'attente, délai maximal 15 s : au-delà, le contre-ticket est traité comme mis en file de secours
+//    (il est déjà dans la file : saveTicketToDb le persiste avant l'envoi) ; un refus tardif est géré par _lxRetourRefuseEcarter.
+//  - M3 : établissement en lecture seule -> message exact ; refus permanent (ex. LX_TKNUM_SERIE_SERVEUR) = refus définitif
+//    (l'entrée est retirée de la file : rien n'est annulé sur l'appareil).
+function _lxContraBloqueVente(){
+  if(window._lxContraEnregEnCours){ try{ showAlert("Une annulation est en cours d\u2019enregistrement : attendez quelques secondes avant d\u2019encaisser.","warning"); }catch(_e){} return true; }
+  return false;
+}
 async function _lxContraEnregistrerAvant(tk, numPris){
+  if(typeof _lxEcrituresBloquees==="function"&&_lxEcrituresBloquees()){
+    try{ if(typeof tkN!=="undefined"&&tkN===numPris) tkN=numPris-1; }catch(_eN0){} try{ if(_lastTicketHash===tk.hash) _lastTicketHash=tk.prevHash; }catch(_eH0){}
+    return {ok:false, msg:"établissement en lecture seule (archives, abonnement suspendu ou vue administrateur) : aucune annulation ne peut être enregistrée"}; }
   if(!_lxEnLigneCaisse()) return {ok:true, differe:true};
-  var res=null; try{ res=await saveTicketToDb(tk); }catch(_eS){ res=null; }
+  var _toastT=null; try{ _toastT=setTimeout(function(){ try{ toast("Enregistrement de l\u2019annulation\u2026","info"); }catch(_t){} },600); }catch(_eT){}
+  window._lxContraEnregEnCours=true;
+  var res=null, _delai=false;
+  try{
+    var _p=Promise.resolve().then(function(){ return saveTicketToDb(tk); }).catch(function(){ return null; });
+    res=await Promise.race([_p, new Promise(function(r){ setTimeout(function(){ _delai=true; r({__delai:true}); },15000); })]);
+  }catch(_eS){ res=null; }
+  finally{ window._lxContraEnregEnCours=false; try{ if(_toastT) clearTimeout(_toastT); }catch(_eC){} }
+  if(res&&res.__delai){
+    try{ auditLog("CONTRE_TICKET_DIFFERE","Contre-ticket #"+(tk.tkNum||"--")+" : serveur sans réponse après 15 s, laissé en file de secours (transmis automatiquement)"); }catch(_eA){}
+    try{ toast("Connexion lente : l\u2019annulation est gardée sur l\u2019appareil et sera transmise automatiquement.","warning"); }catch(_eT2){}
+    return {ok:true, differe:true};
+  }
   var _enFile=false; try{ _enFile=(window._walGetAll?window._walGetAll():[]).some(function(e){ return e&&!e.synced&&e.type==="ticket"&&e.data&&e.data.id===tk.id; }); }catch(_eW){}
-  if((res&&res.refusDefinitif)||(!res&&!tk.dbId&&!_enFile)){
-    try{ if(typeof tkN!=="undefined"&&tkN===numPris) tkN=numPris-1; }catch(_eN){}
+  var _permanent=!!(tk._dbError&&tk._dbError.permanent);
+  if((res&&res.refusDefinitif)||_permanent||(!res&&!tk.dbId&&!_enFile)){
+    // refus permanent resté en file (LX_TKNUM_SERIE_SERVEUR) : retiré de la file, il ne doit jamais être rejoué
+    if(_permanent&&_enFile){ try{ var _all=window._walGetAll?window._walGetAll():[]; _all.forEach(function(e){ if(e&&!e.synced&&e.type==="ticket"&&e.data&&e.data.id===tk.id&&typeof window._walMarkSynced==="function") window._walMarkSynced(e.id); }); }catch(_eWm){} }
+    var _rendu=false;
+    try{ if(typeof tkN!=="undefined"&&tkN===numPris){ tkN=numPris-1; _rendu=true; } }catch(_eN){}
     try{ if(_lastTicketHash===tk.hash) _lastTicketHash=tk.prevHash; }catch(_eH){}
-    var m=(res&&res.error&&res.error.message)?String(res.error.message).replace(/^.*LX_RETOUR_REFUSE\s*:?\s*/,""):"connexion perdue pendant l’enregistrement";
+    if(!_rendu){ try{ auditLog("TKNUM_PERDU","N° imprimé "+numPris+" pris par un contre-ticket refusé, non réutilisable (un autre ticket a été numéroté entre-temps) : saut de numérotation imprimée expliqué"); }catch(_eP){} }
+    var m=(res&&res.error&&res.error.message)?String(res.error.message).replace(/^.*LX_RETOUR_REFUSE\s*:?\s*/,""):(_permanent?String(tk._dbError.msg||"refus définitif du serveur").replace(/^.*(LX_[A-Z_]+)\s*:?\s*/,""):"connexion perdue pendant l’enregistrement");
     return {ok:false, msg:m};
   }
   return {ok:true, res:res};
@@ -40228,6 +40278,7 @@ async function _cancelSecureTicketDo(id,motif){
   finally{ if(_kV) delete window._lxContraVol[_kV]; }
 }
 async function _cancelSecureTicketDoUneFois(id,motif){
+  if(typeof _lxContraBloqueVente==="function"&&_lxContraBloqueVente()) return; /* 01/11 (N7, M1) */
   if(guardDoubleClick("annulation ticket")) return;
   var orig=null;
   for(var i=0;i<AP.length;i++){if(AP[i].id===id){orig=AP[i];break;}}
@@ -40398,7 +40449,8 @@ async function _cancelSecureTicketDoUneFois(id,motif){
         items:[],remise:0,tkNum:null,
         aPhases:(orig.aPhases&&orig.aPhases.length)?JSON.parse(JSON.stringify(orig.aPhases)):[],
         comment:((orig.comment||"")+" \u2014 Ticket #"+(orig.tkNum||"--")+" annul\u00e9 : RDV \u00e0 r\u00e9encaisser").trim(),
-        fromCaisse:false,cancelled:false
+        fromCaisse:false,cancelled:false,
+        lxRelibContra:cancelTicket.id /* 01/11 (N7, I3) : RDV relibéré par CE contre-ticket (retiré si le contre-ticket est refusé au rejeu) */
       };
       if(orig.lieu){_rel.lieu=orig.lieu;_rel.adresse=orig.adresse||"";}
       // 2026-10-11 : l'acompte déjà versé reste acquis au client -> il est repris sur le RDV à réencaisser
@@ -41105,6 +41157,7 @@ async function lxRetourValider(){
   finally{ delete window._lxRetourVol[k]; var b2=document.getElementById("lxRetBtn"); if(b2){ b2.textContent="Valider le remboursement"; try{ _lxRetourMaj(); }catch(_e){} } }
 }
 async function _lxRetourValiderUneFois(ctx){
+  if(typeof _lxContraBloqueVente==="function"&&_lxContraBloqueVente()) return; /* 01/11 (N7, M1) */
   var orig=null; for(var i=0;i<AP.length;i++){ if(AP[i]&&AP[i].id===ctx.origId){ orig=AP[i]; break; } }
   var rf=_lxRetourRefus(orig); if(rf){ showAlert(rf,"warning"); return; }
   var sel=_lxRetourLire(); if(sel.erreurs.length){ showAlert(sel.erreurs.join("\n"),"warning"); return; }
@@ -41208,6 +41261,7 @@ async function _lxRetourRefuseEcarter(tk, msg){
     if(!tk||!tk.id||!(_lxEstRetour(tk)||tk.isCancel===true)) return false; // 01/11 (N6) : aussi un contre-ticket refusé au rejeu
     var ix=-1; for(var i=0;i<AP.length;i++){ if(AP[i]&&AP[i].id===tk.id){ ix=i; break; } }
     if(ix<0) return false;
+    if(tk.isCancel===true&&!_lxEstRetour(tk)) return await _lxContraRefuseEcarter(AP[ix], ix, msg); // 01/11 (N7, I3) : branche propre aux annulations
     var loc=AP[ix]; AP.splice(ix,1);
     var _m=String(msg||"").replace(/^.*LX_RETOUR_REFUSE\s*:?\s*/,"").slice(0,200);
     loc.cancelled=true; delete loc.cancelDate;
@@ -41221,6 +41275,48 @@ async function _lxRetourRefuseEcarter(tk, msg){
   }catch(_e){ console.warn("[_lxRetourRefuseEcarter]",_e); return false; }
 }
 window._lxRetourRefuseEcarter=_lxRetourRefuseEcarter;
+// 01/11/2026 (N7, contre-audit N6 I3) : contre-ticket (annulation / modification) accepté sur l'appareil (hors connexion ou
+// délai dépassé) puis REFUSÉ définitivement par le serveur au rejeu. Il n'est jamais entré au journal : il est retiré de la caisse.
+//  - refus « déjà un contre-ticket » : le ticket a réellement été annulé ailleurs -> l'original reste annulé ; les effets de gestion
+//    ont été inversés une 2e fois sur cet appareil -> signalés à régulariser ;
+//  - autre refus : l'annulation n'existe pas au journal -> l'original est remis « non annulé » sur l'appareil (le journal fait foi ;
+//    la base refuse de retirer une annulation déjà copiée : trace critique pour le support), le RDV relibéré par ce contre-ticket
+//    est retiré s'il n'a pas été encaissé, les effets inversés sont signalés à régulariser.
+async function _lxContraRefuseEcarter(loc, ix, msg){
+  try{
+    AP.splice(ix,1);
+    var _m=String(msg||"").replace(/^.*LX_RETOUR_REFUSE\s*:?\s*/,"").slice(0,200);
+    var _deja=/d[ée]j[aà] (un|annul)|déjà un contre-ticket|tous les tickets/i.test(_m);
+    loc.cancelled=true; delete loc.cancelDate;
+    loc.cancelReason="Contre-ticket refusé par le serveur ("+_m+") : jamais entré au journal scellé, écarté de la caisse";
+    var orig=null, _rid=String(loc.cancelRefId||"");
+    for(var i=0;i<AP.length;i++){ var t=AP[i]; if(!t||t.isCancel) continue; if((_rid&&(String(t.id)===_rid||String(t.id).replace(/^online_/,"")===_rid.replace(/^online_/,"")))){ orig=t; break; } }
+    if(!orig&&!_rid){ var _c=AP.filter(function(t){ return t&&!t.isCancel&&String(t.tkNum)===String(loc.cancelRef); }); if(_c.length===1) orig=_c[0]; }
+    var _remis=false, _relRetire=false, _eff=[];
+    try{ var pl=loc.lxEffetsInverses; if(pl){ if(pl.source==="manuel"&&Array.isArray(pl.manuel)) _eff=_eff.concat(pl.manuel);
+      var EE=pl.effets||{}; var LB={fid:"fidélité",bons:"bons cadeaux utilisés",seances:"séances de forfait",bonsVendus:"bons cadeaux vendus",packsVendus:"forfaits vendus",cartesVendues:"cartes vendues",stock:"stock"};
+      Object.keys(EE).forEach(function(k){ var v=EE[k]; if((Array.isArray(v)&&v.length)||(v&&typeof v==="object"&&!Array.isArray(v)&&Object.keys(v).length)||(typeof v==="number"&&v)) _eff.push(LB[k]||k); }); } }catch(_eE){}
+    if(!_deja&&orig&&orig.cancelled){
+      orig.cancelled=false; delete orig.cancelDate; delete orig.cancelMotif; delete orig.cancelReason; delete orig.cancelTs; _remis=true;
+      try{ if(typeof saveAppointment==="function") await saveAppointment(orig); }catch(_eSo){}
+    }
+    if(!_deja){
+      for(var k=AP.length-1;k>=0;k--){ var r=AP[k]; if(r&&r.lxRelibContra===loc.id&&r.st!=="done"&&!r.tkNum){ AP.splice(k,1); r.cancelled=true; r.cancelReason="RDV relibéré par un contre-ticket refusé : retiré"; _relRetire=true; try{ if(typeof saveAppointment==="function") await saveAppointment(r); }catch(_eSr){} } }
+    }
+    try{ if(typeof saveAuditEntry==="function") saveAuditEntry("DB_ERROR",JSON.stringify({fn:"_lxContraRefuseEcarter",gravite:"critical",msg:"contre-ticket refusé au rejeu, écarté de la caisse : "+_m,tk_local:loc.tkNum||null,tk_id:loc.id,origine_id:_rid||null,origine_tk:loc.cancelRef||null,montant:loc.pr,annule_ailleurs:_deja,original_remis:_remis,rdv_relibere_retire:_relRetire,effets_a_regulariser:_eff}).slice(0,2000)); }catch(_eA){}
+    try{
+      var t1="L’annulation n°"+(loc.tkNum||"--")+" ("+(Number(loc.pr)||0).toFixed(2)+" €) du ticket n°"+(loc.cancelRef||"--")+" a été REFUSÉE par le serveur : "+_m+".";
+      var t2=_deja?"\n\nCe ticket avait déjà été annulé sur un autre appareil : rien d’autre à faire pour le ticket. Ce contre-ticket en double est retiré de la caisse."
+                 :"\n\nL’annulation n’a jamais été enregistrée au journal : le ticket n°"+(loc.cancelRef||"--")+" reste ENCAISSÉ."+(_remis?" Il est remis comme tel sur cet appareil.":"")+(_relRetire?" Le rendez-vous qui avait été remis « à encaisser » est retiré.":"")+" Si de l’argent a été rendu au client, refaites l’annulation.";
+      var t3=_eff.length?"\n\nÀ régulariser à la main (inversés sur cet appareil) : "+_eff.join(", ")+".":"";
+      showAlert(t1+t2+t3,"error");
+    }catch(_eS){}
+    await new Promise(function(r){ setTimeout(r,1500); });
+    try{ if(typeof saveAppointment==="function") await saveAppointment(loc); }catch(_eSv){}
+    window._apDirty=true;
+    return true;
+  }catch(_e){ console.warn("[_lxContraRefuseEcarter]",_e); return false; }
+}
 // Effets de gestion d'un retour (aucune donnée fiscale touchée) : fidélité retirée au prorata (cagnotte créditée et chiffre cumulé ;
 // les points « par visite » restent acquis : la visite a eu lieu), produits remis en stock avec mouvement « retour » tracé.
 async function _lxRetourEffetsExecuter(plan, orig, tk){
