@@ -23791,29 +23791,8 @@ function doAddProdCat(){
 
 // === GIFTS ===
 
-function deleteGiftCardLocal(gcId){
-  // Find the bon to get its code (more reliable than local ID)
-  var gcCode=null;
-  for(var i=0;i<GC.length;i++){
-    if(GC[i].id===gcId){gcCode=GC[i].code;GC.splice(i,1);break;}
-  }
-  // Delete from Supabase — try by id AND by code
-  if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
-    // Attempt 1: by UUID id
-    _sb.from("cartes_cadeaux").delete().eq("id",gcId).then(function(r){
-      console.log("[GC DELETE] by id:",r.status,r.error?r.error.message:"OK");
-    });
-    // Attempt 2: by code + salon_id (guaranteed unique combo)
-    if(gcCode){
-      _sb.from("cartes_cadeaux").delete().eq("salon_id",_salonId).eq("code",gcCode).then(function(r){
-        console.log("[GC DELETE] by code "+gcCode+":",r.status,r.error?r.error.message:"OK");
-      });
-    }
-  }else{
-    console.warn("[GC DELETE] _sb or _salonId not available — offline mode");
-  }
-  go("gifts");
-}
+// 01/11/2026 (NF525) : deleteGiftCardLocal supprimée (jamais appelée ; un bon ne se supprime pas, il s'annule avec sa trace)
+
 
 function exportGiftRegister(){
   try{ if(typeof auditLog==="function") auditLog("EXPORT_BONS_CADEAUX","Export du registre des bons cadeaux"); }catch(_eX){} // 2026-10-11 (JET 110)
@@ -24763,9 +24742,14 @@ function printGiftThemed(gcId,themeId){
   setTimeout(function(){w.focus();},300);
 }
 
+// 01/11/2026 (NF525) : un bon VENDU en caisse (payé, non offert, rattaché à son ticket de vente) ne s'annule que par
+// l'annulation de ce ticket (contre-ticket / avoir) : le bon est alors annulé automatiquement avec lui. La base refuse le reste.
+function _lxBonVendu(g){ return !!(g && g.tkNum && !g.isOffert && (g.paymentStatus||"paid")==="paid"); }
+function _lxBonVenduMsg(g){ return "Ce bon a \u00e9t\u00e9 vendu (ticket n\u00b0 "+g.tkNum+"). Pour le rembourser, annulez le ticket de vente dans \u00ab Gestion des tickets \u00bb : un contre-ticket (avoir) est cr\u00e9\u00e9 et le bon est annul\u00e9 avec lui."; }
 function confirmVoidGift(gcId){
   var g=null;for(var i=0;i<GC.length;i++){if(GC[i].id===gcId){g=GC[i];break;}}
   if(!g)return;
+  if(_lxBonVendu(g)){ showAlert(_lxBonVenduMsg(g),"warning"); return; }
   var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">';
   h+='<div style="font-size:48px;margin-bottom:10px">\u26a0\ufe0f</div>';
   h+='<h2 style="color:var(--red)!important">Annuler le bon '+_lxEsc(g.code)+' ?</h2>';
@@ -24777,25 +24761,15 @@ function confirmVoidGift(gcId){
   h+='</div></div></div>';
   document.getElementById("modal").innerHTML=h;
 }
-function doVoidGift(gcId){
+async function doVoidGift(gcId){
   var g=null;for(var i=0;i<GC.length;i++){if(GC[i].id===gcId){g=GC[i];break;}}
   if(!g)return;
-  var oldRem=g.rem;g.st="voided";g.rem=0;
-  // Annulation : modification VOLONTAIRE du solde (voir correctif du 31/08).
-  if(typeof saveGiftCard==="function"){saveGiftCard(g,{soldeIntentionnel:true});}
-  // Also direct update as backup
-  if(typeof _sb!=="undefined"&&_sb){
-    _sb.from("cartes_cadeaux").update({status:"voided",restant:0}).eq("id",gcId).then(function(r){
-      console.log("[GC VOID] Direct update:",r.status,r.error?r.error.message:"OK");
-    });
-    // Also try by code
-    if(g.code&&typeof _salonId!=="undefined"&&_salonId){
-      _sb.from("cartes_cadeaux").update({status:"voided",restant:0}).eq("salon_id",_salonId).eq("code",g.code).then(function(r){
-        console.log("[GC VOID] By code:",r.status,r.error?r.error.message:"OK");
-      });
-    }
-  }
-  auditLog("ANNULATION_BON_CADEAU","Bon "+g.code+" - Val:"+g.val.toFixed(2)+"E - Solde annul\u00e9:"+oldRem.toFixed(2)+"E");
+  if(_lxBonVendu(g)){ cM(); showAlert(_lxBonVenduMsg(g),"warning"); return; }
+  var oldRem=g.rem, oldSt=g.st; g.st="voided"; g.rem=0;
+  // Annulation : modification VOLONTAIRE du solde (voir correctif du 31/08). 01/11/2026 : résultat attendu, échec affiché, plus d'écritures « de secours ».
+  var r=(typeof saveGiftCard==="function")?await saveGiftCard(g,{soldeIntentionnel:true}):{ok:false,error:"enregistrement indisponible"};
+  if(!r||!r.ok){ g.st=oldSt; g.rem=oldRem; cM(); showAlert("Annulation du bon refus\u00e9e : "+((r&&r.error)||"erreur inconnue")+".","error"); go("gifts"); return; }
+  auditLog("ANNULATION_BON_CADEAU","Bon "+g.code+" - Val:"+g.val.toFixed(2)+"E - Solde annul\u00e9:"+(Number(oldRem)||0).toFixed(2)+"E");
   cM();go("gifts");
 }
 function printGiftCard(gcId){chooseGiftTheme(gcId);}
@@ -40327,7 +40301,7 @@ async function _cancelSecureTicketDoUneFois(id,motif){
   if(typeof saveAppointment==="function")saveAppointment(cancelTicket);
   // FIX 2026-07-09 (NF525) : scelle le contre-ticket dans le journal tickets (mirror annulerAcompte).
   // Avant, l annulation n etait ecrite que dans appointments -> jamais dans la table tickets scellee.
-  if(typeof saveTicketToDb==="function")saveTicketToDb(cancelTicket);
+  var _pTkCancel=(typeof saveTicketToDb==="function")?saveTicketToDb(cancelTicket):null; // 01/11/2026 : attendu avant l'annulation des bons vendus (la base exige le contre-ticket)
   // === FIX 2026-07-11 : RELIBERATION DU RDV (annulation MEME JOUR d un vrai RDV) ===
   // La ligne "orig" EST le ticket scelle (n\u00b0 de ticket, montant, items, hash) : on n y
   // touche PAS (elle reste visible "Annule" dans Gestion des tickets, reimprimable, et son
@@ -40384,6 +40358,7 @@ async function _cancelSecureTicketDoUneFois(id,motif){
   auditLog("TICKET_ANNULATION","Annulation #"+(orig.tkNum||"--")+" \u2192 Contre-ticket #"+tkN+" - Montant: -"+(orig.pr||0).toFixed(2)+"E - Motif: "+motif+(_isRealRdv?" \u2014 RDV relib\u00e9r\u00e9 (\u00e0 r\u00e9encaisser)":""));
   // 2026-10-14 audit : inversion des effets de gestion (donn\u00e9es de gestion uniquement : aucun ticket, aucune cl\u00f4ture,
   // aucune empreinte n'est touch\u00e9). Le ticket d'origine est marqu\u00e9 \u00ab effets invers\u00e9s \u00bb (meta, hors empreinte).
+  try{ if(_pTkCancel&&typeof _pTkCancel.then==="function") await _pTkCancel; }catch(_eTkC){}
   try{ await _lxEffetsExecuter(_planEffets, orig, cancelTicket); }catch(_eEx){ console.warn("[annulation] inversion des effets",_eEx); }
 }
 // =====================================================================
