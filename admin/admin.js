@@ -6023,7 +6023,7 @@ async function saRembourser(id,pi,max,nature){
   var mt=parseFloat(String(m).replace(",",".")); if(!(mt>0)||mt>max+0.001){ (await lxAlert("Montant invalide")); return; }
   var motif=(await lxSaisie("Motif du remboursement (obligatoire) :","")); if(!motif) return;
   if(!(await lxConfirm("⚠️ Confirmer le remboursement de "+saE(mt)+" ? Action irréversible."))) return;
-  var d=await saApi({op:"rembourser",salon_id:id,payment_intent:pi,montant:mt,motif:motif});
+  var d=await saApi({op:"rembourser",salon_id:id,payment_intent:pi,montant:mt,motif:motif,reste_vu:max}); /* 01/11 : reste affiché, contrôlé par le serveur */
   (await lxAlert(d.error?"❌ "+d.error:"✅ "+saE(d.montant)+" remboursés"));
   saChargerSalon(id);
 }

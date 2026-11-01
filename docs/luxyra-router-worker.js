@@ -2653,7 +2653,8 @@ async function handleWebhookConnect(request, env) {
   const event = await stripeAPI(env, `events/${recu.id}`, null, "GET", recu.account);
   if (!event || event.id !== recu.id) {
     // 01/11 (contre-audit S2b M-4) : panne Stripe -> 500 (rejoué) ; évènement inexistant chez Stripe (faux appel) -> 200 + trace
-    if (!event || (event.error && (Number(event.error.http_status) >= 500 || event.error.type === "api_error" || event.error.type === "upstream_non_json"))) return jsonResponse({ error: "Stripe indisponible" }, 500);
+    // 01/11 (contre-audit S2c, IMPORTANT 2) : 200 « ignoré » SEULEMENT si l'évènement n'existe pas (resource_missing) ; tout autre échec (429, 401, 5xx…) -> 500
+    if (!event || !event.error || event.error.code !== "resource_missing") return jsonResponse({ error: "Stripe indisponible" }, 500);
     try { await reportWorkerError(env, "worker:webhook-connect", new Error("Évènement Connect invérifiable (ignoré)"), { evt: String(recu.id).slice(0, 40), account: String(recu.account).slice(0, 40) }, "warning"); } catch (_) {}
     return jsonResponse({ received: true, ignore: "invérifiable" });
   }
@@ -3217,6 +3218,10 @@ async function handleAdminStripe(request, env) {
       const reste = Number(pi.latest_charge?.amount || pi.amount_received || 0) - Number(pi.latest_charge?.amount_refunded || 0);
       const montant = b.montant ? Math.round(Number(b.montant) * 100) : reste;
       if (!(montant > 0) || montant > reste) return jsonResponse({ error: `Montant invalide (reste remboursable : ${saEur(reste)} €)` }, 400);
+      // 01/11 (contre-audit S2c, 3) : l'interface envoie le « reste remboursable » qu'elle affichait ; s'il a changé entre-temps
+      // (autre remboursement), on refuse au lieu d'en créer un second
+      const _resteVu = (b.reste_vu != null && b.reste_vu !== "") ? Math.round(Number(b.reste_vu) * 100) : null;
+      if (_resteVu !== null && _resteVu !== reste) return jsonResponse({ error: `Ce paiement a changé depuis l'affichage (reste remboursable : ${saEur(reste)} €) : rechargez avant de recommencer.` }, 409);
       if (!motif) return jsonResponse({ error: "Motif obligatoire" }, 400);
       const params = { payment_intent: pi.id, amount: String(montant), "metadata[par]": admin, "metadata[motif]": motif };
       if (estClient && !piCompte) params.reverse_transfer = "true";
@@ -3228,8 +3233,8 @@ async function handleAdminStripe(request, env) {
       globalThis.__lxAdmRbt.set(_vk, Date.now());
       const _pi2 = await stripeAPI(env, `payment_intents/${_piId}?expand[]=latest_charge`, null, "GET", piCompte);
       if (!_pi2 || !_pi2.id || Number(_pi2.latest_charge?.amount_refunded || 0) !== Number(pi.latest_charge?.amount_refunded || 0)) { globalThis.__lxAdmRbt.delete(_vk); return jsonResponse({ error: "Ce paiement vient d'être modifié (remboursement en cours ?) : rechargez avant de recommencer." }, 409); }
-      const rf = await stripeAPI(env, "refunds", params, "POST", piCompte, lxIdemTranche(`lx_adm_rbt_${pi.id}_${reste}_${montant}`)); // 01/11 : idempotent (double clic), tranche 10 min
-      if (!rf?.id) return jsonResponse({ error: "Stripe : " + (rf?.error?.message || "remboursement refusé") }, 502);
+      const rf = await stripeAPI(env, "refunds", params, "POST", piCompte, lxIdemTranche(`lx_adm_rbt_${pi.id}_${_resteVu !== null ? _resteVu : reste}_${montant}`)); // 01/11 : idempotent (double clic), tranche 10 min, reste vu
+      if (!rf?.id) { globalThis.__lxAdmRbt.delete(_vk); return jsonResponse({ error: "Stripe : " + (rf?.error?.message || "remboursement refusé") }, 502); }
       await saLog(env, "STRIPE_REMBOURSEMENT", salon.id, `${saEur(montant)} € sur ${pi.id} (${piCompte ? "paiement client sur le compte du salon" : estClient ? "paiement client (ancien mode), repris au salon" : "abonnement Luxyra"}) par ${admin} — ${motif}`);
       return jsonResponse({ ok: true, refund_id: rf.id, montant: saEur(montant) });
     }
@@ -3912,8 +3917,10 @@ async function handleRdvDemandeFinalize(request, env, opts) {
     const dRes = await fetch(`${sbUrl}/rest/v1/rdv_demandes?proposal_token=eq.${encodeURIComponent(token)}&select=*&limit=1`, {
       headers: _sbHeaders(env)
     });
-    const dRows = await dRes.json();
-    if (!Array.isArray(dRows) || !dRows[0]) {
+    const dRows = await dRes.json().catch(() => null);
+    // 01/11 (contre-audit S2c, IMPORTANT 1) : panne de lecture de la base -> 503 (rejoué), JAMAIS de remboursement
+    if (!dRes.ok || !Array.isArray(dRows)) return jsonResponse({ error: "Paiement reçu, confirmation en cours de finalisation.", paiement_recu: true, en_cours: true }, 503);
+    if (dRows.length === 0) {
       // 01/11 (contre-audit S2b I-3) : lien remplacé / demande supprimée (ancien format, sans option) -> le paiement ne peut
       // servir à rien : remboursé automatiquement (s'il n'est pas déjà enregistré), sinon alerte critique
       const _vD = await lxSmDejaEnregistre(env, session.payment_intent ? String(session.payment_intent) : null);
@@ -4174,7 +4181,11 @@ async function lxSmRembourser(env, session, compte, motif, paiementId) {
   const md = session.metadata || {};
   const pi = session.payment_intent ? String(session.payment_intent) : null;
   let rf = null;
-  if (pi) rf = await stripeAPI(env, "refunds", { payment_intent: pi, "metadata[motif]": "lx_sur_mesure_paiement_en_trop", "metadata[demande_id]": String(md.demande_id || ""), "metadata[option_id]": String(md.option_id || "") }, "POST", compte || null, "lx_sm_remb_" + session.id);
+  // 01/11 (contre-audit S2c, 6) : ancien mode (paiement sur le compte Luxyra avec transfert vers l'établissement) -> reverse_transfer,
+  // comme les autres remboursements du worker : le transfert est repris à l'établissement au lieu d'être payé par Luxyra
+  const _pR = { payment_intent: pi, "metadata[motif]": "lx_sur_mesure_paiement_en_trop", "metadata[demande_id]": String(md.demande_id || ""), "metadata[option_id]": String(md.option_id || "") };
+  if (!compte) _pR.reverse_transfer = "true";
+  if (pi) rf = await stripeAPI(env, "refunds", _pR, "POST", compte || null, "lx_sm_remb_" + session.id);
   const okR = !!(rf && rf.id && !rf.error && ["succeeded", "pending"].includes(String(rf.status)));
   if (paiementId) await lxSmRpc(env, "lx_demande_paiement_rembourse", { p_paiement: paiementId, p_refund_id: okR ? rf.id : null, p_ok: okR,
     p_detail: okR ? "Remboursé automatiquement (" + motif + ")" : "Remboursement automatique impossible : " + JSON.stringify((rf && rf.error) || rf || "sans payment_intent").slice(0, 300) });
@@ -4569,6 +4580,8 @@ async function stripeAPI(env, endpoint, params, method = "POST", compte = null, 
     console.warn("branding refusé, nouvel essai sans habillage:", _res.error.message);
     return await stripeAPI(env, endpoint, p2, method, compte);
   }
+  // 01/11 (contre-audit S2c) : statut HTTP toujours joint à une erreur Stripe (429, 401, 5xx distinguables)
+  if (_res && _res.error && typeof _res.error === "object" && _res.error.http_status == null) _res.error.http_status = _resp.status;
   return _res;
 }
 
@@ -7018,9 +7031,10 @@ async function handleAcompteFinalize(request, env, opts) {
         let _rbt = null, _dejaRbt = false;
         try {
           if (piId) {
-            const _ex = await stripeAPI(env, `refunds?payment_intent=${encodeURIComponent(piId)}&limit=10`, null, "GET", _cpt);
-            const _ok = (_ex && Array.isArray(_ex.data)) ? _ex.data.find((x) => x && x.id && !["failed", "canceled"].includes(String(x.status || ""))) : null;
-            if (_ok) { _rbt = _ok.id; _dejaRbt = true; }
+            // 01/11 (contre-audit S2c, 5) : « déjà remboursé » seulement si la TOTALITÉ du paiement l'est
+            const _fdI = await lxRemboursementsFaits(env, piId, _cpt, null);
+            if (_fdI === null) return jsonResponse({ error: "Paiement reçu, vérification en cours.", paiement_recu: true, en_cours: true }, 503);
+            if (_fdI.premier && _fdI.total >= session.amount_total) { _rbt = _fdI.premier; _dejaRbt = true; }
             else {
               const _idem = "lx_acompte_incoherent_" + piId;
               const _rf = _cpt
@@ -7077,7 +7091,9 @@ async function handleAcompteFinalize(request, env, opts) {
         // erreur passagère (clé en cours d'utilisation, panne Stripe) : RIEN n'est enregistré, l'appel sera rejoué (Stripe / page)
         if (!_rbtI && _transI) {
           // 01/11 (contre-audit S2b M-3) : encore en échec plus de 24 h après le paiement -> alerte CRITIQUE (Stripe arrête de rejouer à 3 jours)
-          const _ageI = (opts && Number(opts.payeSec) > 0) ? (Date.now() / 1000 - Number(opts.payeSec)) : 0;
+          // 01/11 (contre-audit S2c, 7) : repli sur la date de la session Stripe (appel depuis la page / ancien mode)
+          const _pSec = (opts && Number(opts.payeSec) > 0) ? Number(opts.payeSec) : (Number(session && session.created) > 0 ? Number(session.created) : 0);
+          const _ageI = _pSec > 0 ? (Date.now() / 1000 - _pSec) : 0;
           if (_ageI > 86400) { try { await reportWorkerError(env, "worker:acompte-finalize", new Error("Acompte payé sur un RDV " + _rdv.status + " : remboursement automatique toujours impossible après 24 h — à rembourser dans Stripe"), { rdv_id, payment_intent: piId }, "critical"); } catch (_) {} }
           return jsonResponse({ error: "Vérification du paiement en cours, réessayez dans un instant.", en_cours: true }, 503);
         }
@@ -7364,7 +7380,12 @@ async function lxRembourserAcompteStripe(env, rdv, cents) {
       const _fdP = await lxRemboursementsFaits(env, _piPre, (rdv.stripe_account && rdv.payment_intent_id) ? rdv.stripe_account : null, rdv.id);
       // 01/11 (contre-audit S2b I-2) : relecture impossible -> on ne crée rien (sinon double remboursement possible après une tranche)
       if (_fdP === null) return { ok: false, error: "Vérification Stripe impossible, réessayez dans un instant", payment_intent: _piPre };
-      if (_fdP.premier && _fdP.total >= _dejaBase + cents) return { ok: true, refund_id: _fdP.premier, payment_intent: _piPre, status: _fdP.statut, repris: true };
+      // 01/11 (contre-audit S2c, 4) : reprise SEULEMENT si l'écart Stripe/base est exactement ce montant ; un autre écart = incohérence
+      if (_fdP.premier && _fdP.total - _dejaBase === cents) return { ok: true, refund_id: _fdP.premier, payment_intent: _piPre, status: _fdP.statut, repris: true };
+      if (_fdP.total > _dejaBase) {
+        try { await reportWorkerError(env, "worker:acompte-remboursement", new Error("Remboursements Stripe non enregistrés en base : écart différent du montant demandé, rien de créé"), { rdv_id: rdv.id, stripe_cents: _fdP.total, base_cents: _dejaBase, demande_cents: cents }, "critical"); } catch (_) {}
+        return { ok: false, error: "Un remboursement Stripe n'est pas encore enregistré : vérifiez l'acompte avant d'en refaire un", payment_intent: _piPre };
+      }
     }
     if (rdv.stripe_account && rdv.payment_intent_id) {
       const rf = await stripeAPI(env, "refunds", { payment_intent: rdv.payment_intent_id, amount: String(cents), ...meta }, "POST", rdv.stripe_account, _idemR);
