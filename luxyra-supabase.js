@@ -4,7 +4,7 @@
 // BUILD: 20260426-04 — fix CSS options dropdown lisibles
 window.__LUXYRA_BUILD = "20260426-04";
 // 2026-10-14 : version de la couche donnees, comparee par app.html (evite un melange ancienne/nouvelle version via le cache)
-window.LX_DATA_VERSION = "20261031-14"; // 31/10 (-14) : vue établissement, garde-fou de navigation (window.open, liens et formulaires externes bloqués). // 31/10 (-13) : vue établissement, secrets jamais lus (vues lxv_*), opérateurs non chargés, ancienne vue luxyra.fr supprimée. // 31/10 (-12) : vue établissement sur vue.luxyra.fr (jeton de lecture 15 min, relais /sb, plus jamais la session admin). // 31/10 (-11) : vue admin, /api/stripe/fees retiré de la liste de lecture (refusé par le serveur). // 31/10 (-10) : factures Luxyra rendues par le serveur (FR complet). // 31/10 (-9) : e-mails en série espacés + nouvelle tentative, limite du jour affichée (couche données inchangée). Précédent -8 : // 31/10 (-8) : bons cadeaux, palettes + e-carte en caisse + formats A4. // 31/10 (-7) : tarif Fondateur sur l écran fin d essai. // 31/10 (-6) : bons cadeaux, échappement des champs acheteur (H1) + réserves R1-R7. // 2026-10-31 (-5) : modele des bons cadeaux (config_json.bonModele) lu au chargement. Precedent : "20261031-4"
+window.LX_DATA_VERSION = "20261101-1"; // 01/11 (-1) : champs saisis par les clients sans < > " (audit global, lot S1). // 31/10 (-14) : vue établissement, garde-fou de navigation (window.open, liens et formulaires externes bloqués). // 31/10 (-13) : vue établissement, secrets jamais lus (vues lxv_*), opérateurs non chargés, ancienne vue luxyra.fr supprimée. // 31/10 (-12) : vue établissement sur vue.luxyra.fr (jeton de lecture 15 min, relais /sb, plus jamais la session admin). // 31/10 (-11) : vue admin, /api/stripe/fees retiré de la liste de lecture (refusé par le serveur). // 31/10 (-10) : factures Luxyra rendues par le serveur (FR complet). // 31/10 (-9) : e-mails en série espacés + nouvelle tentative, limite du jour affichée (couche données inchangée). Précédent -8 : // 31/10 (-8) : bons cadeaux, palettes + e-carte en caisse + formats A4. // 31/10 (-7) : tarif Fondateur sur l écran fin d essai. // 31/10 (-6) : bons cadeaux, échappement des champs acheteur (H1) + réserves R1-R7. // 2026-10-31 (-5) : modele des bons cadeaux (config_json.bonModele) lu au chargement. Precedent : "20261031-4"
 // (historique) "20261028-3"; // 2026-10-28 (-3, Luxyra 6.8.1 : version de l'application transmise dans chaque ticket (raw_data.lxVersion, contrôlée par le serveur), série de n° imprimés propre au serveur (meta.tkNumServeur), copies serveur jamais réécrites, refus LX_APP_OBSOLETE / LX_TKNUM_SERIE_SERVEUR / LX_CC_DEJA_EN_CAISSE)
 // (historique) "20261028-2"; // 2026-10-28 (-2, Luxyra 6.8.0 : recettes en ligne enregistrées en caisse par le serveur — champs meta serveur / recetteKey…, refus définitif LX_CC_DEJA_EN_CAISSE)
 // (historique) "20261028-1"; // 2026-10-28 (-1 : bons cadeaux à usage unique / multiple — qualification TVA du bon (usage_tva, qualif_tva, repli historique), ticket v2 HT/TVA par ventilation de l'app, taux_tva 0 pour une vente de BUM seule, bonsUtil conservé dans appointments.meta) ; 2026-10-27 (-3 : rapport du mois en vrai PDF + correctifs d’exports comptables, app.html seulement ; -2 : envoi au comptable — FEC + pack Excel + rapport par défaut, ZIP en option, app.html seulement ; -1 : envoi automatique au comptable — changement dans app.html seulement, couche données inchangée) ; 2026-10-17 (-2 : audit réglages — taux TVA produits brut (tvaProduitsColonne), familles produit sans produit (pcats), ancien saveSalonConfig renommé ; -1 : retour / remboursement partiel — champs du ticket de retour conservés dans appointments.meta, refus définitif LX_RETOUR_REFUSE jamais rejoué, ticket de retour refusé au rejeu écarté de la caisse) ; 2026-10-16 (-1 : incident Z n°128 — 1 réservation en ligne = 1 entrée, Z refusée par la base si différente du journal, annotations correctives) ; 2026-10-15 (-3 : multi-appareils, champs modifiés seulement + lignes supprimées ailleurs jamais recréées ; -2 : plus aucun enregistrement muet, lxEcritureVerifiee ; -1 : « Prix à partir de » + sur devis sur les forfaits) ; 2026-10-14 (-8 : correctifs revue d intégration) intégration des audits (données, sécurité, planning, clients, caisse, site, réglages)
@@ -1685,11 +1685,14 @@ function lxMajFusions(rows) {
 }
 function lxCid(id) { var m = window._lxFusion || {}; var n = 0; while (id && m[id] && n < 5) { id = m[id]; n++; } return id; }
 window.lxMajFusions = lxMajFusions; window.lxCid = lxCid;
+// 01/11/2026 (audit global, lot S1) : les champs saisis par les clients ne gardent jamais < > " (défense en plus de la base et de l'échappement)
+function lxSansBalise(v) { return v == null ? v : String(v).replace(/[<>"]/g, ""); }
+window.lxSansBalise = lxSansBalise;
 function lxMapClientRow(c) {
   var obj = {
-    id: c.id, nom: c.nom, pre: c.prenom, sex: c.sexe,
-    ph: c.telephone, ph2: c.telephone2, em: c.email,
-    adr: c.adresse, cp: c.cp, ville: c.ville, ddn: c.date_naissance,
+    id: c.id, nom: lxSansBalise(c.nom), pre: lxSansBalise(c.prenom), sex: c.sexe,
+    ph: lxSansBalise(c.telephone), ph2: lxSansBalise(c.telephone2), em: lxSansBalise(c.email),
+    adr: lxSansBalise(c.adresse), cp: lxSansBalise(c.cp), ville: lxSansBalise(c.ville), ddn: c.date_naissance,
     cr: c.created_at ? c.created_at.slice(0,10) : "",
     no: c.notes, natChev: c.nature_cheveux, typeChev: c.type_cheveux,
     detChev: c.details_cheveux, collab: c.collab_pref,
@@ -1812,7 +1815,7 @@ if (typeof window !== "undefined") window.lxFusionnerCollabs = lxFusionnerCollab
 function lxMapRdvOnlineRow(r) {
   return {
     id: r.id, salonId: r.salon_id,
-    nom: r.client_nom, prenom: r.client_prenom, tel: r.client_tel, email: r.client_email,
+    nom: lxSansBalise(r.client_nom), prenom: lxSansBalise(r.client_prenom), tel: lxSansBalise(r.client_tel), email: lxSansBalise(r.client_email),
     luxyraId: r.client_luxyra_id || null,
     svcId: r.service_id, svcNom: r.service_nom, svcPrix: Number(r.service_prix),
     items: r.items || null,
@@ -1834,7 +1837,7 @@ function lxMapRdvOnlineRow(r) {
     retenueAt: r.retenue_at || null,
     retenueTkNum: r.retenue_tk_num || null,
     stripePaymentId: r.payment_intent_id || null,
-    status: r.status, message: r.message,
+    status: r.status, message: r.message == null ? r.message : String(r.message).replace(/[<>]/g, ""),
     createdAt: r.created_at, confirmedAt: r.confirmed_at,
     isOnline: true,
     paymentIntentId: r.payment_intent_id || null,
@@ -1851,7 +1854,7 @@ function lxMapRdvOnlineRow(r) {
     cancelled_by: r.cancelled_by, cancel_reason: r.cancel_reason, cancelled_at: r.cancelled_at,
     // 2026-10-10 : RDV à domicile (lieu, adresse du client, frais de déplacement) + remise carte
     lieu: r.lieu || null,
-    adresse: [r.client_adresse, [r.client_adresse_cp, r.client_adresse_ville].filter(Boolean).join(" ")].filter(Boolean).join(", ") || null,
+    adresse: lxSansBalise([r.client_adresse, [r.client_adresse_cp, r.client_adresse_ville].filter(Boolean).join(" ")].filter(Boolean).join(", ")) || null,
     adresseComplement: r.adresse_complement || null,
     adresseRue: r.client_adresse || null, adresseCp: r.client_adresse_cp || null, adresseVille: r.client_adresse_ville || null,
     clientLat: (r.client_lat != null ? Number(r.client_lat) : null), clientLng: (r.client_lng != null ? Number(r.client_lng) : null),
