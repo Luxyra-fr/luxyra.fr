@@ -40369,11 +40369,21 @@ async function _cancelSecureTicketDoUneFois(id,motif){
 // Ticket ancien sans relev\u00e9 : les produits / bons / forfaits port\u00e9s par ses lignes sont signal\u00e9s \u00e0 l'op\u00e9rateur
 // (r\u00e9gularisation manuelle), rien n'est devin\u00e9.
 // =====================================================================
+function _lxPayeEnLigne(orig){ // 01/11/2026 (N3, NF525) : vente payée en ligne (bon, carte d'abonnement, Click & Collect) ou déjà remboursée sur Stripe -> remboursement depuis Stripe seulement
+  try{
+    if(!orig) return false;
+    if(["bon_cadeau","carte_abo","click_collect"].indexOf(String(orig.recetteType||""))>=0) return true;
+    for(var i=0;i<AP.length;i++){ var t=AP[i]; if(t&&t!==orig&&t.isRembEnLigne===true&&t.recetteRef!=null&&(String(t.recetteRef)===String(orig.dbId||orig.ticketId||orig._dbId||"")||(t.origTkNum!=null&&orig.tkNum!=null&&String(t.origTkNum)===String(orig.tkNum)))) return true; }
+  }catch(_e){}
+  return false;
+}
+var LX_MSG_PAYE_EN_LIGNE="Payé en ligne : remboursez depuis Stripe (le ticket de remboursement est créé automatiquement dans la caisse).";
 function _lxAnnulationRefusee(orig, opts){ // 2026-10-17 retour partiel (audit) : opts.reglement = contrôle pour « Modifier règlement » (correction du moyen de paiement)
   try{
     if(!orig) return "Ticket introuvable";
     if(orig.cancelled===true||orig.st==="cancelled") return "Ce ticket est d\u00e9j\u00e0 annul\u00e9 (un contre-ticket existe).";
     if(orig.isCancel===true||orig.contraSameDay===true) return "Un contre-ticket d\u2019annulation ne peut pas \u00eatre annul\u00e9 ni modifi\u00e9 (op\u00e9ration n\u00e9gative d\u00e9finitive).";
+    if(!(opts&&opts.reglement)&&_lxPayeEnLigne(orig)) return LX_MSG_PAYE_EN_LIGNE; // N3 (NF525) : avoir / modification refusés, la base refuse aussi
     // 2026-10-17 retour partiel : un ticket de retour est une op\u00e9ration en \u00ab moins \u00bb d\u00e9finitive ; un ticket qui a d\u00e9j\u00e0 un retour
     // partiel ne peut plus \u00eatre annul\u00e9 en totalit\u00e9 (le remboursement d\u00e9passerait le pay\u00e9) ni modifi\u00e9.
     if(typeof _lxEstRetour==="function"&&_lxEstRetour(orig)) return "Un ticket de retour / remboursement partiel est une op\u00e9ration n\u00e9gative d\u00e9finitive : il ne peut pas \u00eatre annul\u00e9, modifi\u00e9 ni voir son r\u00e8glement corrig\u00e9.";
@@ -40561,6 +40571,7 @@ function _lxRetourRefus(orig){
     if(orig.cancelled===true||orig.st==="cancelled") return "Ce ticket est annulé (avoir total déjà fait) : aucun retour possible.";
     if(orig.isCancel===true||orig.contraSameDay===true) return "Un contre-ticket d’annulation ne peut pas faire l’objet d’un retour.";
     if(_lxEstRetour(orig)) return "Un ticket de retour ne peut pas faire l’objet d’un nouveau retour.";
+    if(_lxPayeEnLigne(orig)) return LX_MSG_PAYE_EN_LIGNE; // N3 (NF525)
     var its=orig.items||[];
     if(its.some(function(it){ return it&&/^ANNULATION\b/.test(String(it.name||"")); })&&Number(orig.pr)<0) return "Un contre-ticket d’annulation ne peut pas faire l’objet d’un retour.";
     if(orig.isRetenue===true||its.some(function(it){ return it&&it.isRetenue; })) return "Ticket d’acompte conservé : contactez le support pour une régularisation.";
