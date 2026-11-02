@@ -5629,6 +5629,18 @@ async function handleEmailCustom(request, env) {
     } else if (!_equipeOuSoi) { salonName = "Luxyra"; salonEmail = undefined; }
     if (salonEmail && !/^[^\s@<>]+@[^\s@<>]+\.[A-Za-z0-9-]{2,63}$/.test(String(salonEmail))) salonEmail = undefined;
   }
+  // 02/11/2026 (conformité) : e-mail publicitaire (campagne, anniversaire, relance) envoyé depuis l'app -> refusé si la fiche de ce
+  // destinataire a refusé les e-mails ou les OFFRES par e-mail (compte en ligne relié). Les rappels / confirmations ne sont pas concernés.
+  if (_acces.ok && !_acces.internal && LX_EMAIL_CONTEXTES_MARKETING.has(String(_corps.context || ""))) {
+    const _sidC = await lxEmailSalonAppelant(env, _acces, _corps.salon_id);
+    if (_sidC) {
+      try {
+        const _rq = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/clients?select=id&salon_id=eq.${_sidC}&email=ilike.${encodeURIComponent(to.replace(/[%_*]/g, ""))}&fusionne_dans=is.null&or=(email_ok.is.false,email_marketing_ok.is.false)&limit=1`, { headers: _sbHeaders(env) });
+        const _jq = _rq.ok ? await _rq.json() : [];
+        if (Array.isArray(_jq) && _jq.length) return jsonResponse({ success: false, code: "sans_consentement", error: "Ce client n'accepte pas les offres par e-mail." }, 409);
+      } catch (_) {}
+    }
+  }
   // 2026-10-15 : anti-doublon multi-appareils (voir lxEmailReserver). Appels serveur : déjà réservés en base.
   let _res = { cle: null };
   if (_acces.ok && !_acces.internal) {
@@ -6448,7 +6460,7 @@ async function handleSmsCustom(request, env) {
       const _n = lxTelNorm(telephone);
       if (_n) {
         try {
-          const rq = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/clients?select=id&salon_id=eq.${salon_id}&telephone_norm=eq.${_n}&sms_ok=is.false&fusionne_dans=is.null&rgpd_anonymise_le=is.null&limit=1`, { headers: _sbHeaders(env) });
+          const rq = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/clients?select=id&salon_id=eq.${salon_id}&telephone_norm=eq.${_n}&or=(sms_ok.is.false,sms_marketing_ok.is.false)&fusionne_dans=is.null&rgpd_anonymise_le=is.null&limit=1`, { headers: _sbHeaders(env) });
           const jq = rq.ok ? await rq.json() : [];
           if (Array.isArray(jq) && jq.length) return jsonResponse({ success: false, code: "sans_consentement", requalifie: _requalifie, error: "Ce client n'a pas accepté les SMS (fiche client › RGPD)" }, 409);
         } catch (_) {}
@@ -8857,6 +8869,7 @@ Sitemap: https://luxyra.fr/sitemap.xml
     "/recherche": "/recherche.html",
     "/proposal": "/proposal.html",
     "/cgv": "/cgv.html",
+    "/cgu": "/cgu.html", // 02/11/2026 : conditions générales d'utilisation (clients des établissements)
     "/mentions": "/mentions-legales.html",
     "/mentions-legales": "/mentions-legales.html",
     "/confidentialite": "/politique-confidentialite.html",

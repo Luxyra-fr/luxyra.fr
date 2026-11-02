@@ -417,12 +417,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261101-2"></script>
+<script src="luxyra-supabase.js?v=20261102-1"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261101-2";
+  var attendu="20261102-1";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -38675,7 +38675,7 @@ async function checkSmsReminders(){
       // SMS : 2026-10-17 envoyé plus bas (créneau légal des SMS publicitaires, anniversaires du dimanche / férié reportés)
       // Email
       // 2026-10-17 : e-mails d'anniversaire / relance envoyés par le serveur dès que le drapeau desinscription_courte est actif
-      if(!(window.LX_CONFIG&&window.LX_CONFIG.desinscription_courte===true)&&cl.em&&cl.emOk&&cfg.anniEmail){
+      if(!(window.LX_CONFIG&&window.LX_CONFIG.desinscription_courte===true)&&cl.em&&cl.emOk&&cl.emPub!==false&&cfg.anniEmail){
         var body=cfg.anniEmail.replace(/\{prenom\}/g,vars.prenom).replace(/\{nom\}/g,vars.nom).replace(/\{salon\}/g,vars.salon);
         sendEmailViaWorker(cl.em,cName(cl),"\ud83c\udf82 Joyeux anniversaire ! - "+SALON_CONFIG.nom,lxEmailSalonTexte(body,"Joyeux anniversaire !","\ud83c\udf82"),{dedupKey:_salonId+"|anniversaire_email|"+String(cl.em).trim().toLowerCase()+"|"+todayStr,context:"anniversaire"}); // 2026-10-15 : un par jour, tous appareils
       }
@@ -38689,7 +38689,7 @@ async function checkSmsReminders(){
       var _jA=lxJoursAnnivCouverts(todayStr).map(function(d){return d.slice(5);});
       var _anB=+todayStr.slice(0,4); if(!((_anB%4===0&&_anB%100!==0)||_anB%400===0) && _jA.indexOf("02-28")>=0) _jA.push("02-29");
       CL.forEach(function(cl){
-        if(!cl.ddn||cl.actif===false||!cl.ph||!cl.smsOk) return;
+        if(!cl.ddn||cl.actif===false||!cl.ph||!cl.smsOk||cl.smsPub===false) return; // 02/11/2026 : offres refusées
         if(_jA.indexOf(String(cl.ddn).slice(5,10))<0) return;
         var keyAS="anniSms_"+cl.id+"_"+todayStr.slice(0,4);
         if(window._smsSent[keyAS]) return;
@@ -38718,11 +38718,11 @@ async function checkSmsReminders(){
         if(daysInactive<cfg.relanceJours)return;
         var vars={prenom:cl.pre||"",nom:cl.nom||"",salon:SALON_CONFIG.nom,jours:String(daysInactive)};
         // SMS
-        if(_smsAutoLocal&&cl.ph&&cl.smsOk&&canSms&&cfg.relanceSms){
+        if(_smsAutoLocal&&cl.ph&&cl.smsOk&&cl.smsPub!==false&&canSms&&cfg.relanceSms){
           sendSms(cl.ph,buildSmsText(lxRelanceTexte(cfg.relanceSms),vars),"relance",(cl.pre||"")+" "+(cl.nom||""));
         }
         // Email
-        if(!(window.LX_CONFIG&&window.LX_CONFIG.desinscription_courte===true)&&cl.em&&cl.emOk&&cfg.relanceEmail){
+        if(!(window.LX_CONFIG&&window.LX_CONFIG.desinscription_courte===true)&&cl.em&&cl.emOk&&cl.emPub!==false&&cfg.relanceEmail){
           var body=cfg.relanceEmail.replace(/\{prenom\}/g,vars.prenom).replace(/\{nom\}/g,vars.nom).replace(/\{salon\}/g,vars.salon).replace(/\{jours\}/g,vars.jours);
           sendEmailViaWorker(cl.em,cName(cl),"Vous nous manquez ! - "+SALON_CONFIG.nom,lxEmailSalonTexte(body,"Vous nous manquez !","\ud83d\udc9b"),{dedupKey:_salonId+"|relance_email|"+String(cl.em).trim().toLowerCase()+"|"+todayStr,context:"relance"}); // 2026-10-15
         }
@@ -39100,12 +39100,12 @@ function sendCampaignV2(p){
   var smsListe=[];
   clients.forEach(function(cl){
     var txt=msg.replace(/\{prenom\}/g,cl.pre||"").replace(/\{nom\}/g,cl.nom||"").replace(/\{salon\}/g,SALON_CONFIG.nom);
-    if(doSms&&cl.smsOk&&cl.ph) smsListe.push({cl:cl,txt:txt});
+    if(doSms&&cl.smsOk&&cl.ph&&((p.type==="custom"&&p.nature==="info")||cl.smsPub!==false)) smsListe.push({cl:cl,txt:txt}); // 02/11/2026 : offres refusées (compte en ligne) exclues des SMS publicitaires
   });
   var chain=Promise.resolve();
   // 2026-10-31 : e-mails espacés (3,1 s) avec nouvelle tentative sur « trop de requêtes » (voir _lxEmailPost) + progression ;
   // limite du jour atteinte (quota_jour) : on s'arrête et les e-mails restants sont comptés « non envoyés » (pas « erreurs »).
-  var emailQuota=0, emailListe=doEmail?clients.filter(function(cl){ return cl.emOk&&cl.em; }):[], emailFait=0, quotaAtteint=false;
+  var emailQuota=0, emailListe=doEmail?clients.filter(function(cl){ return cl.emOk&&cl.em&&cl.emPub!==false; }):[], emailFait=0, quotaAtteint=false;
   function _campProgres(){
     try{ var m=document.getElementById("modal"); if(!m) return;
       m.innerHTML='<div class="mbg"><div class="mbox" style="text-align:center;max-width:420px"><div style="font-size:32px;margin-bottom:6px">\u2709\ufe0f</div><h2 style="margin-bottom:6px">Envoi des e-mails\u2026</h2>'
@@ -39262,7 +39262,7 @@ function sendCampaign(type, p){
   window._campEnCours=true; _lxCampBoutonOccupe(true);
   var liste=[];
   clients.forEach(function(cl){
-    if(!cl.ph||cl.smsOk===false) return;
+    if(!cl.ph||cl.smsOk===false||cl.smsPub===false) return; // 02/11/2026 : offres refusées (compte en ligne)
     liste.push({cl:cl, txt:msg.replace(/\{prenom\}/g,cl.pre||"").replace(/\{nom\}/g,cl.nom||"").replace(/\{salon\}/g,SALON_CONFIG.nom)});
   });
   _lxCampSmsEnvoyer(liste, p.title).then(function(r){

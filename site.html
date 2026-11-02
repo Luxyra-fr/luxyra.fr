@@ -1409,8 +1409,10 @@ function showAuthModal(mode){
   else{h+='<div class="fg-row"><div class="fg"><label>Mot de passe *</label><input id="aPass" type="password" required></div><div class="fg"><label>Confirmer *</label><input id="aPass2" type="password" required></div></div>';}
   if(!isLogin){
     h+='<div style="padding:2px 0;border-top:1px solid rgba(255,255,255,.1);margin-top:2px">';
-    h+='<label style="font-size:12px;display:flex;align-items:center;gap:8px;padding:2px 0;cursor:pointer"><input type="checkbox" id="aRegSms" checked> \ud83d\udcf1 J\u0027accepte de recevoir des SMS</label>';
-    h+='<label style="font-size:12px;display:flex;align-items:center;gap:8px;padding:2px 0;cursor:pointer"><input type="checkbox" id="aRegEm" checked> \u2709\ufe0f J\u0027accepte de recevoir des emails</label>';
+    // 02/11/2026 (conformité RGPD / L34-5 CPCE) : consentement marketing NON précoché, distinct des rappels de RDV (toujours envoyés)
+    h+='<label style="font-size:12px;display:flex;align-items:flex-start;gap:8px;padding:2px 0;cursor:pointer"><input type="checkbox" id="aRegSms" style="margin-top:2px"> <span>J\u0027accepte de recevoir par SMS les offres et actualit\u00e9s de cet \u00e9tablissement (facultatif)</span></label>';
+    h+='<label style="font-size:12px;display:flex;align-items:flex-start;gap:8px;padding:2px 0;cursor:pointer"><input type="checkbox" id="aRegEm" style="margin-top:2px"> <span>J\u0027accepte de recevoir par e-mail les offres et actualit\u00e9s de cet \u00e9tablissement (facultatif)</span></label>';
+    h+='<div style="font-size:11px;color:rgba(255,255,255,.55);padding:2px 0 4px 24px">Les confirmations et rappels de vos rendez-vous vous sont envoy\u00e9s dans tous les cas.</div>';
     // 2026-10-14 : consentement obligatoire, comme sur compte.html
     h+='<label style="font-size:12px;display:flex;align-items:center;gap:8px;padding:2px 0;cursor:pointer"><input type="checkbox" id="aRegCgu" required> <span>J\u0027accepte les <a href="/cgv.html" target="_blank" rel="noopener" style="color:var(--gold)">CGU</a> et la <a href="/politique-confidentialite.html" target="_blank" rel="noopener" style="color:var(--gold)">politique de confidentialit\u00e9</a> *</span></label>';
     h+='</div>';
@@ -1472,11 +1474,14 @@ async function doClientRegister(){
     showAuthError("La cr\u00e9ation de nouveaux comptes est temporairement d\u00e9sactiv\u00e9e. Si vous \u00eates d\u00e9j\u00e0 client(e), connectez-vous. Sinon, contactez le salon par t\u00e9l\u00e9phone pour r\u00e9server.");
     return;
   }
-  var smsOk=document.getElementById("aRegSms")?document.getElementById("aRegSms").checked:false;
-  var emOk=document.getElementById("aRegEm")?document.getElementById("aRegEm").checked:false;
+  // 02/11/2026 : cases = consentement aux OFFRES (marketing). Les rappels de RDV (sms_ok / email_ok) restent actifs par défaut,
+  // le client peut s'y opposer ensuite dans son espace.
+  var smsMk=document.getElementById("aRegSms")?document.getElementById("aRegSms").checked:false;
+  var emMk=document.getElementById("aRegEm")?document.getElementById("aRegEm").checked:false;
+  var smsOk=true, emOk=true;
   if(!window.LX){ try{ await window._lxEnsure(); }catch(_e){} }
   if(!window.LX){ showAuthError("Service de connexion momentan\u00e9ment indisponible. Rechargez la page, ou appelez le salon pour r\u00e9server."); return; }
-  var res=await LX.signup({email:email,password:pass,nom:nom,prenom:pre.trim(),telephone:tel,date_naissance:ddn||null,genre:genre,sms_ok:smsOk,email_ok:emOk,adresse:_adr0,cp:_cp0,ville:_vil0,pays:_pays0});
+  var res=await LX.signup({email:email,password:pass,nom:nom,prenom:pre.trim(),telephone:tel,date_naissance:ddn||null,genre:genre,sms_ok:smsOk,email_ok:emOk,sms_marketing_ok:smsMk,email_marketing_ok:emMk,adresse:_adr0,cp:_cp0,ville:_vil0,pays:_pays0});
   if(!res.ok){showAuthError(res.data&&res.data.error?res.data.error:"Erreur lors de la cr\u00e9ation du compte");return;}
   CLIENT=res.data.user;try{_lxFetchAcompteMode(CLIENT&&CLIENT.email,"");}catch(e){} try{ setTimeout(lxFavCharger,300); }catch(_eFv){}
   // FIX 2026-05-23 : enregistre l'adresse sur le compte AVANT de créer le lien salon,
@@ -3777,6 +3782,13 @@ function renderBookingStep4(){
   var cNom=CLIENT?CLIENT.nom:"",cPre=CLIENT?(CLIENT.prenom||""):"",cTel=CLIENT?(CLIENT.telephone||""):"",cEm=CLIENT?CLIENT.email:"";
   h+='<div class="fg-row"><div class="fg"><label>Nom *</label><input id="bkNom" required value="'+escapeAttrSimple(cNom)+'"></div><div class="fg"><label>Pr\u00e9nom</label><input id="bkPre" value="'+escapeAttrSimple(cPre)+'"></div></div>';
   h+='<div class="fg-row"><div class="fg"><label>T\u00e9l\u00e9phone *</label><input id="bkTel" type="tel" required value="'+escapeAttrSimple(cTel)+'"></div><div class="fg"><label>Email</label><input id="bkEmail" type="email" data-lx-sugg="Votre confirmation de rendez-vous sera envoyée à : " value="'+escapeAttrSimple(cEm)+'"></div></div>';
+  // 02/11/2026 (conformité) : en mode empreinte, conditions réelles affichées + acceptation obligatoire AVANT Stripe
+  if((SITE_CFG.modeCaution||"aucun")==="empreinte" && booking.lieu!=='domicile'){
+    var _mtE=Number(SITE_CFG.empreinteMontant)||30;
+    h+='<div style="margin:12px 0 14px;padding:12px;background:rgba(33,150,243,.08);border:1px solid rgba(33,150,243,.25);border-radius:10px;font-size:12px;color:#bbdefb;line-height:1.5">';
+    h+='<strong style="color:#64b5f6">\ud83d\udd12 Empreinte bancaire : aucun d\u00e9bit imm\u00e9diat</strong><br>Une pr\u00e9-autorisation de <strong>'+_mtE.toFixed(2)+' \u20ac</strong> est r\u00e9alis\u00e9e sur votre carte. '+escapeHtmlSimple(lxTexteAnnulation(false));
+    h+='<label style="display:flex;align-items:flex-start;gap:8px;margin-top:10px;font-size:12px;color:var(--text2,#ddd);cursor:pointer"><input type="checkbox" id="empreinteAccept" style="margin-top:2px;flex-shrink:0"><span>'+lxTexteEmpreinteHtml(_mtE)+'</span></label></div>';
+  }
   h+='<div class="fg"><label>Message (optionnel)</label><textarea id="bkMsg" rows="2" placeholder="Pr\u00e9cisions, souhaits..."></textarea></div>';
   
   h+='<div style="display:flex;gap:10px;margin-top:16px">';
@@ -4115,6 +4127,8 @@ async function _lxSubmitWithStripeImpl(){
   }
   if(modeC === "aucun" || acompte <= 0 || booking.lieu==='domicile'){ return _lxSubmitBookingImpl(); }
 
+  // 02/11/2026 (conformité) : empreinte = acceptation explicite des conditions réelles requise
+  if(modeC === "empreinte"){ var _ckE=document.getElementById("empreinteAccept"); if(_ckE && !_ckE.checked){ showAlert("Veuillez accepter les conditions de l\u2019empreinte bancaire.","warning"); return; } }
   // Check slot availability before payment
   await refreshRDV();
   if(isSlotTaken(booking.date,booking.time,dur,booking.collabId)){
@@ -4266,7 +4280,8 @@ async function _lxSubmitWithStripeImpl(){
   h+='<div id="stripeCardElement" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.15);border-radius:10px;padding:14px;min-height:44px"></div>';
   h+='<div id="stripeError" style="color:#ef5350;font-size:12px;margin-top:6px;min-height:18px"></div>';
   if(isEmpreinte){
-    h+='<label style="display:flex;align-items:flex-start;gap:8px;margin-top:10px;font-size:11px;color:rgba(255,255,255,.6);cursor:pointer"><input type="checkbox" id="empreinteAccept" style="margin-top:2px;flex-shrink:0"><span>J\u0027accepte que <strong>'+acompte.toFixed(2)+' \u20ac</strong> soit débité de ma carte en cas d\u0027absence non annulée 24h à l\u0027avance. <a href="/cgv" target="_blank" style="color:var(--gold)">Conditions</a></span></label>';
+    // 02/11/2026 (conformité) : texte = politique d'annulation réelle (lxTexteEmpreinteHtml)
+    h+='<label style="display:flex;align-items:flex-start;gap:8px;margin-top:10px;font-size:11px;color:rgba(255,255,255,.6);cursor:pointer"><input type="checkbox" id="empreinteAccept" style="margin-top:2px;flex-shrink:0"><span>'+lxTexteEmpreinteHtml(acompte)+'</span></label>';
   }
   h+='</div>';
   h+='<div style="display:flex;gap:10px;margin-top:16px">';
@@ -4512,6 +4527,15 @@ function lxPolitiqueAnnulation(){
   return {heures:h, rembourse:SITE_CFG.remboursementAnnul!==false, pct:Number(SITE_CFG.remboursementPartielPct)||0};
 }
 function lxDureeTexte(h){ if(h>=24&&h%24===0){ var j=h/24; return j+(j>1?" jours":" jour"); } return h+" h"; }
+// 02/11/2026 (conformité) : texte d'acceptation de l'empreinte construit avec la politique d'annulation RÉELLE
+// (mêmes règles que le worker : libérée si annulation dans le délai ; capturable si absence ou annulation tardive)
+function lxTexteEmpreinteHtml(montant){
+  var p=lxPolitiqueAnnulation(), c;
+  if(p.heures===-1) c="si je ne me pr\u00e9sente pas au rendez-vous ou si je l\u2019annule (annulation en ligne impossible : contactez l\u2019\u00e9tablissement)";
+  else if(p.heures===0) c="si je ne me pr\u00e9sente pas au rendez-vous sans l\u2019avoir annul\u00e9 avant son heure";
+  else c="si je ne me pr\u00e9sente pas au rendez-vous ou si je l\u2019annule moins de "+lxDureeTexte(p.heures)+" avant";
+  return 'J\u0027accepte qu\u0027au plus <strong>'+(Number(montant)||0).toFixed(2)+' \u20ac</strong> soient d\u00e9bit\u00e9s de ma carte '+c+'. Dans les autres cas, rien n\u0027est d\u00e9bit\u00e9 et l\u0027empreinte est lib\u00e9r\u00e9e. <a href="/cgu" target="_blank" rel="noopener" style="color:var(--gold)">Conditions</a>';
+}
 function lxTexteAnnulation(avecAcompte){
   var p=lxPolitiqueAnnulation(), t;
   if(p.heures===-1) t="Annulation en ligne impossible : contactez l\u2019\u00e9tablissement.";
