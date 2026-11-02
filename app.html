@@ -417,12 +417,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261102-2"></script>
+<script src="luxyra-supabase.js?v=20261102-3"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261102-2";
+  var attendu="20261102-3";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -10901,6 +10901,38 @@ function _lxAcompteSalonItem(ap, s){
     ap.items.push({isAcompteData:true,acompte:s.total,acompteMode:s.mode,acompteDate:s.date,acompteTkNum:s.tk,versements:s.vers}); }catch(_e){}
 }
 window._lxApOnlineEnrichir=_lxApOnlineEnrichir;
+// 02/11/2026 : étapes d'une réservation en ligne pour le planning (même règle que lx_prive.rdv_online_phases) :
+// toutes les prestations réservées dans l'ordre (étapes du forfait, sinon sa durée) ; prudence : si la somme ne
+// correspond pas à la durée réservée (durée modifiée, déplacement) ou si le RDV est à domicile, un seul bloc de
+// travail sur toute la durée (jamais de trou). La modification par l'établissement (salon_edit) reste prioritaire.
+function _lxOnlinePhasesDe(rdv, dur){
+  var plein=[{t:"w",d:dur,l:rdv.service_nom||"RDV en ligne"}];
+  try{
+    var gs=(typeof gS==="function")?gS:function(){return null;};
+    var src=[];
+    var its=Array.isArray(rdv.items)?rdv.items.filter(function(it){return it&&typeof it==="object";}):[];
+    if(its.length){
+      its=its.map(function(it,i){return {it:it,i:i};}).sort(function(a,b){
+        var oa=parseInt(a.it.ordre,10), ob=parseInt(b.it.ordre,10);
+        if(isFinite(oa)&&isFinite(ob)&&oa!==ob) return oa-ob; if(isFinite(oa)!==isFinite(ob)) return isFinite(oa)?-1:1; return a.i-b.i; });
+      for(var k=0;k<its.length;k++){
+        var it=its[k].it, sid=it.service_id!=null?it.service_id:(it.sId!=null?it.sId:null), sv=sid!=null?gs(sid):null;
+        if(!sv) return plein;
+        if(Array.isArray(sv.phases)&&sv.phases.length){ sv.phases.forEach(function(p){ var pz=!!(p&&p.t==="p"); src.push(pz?{t:"p",d:Number(p.d)||0}:{t:"w",d:Number(p&&p.d)||0,l:(p&&p.l)||sv.n||it.nom||"",sId:(p&&p.sId)||sv.id}); }); }
+        else { var d0=Number(it.duree)||0; if(d0<=0) return plein; src.push({t:"w",d:d0,l:sv.n||it.nom||"",sId:sv.id}); }
+      }
+    } else {
+      var sv1=gs(rdv.service_id);
+      if(!(sv1&&Array.isArray(sv1.phases)&&sv1.phases.length)) return plein;
+      sv1.phases.forEach(function(p){ var pz=!!(p&&p.t==="p"); var o=pz?{t:"p",d:Number(p.d)||0}:{t:"w",d:Number(p&&p.d)||0,l:(p&&p.l)||sv1.n||""}; if(!pz&&p&&p.sId) o.sId=p.sId; src.push(o); });
+    }
+    if((rdv.lieu||"salon")==="domicile") return plein;
+    var som=0; for(var j=0;j<src.length;j++){ if(!(src[j].d>0)) return plein; som+=src[j].d; }
+    if(som!==Number(dur)) return plein;
+    return src;
+  }catch(_e){ return plein; }
+}
+window._lxOnlinePhasesDe=_lxOnlinePhasesDe;
 function _lxOnlineToAP(rdv){
   try{
     if(typeof AP==="undefined"||!AP)return;
@@ -10929,8 +10961,9 @@ function _lxOnlineToAP(rdv){
       }
     }
     var dur=rdv.duree_minutes||60;
-    var sv=(typeof gS==="function")?gS(rdv.service_id):null;
-    var phases=(sv&&sv.phases&&sv.phases.length>0)?sv.phases:[{t:"w",d:dur,l:rdv.service_nom}];
+    // 02/11/2026 : le planning reprend le RDV EN ENTIER (toutes les prestations réservées, dans l'ordre), plus
+    // seulement les étapes de la 1re prestation. Même règle que la base (lx_prive.rdv_online_phases).
+    var phases=_lxOnlinePhasesDe(rdv, dur);
     var aptItems=[];
     if(Array.isArray(rdv.items)&&rdv.items.length>1){aptItems=rdv.items.map(function(it){return {sId:it.sId||it.service_id||null,name:it.name||it.nom||"Prestation",price:Number(it.price||it.prix||0),qty:Number(it.qty||1),remise:Number(it.remise||0)};});}
     // 2026-10-11 : contenu modifié par l'établissement (forfait changé, prestation remplacée/ajoutée)
