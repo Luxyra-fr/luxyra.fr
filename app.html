@@ -29395,7 +29395,9 @@ function oM(type,pf){
     var dk=dS(calD);
     var dow=calD.getDay();
     var dayLabel=DF[dow]+" "+calD.getDate()+" "+MO[calD.getMonth()];
-    var preStId=pf.stId||(T[0]?T[0].id:null);
+    // 02/11/2026 : par défaut le 1er membre ACTIF de l'équipe (une seule coiffeuse = choisie d'office, comme la réservation en ligne) ; plus jamais un collaborateur parti
+    var _actRdv=(typeof getActiveTeam==="function")?getActiveTeam():[];
+    var preStId=pf.stId||(_actRdv[0]?_actRdv[0].id:(T[0]?T[0].id:null));
     window._rdvStImpose=!!pf.stId; // 2026-10-17 audit réglages (#45) : collaborateur imposé (colonne du planning) -> pas remplacé par le collaborateur habituel
     var preTime=pf.time||"09:00";
     
@@ -29448,16 +29450,10 @@ function oM(type,pf){
     h+='</div>';
     h+='<input type="hidden" id="mc" value="'+(pf.cId||"")+'">';
     
-    // Category selection with icons (like encaissement tiles)
+    // 02/11/2026 : comme à l'encaissement — on choisit d'abord Services ou Forfaits, puis la famille
+    if(window._rdvKind!=="forfaits") window._rdvKind="services";
     h+='<div style="font-size:13px;color:var(--gold);font-weight:700;margin:14px 0 6px">'+getMetierConfig().icon+' S\u00e9lection de la prestation</div>';
-    h+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px">';
-    for(var ci=0;ci<CATS.length;ci++){
-      var cat=CATS[ci];var sc=getSvcColor(cat);var catIco=getCatIcon(cat)||getMetierConfig().icon;
-      h+='<button class="btn rdv-cat" style="padding:10px 6px;font-size:12px;font-weight:800;border-radius:10px;background:'+sc.bg+';color:'+sc.text+';border:2px solid '+sc.border+';text-align:center;cursor:pointer" onclick="pickRdvCat(this.dataset.cat)" data-cat="'+cat+'">';
-      h+='<div style="font-size:22px;margin-bottom:2px">'+catIco+'</div>';
-      h+=cat+'</button>';
-    }
-    h+='</div>';
+    h+='<div id="rdvCatTiles">'+rdvCatTilesHtml()+'</div>';
     h+='</div>';
     
     // Service selection
@@ -29476,7 +29472,7 @@ function oM(type,pf){
     }
     h+='</div>';
     h+='<select id="mst" style="display:none">';
-    var _eqF=lxEquipeSelection(pf.stId); for(var i=0;i<_eqF.length;i++)h+='<option value="'+_eqF[i].id+'"'+(pf.stId&&_eqF[i].id===pf.stId?' selected':'')+'>'+_eqF[i].n+'</option>';
+    var _eqF=lxEquipeSelection(preStId); for(var i=0;i<_eqF.length;i++)h+='<option value="'+_eqF[i].id+'"'+(String(_eqF[i].id)===String(preStId)?' selected':'')+'>'+_eqF[i].n+'</option>';
     h+='</select>';
     
     // Preview
@@ -30086,9 +30082,34 @@ function pickRdvPassage(type){
   if(info){info.innerHTML='<div style="font-weight:700;font-size:15px">'+labels[type]+'</div>';}
 }
 
+// 02/11/2026 : sélection en 2 temps à la création d'un RDV (même règle que l'encaissement : forfait = plusieurs phases)
+function _rdvEstForfait(s){ return !!(s&&s.phases&&s.phases.length>1); }
+function _rdvDuType(s){ return (window._rdvKind==="forfaits") ? _rdvEstForfait(s) : !_rdvEstForfait(s); }
+function rdvCatTilesHtml(){
+  var kind=(window._rdvKind==="forfaits")?"forfaits":"services";
+  var nS=SVC.filter(function(s){return s&&s.n&&!_rdvEstForfait(s);}).length, nF=SVC.filter(function(s){return s&&s.n&&_rdvEstForfait(s);}).length;
+  var tab=function(k,lib,n){ var on=(kind===k); return '<button class="btn" style="flex:1;padding:10px 6px;font-size:13px;font-weight:800;border-radius:10px;cursor:pointer;background:'+(on?'linear-gradient(135deg,#e8c873,#a8862e)':'rgba(255,255,255,.04)')+' !important;color:'+(on?'#111':'var(--text2)')+' !important;border:1.5px solid '+(on?'#e8c873':'var(--border2)')+' !important" onclick="rdvSetKind(\''+k+'\')">'+lib+' <span style="opacity:.6;font-weight:600">('+n+')</span></button>'; };
+  var h='<div style="display:flex;gap:8px;margin-bottom:10px">'+tab("services",getMetierConfig().icon+" Services",nS)+tab("forfaits","\ud83d\udce6 Forfaits",nF)+'</div>';
+  var avec={}; SVC.forEach(function(s){ if(s&&s.n&&_rdvDuType(s)) avec[s.cat||""]=true; });
+  var cats=CATS.filter(function(c){return avec[c];}); Object.keys(avec).forEach(function(c){ if(cats.indexOf(c)<0) cats.push(c); });
+  if(!cats.length){ return h+'<div style="text-align:center;padding:16px;color:var(--text3);font-size:13px">'+(kind==="forfaits"?"Aucun forfait. Créez-en dans Services et Forfaits → onglet Forfaits.":"Aucun service. Ajoutez-en dans Services et Forfaits.")+'</div>'; }
+  h+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px">';
+  for(var ci=0;ci<cats.length;ci++){
+    var cat=cats[ci];var sc=getSvcColor(cat);var catIco=getCatIcon(cat)||getMetierConfig().icon;
+    h+='<button class="btn rdv-cat" style="padding:10px 6px;font-size:12px;font-weight:800;border-radius:10px;background:'+sc.bg+';color:'+sc.text+';border:2px solid '+sc.border+';text-align:center;cursor:pointer" onclick="pickRdvCat(this.dataset.cat)" data-cat="'+_lxH(cat)+'">';
+    h+='<div style="font-size:22px;margin-bottom:2px">'+catIco+'</div>';
+    h+=_lxH(cat||"Sans famille")+'</button>';
+  }
+  return h+'</div>';
+}
+function rdvSetKind(k){
+  window._rdvKind=(k==="forfaits")?"forfaits":"services";
+  var el=document.getElementById("rdvCatTiles"); if(el) el.innerHTML=rdvCatTilesHtml();
+  var l=document.getElementById("rdvSvcList"); if(l) l.innerHTML="";
+}
 function pickRdvCat(cat){
-  // Show services for this category
-  var svcs=SVC.filter(function(s){return s.cat===cat});
+  // Show services for this category (02/11/2026 : seulement le type choisi — Services ou Forfaits)
+  var svcs=SVC.filter(function(s){return s.cat===cat && _rdvDuType(s);});
   var h='<div style="font-size:13px;color:var(--text3);margin-bottom:6px">Prestations \u2014 '+cat+'</div>';
   h+='<div style="max-height:200px;overflow-y:auto;border:1px solid var(--border2);border-radius:8px">';
   for(var i=0;i<svcs.length;i++){
