@@ -417,12 +417,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261102-6"></script>
+<script src="luxyra-supabase.js?v=20261102-7"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261102-6";
+  var attendu="20261102-7";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -13025,35 +13025,57 @@ function rPlanning(){
 // qui ouvre « Nouveau rendez-vous » à l'heure exacte du début du temps libre, collaborateur choisi.
 window._lxPauseZ = window._lxPauseZ || {};
 // Premier intervalle libre [deb, fin) dans la pause [pS, pE) en retirant les étapes de travail des autres RDV du collaborateur.
-function _lxPauseLibre(pS, pE, travaux, aPropre){
+function _lxPauseTrous(pS, pE, travaux, aPropre){
   var iv=(travaux||[]).filter(function(w){ return w && w.a!==aPropre && w.start<pE && w.end>pS; })
-    .map(function(w){ return [w.start,w.end]; }).sort(function(x,y){ return x[0]-y[0]; });
-  var deb=pS;
-  for(var i=0;i<iv.length;i++){ if(iv[i][0]<=deb && iv[i][1]>deb) deb=iv[i][1]; }
-  if(deb>=pE) return null;
-  var fin=pE;
-  for(var j=0;j<iv.length;j++){ if(iv[j][0]>=deb && iv[j][0]<fin) fin=iv[j][0]; }
-  return (fin-deb>=5)?{deb:deb,fin:fin}:null;
+    .map(function(w){ return [Math.max(w.start,pS),Math.min(w.end,pE)]; }).sort(function(x,y){ return x[0]-y[0]; });
+  var trous=[], deb=pS;
+  for(var i=0;i<iv.length;i++){ if(iv[i][0]>deb) trous.push({deb:deb,fin:iv[i][0]}); if(iv[i][1]>deb) deb=iv[i][1]; }
+  if(deb<pE) trous.push({deb:deb,fin:pE});
+  return trous.filter(function(t){ return t.fin-t.deb>=5; });
+}
+// 02/11/2026 (contre-audit) : premier trou d'au moins 5 min (les absences / pauses du collaborateur sont dans « travaux »)
+function _lxPauseLibre(pS, pE, travaux, aPropre){ var t=_lxPauseTrous(pS, pE, travaux, aPropre); return t.length?t[0]:null; }
+// Absences du collaborateur ce jour-là (pause déjeuner, absence en heures, horaires bloqués) en intervalles {start,end}
+function _lxPauseAbsences(stId, dk){
+  var out=[];
+  try{ (typeof getBlockedSlots==="function"?getBlockedSlots(stId, dk):[]).forEach(function(b){ if(b&&b.from&&b.to) out.push({start:toM(b.from),end:toM(b.to),a:null}); }); }catch(_e){}
+  try{ (window.ABSENCES||[]).forEach(function(ab){ if(ab&&ab.stId===stId&&ab.date===dk&&(ab.type==="pause"||ab.type==="absent_heures")&&ab.from&&ab.to) out.push({start:toM(ab.from),end:toM(ab.to),a:null}); }); }catch(_e){}
+  return out;
 }
 function _lxPauseHTML(a, sty, dk, pS, pE, topPx, hPx, travaux, cl){
   var dom=(a.lieu==="domicile");
-  var lib=dom?null:_lxPauseLibre(pS, pE, travaux, a);
+  var _trav=(travaux||[]).concat(dom?[]:_lxPauseAbsences(sty.id, dk));
+  var _trous=dom?[]:_lxPauseTrous(pS, pE, _trav, a), lib=_trous.length?_trous[0]:null;
   var hh=Math.max(hPx-2,10);
   if(!lib){
     // Domicile (la personne est chez le client) ou pause déjà occupée : affichage seul, comme avant
     return '<div class="pg-pause" style="top:'+topPx+'px;height:'+hh+'px;left:0;width:100%;opacity:.4;pointer-events:none;flex-direction:column;line-height:1.2" title="Pause '+frM(pS)+' → '+frM(pE)+'">⏸ '+(dom?'Pause (domicile)':((cl?cNameH(cl).split(" ")[0]:"")+" "+(pE-pS)+'min'))+(hh>=26?'<span style="font-size:9px;font-weight:600">'+frM(pS)+' → '+frM(pE)+'</span>':'')+'</div>';
   }
   var k="p"+(++window._lxPauseSeq);
-  window._lxPauseZ[k]={stId:sty.id, dk:dk, deb:lib.deb, fin:lib.fin, cli:apptClientLabel(a)||""};
-  var x='<div class="pg-pause lx-pause-ok" data-pz="'+k+'" style="top:'+topPx+'px;height:'+hh+'px;left:0;width:100%;pointer-events:auto;cursor:pointer;flex-direction:column;line-height:1.2;background:repeating-linear-gradient(135deg,rgba(200,168,78,.16),rgba(200,168,78,.16) 5px,rgba(200,168,78,.04) 5px,rgba(200,168,78,.04) 10px);border:1.5px dashed var(--gold);color:#8a6d1f" onclick="event.stopPropagation();lxPauseClic(\''+k+'\')" title="Pause '+frM(pS)+' → '+frM(pE)+' : toucher pour placer un rendez-vous">';
+  window._lxPauseZ[k]={stId:sty.id, dk:dk, deb:lib.deb, fin:lib.fin, pS:pS, pE:pE, h:hh, trous:_trous, cli:apptClientLabel(a)||""};
+  var x='<div class="pg-pause lx-pause-ok" data-pz="'+k+'" style="top:'+topPx+'px;height:'+hh+'px;left:0;width:100%;pointer-events:auto;cursor:pointer;flex-direction:column;line-height:1.2;background:repeating-linear-gradient(135deg,rgba(200,168,78,.16),rgba(200,168,78,.16) 5px,rgba(200,168,78,.04) 5px,rgba(200,168,78,.04) 10px);border:1.5px dashed var(--gold);color:#8a6d1f" onclick="event.stopPropagation();lxPauseClic(\''+k+'\',event)" title="Pause '+frM(pS)+' → '+frM(pE)+' : toucher pour placer un rendez-vous">';
   x+='<span style="font-weight:800;font-size:11px">⏸ Pause</span>';
   if(hh>=26) x+='<span style="font-size:10px;font-weight:700">'+frM(pS)+' → '+frM(pE)+'</span>';
   if(hh>=48) x+='<span style="margin-top:3px;background:var(--gold);color:#111;border-radius:6px;padding:1px 7px;font-weight:800;font-size:10px">＋ RDV ici</span>';
   return x+'</div>';
 }
 window._lxPauseSeq = window._lxPauseSeq || 0;
-function lxPauseClic(k){
+function lxPauseClic(k, ev){
   var z=window._lxPauseZ&&window._lxPauseZ[k]; if(!z) return;
+  try{ if(typeof hideRdvPopup==="function") hideRdvPopup(); }catch(_e){}
+  window._lxHorsHorairesOkTime=null;
+  // Trou sous le doigt (sinon le premier trou libre d'au moins 5 min)
+  var t0={deb:z.deb, fin:z.fin};
+  try{
+    if(ev && ev.currentTarget && z.trous && z.trous.length>1){
+      var r=ev.currentTarget.getBoundingClientRect(), y=(ev.clientY||0)-r.top;
+      var m=z.pS+(y/Math.max(1,r.height))*(z.pE-z.pS);
+      for(var i=0;i<z.trous.length;i++){ if(m>=z.trous[i].deb && m<z.trous[i].fin){ t0=z.trous[i]; break; } }
+    }
+  }catch(_e){}
+  // Garde : collaborateur indisponible (absence, pause, hors horaires) sur ce temps libre
+  try{ if(typeof isStylistBlockedDuring==="function" && isStylistBlockedDuring(z.stId, z.dk, t0.deb, t0.deb+1)){ if(typeof toast==="function") toast("Collaborateur indisponible pendant cette pause"); return; } }catch(_e){}
+  z={stId:z.stId, dk:z.dk, deb:t0.deb, fin:t0.fin, cli:z.cli};
   if(window._pending2ndRdv){ clickSlot(z.stId, frM(z.deb), z.dk); return; } // placement d'un 2e RDV en cours : même chemin qu'un créneau
   window._savedCalD=new Date(calD.getTime()); window._savedPlanDays=window._planDays;
   calD=new Date(z.dk+'T12:00:00');
@@ -13258,11 +13280,11 @@ function rPlanningDay(dateObj,showDayHeader){
           var _borderStyle = _isDirect ? 'border-style:dashed;border-width:2px;' : '';
           h+='<div class="pg-block" data-aid="'+a.id+'" data-stid="'+sty.id+'"'+(a.isOnline?' data-nodrag="1"':'')+' style="'+_borderStyle+'top:'+topPx+'px;height:'+Math.max(hPx-2,SLOT_H-2)+'px;left:'+leftPct+'%;width:'+(colW-1)+'%;background:'+(a.isOnline?'rgba(108,92,231,.35)':phColors.bg)+';border-color:'+(a.isOnline?'#7c6dd8':phColors.border)+';color:'+(a.isOnline?'#2d1b69':phColors.text)+'" onclick="showRdvPopup(\''+a.id+'\',event)" ondblclick="hideRdvPopup();clickAppt(\''+a.id+'\')">';
           h+='<div class="pb-name">'+apptClientLabelH(a)+'</div>';
-          h+='<div class="pb-svc">'+((ph&&ph.l)||(sv?sv.n:""))+'</div>';
+          h+='<div class="pb-svc">'+_lxH((ph&&ph.l)||(sv?sv.n:""))+'</div>';
           if(_multiEt){
             h+='<div class="pb-svc lx-et-h" style="font-weight:800">'+frM(cur)+' \u2192 '+frM(cur+ph.d)+'</div>';
             if(pi===_derW) h+='<div class="pb-svc lx-et-forfait" style="opacity:.55;font-size:10px">Forfait '+a.time+' \u2192 '+endTime+'</div>';
-          } else h+='<div class="pb-svc" style="opacity:.7">'+ph.l+' \u2022 '+a.time+'\u2192'+endTime+'</div>';
+          } else h+='<div class="pb-svc" style="opacity:.7">'+_lxH(ph.l)+' \u2022 '+a.time+'\u2192'+endTime+'</div>';
           if(hPx>=50){
             if(_isDirect)h+='<div class="pb-badge" style="background:rgba(255,193,7,.2);color:#ffc107;font-weight:700">\ud83d\udcb3 Encaiss\u00e9 direct</div>';
             else if(a.isOnline&&a.st!=="done"&&(function(){var _r=_lxRdvOnlineDe(a);return _r&&_r.status==="pending";})())h+='<div class="pb-badge" style="background:rgba(255,152,0,.9);color:#111">\u23f3 \u00c0 valider</div>';
@@ -29502,6 +29524,7 @@ function _openClientFromRdv(){
     var ctx={};
     var elD=document.getElementById("md");if(elD)ctx.date=elD.value;
     var elT=document.getElementById("mt");if(elT)ctx.time=elT.value;
+    try{ if(typeof _lxPauseCtxActif==="function" && _lxPauseCtxActif()) ctx.pause=true; }catch(_e){}
     // Coiffeur : pas exposé en input visible, mais pf.stId est posé via calStId si dispo
     if(typeof calStId!=="undefined")ctx.stId=calStId;
     // Passage en cours (Homme/Femme/Enfant) si déjà cliqué
@@ -30271,13 +30294,14 @@ function pickRdvCat(cat){
   var h='<div style="font-size:13px;color:var(--text3);margin-bottom:6px">Prestations \u2014 '+cat+'</div>';
   // 02/11/2026 (maquette validée) : ouvert depuis une pause -> en vert ce qui tient dans le temps libre, le reste grisé (toujours sélectionnable)
   var _pz=(typeof _lxPauseCtxActif==="function")?_lxPauseCtxActif():null, _pzMax=_pz?(_pz.fin-_pz.deb):0;
-  if(_pz) h+='<div style="font-size:11px;color:var(--text3);margin:-2px 0 6px">En vert : tient dans la pause ('+_pzMax+' min).</div>';
+  var _pzDeja=0; if(_pz){ (window._rdvSvcIds||[]).forEach(function(sid){ var _s0=gS(sid); if(_s0) _pzDeja+=(svcTotalDur(_s0)||0); }); }
+  if(_pz) h+='<div style="font-size:11px;color:var(--text3);margin:-2px 0 6px">En vert : tient dans la pause ('+_pzMax+' min'+(_pzDeja?', dont '+_pzDeja+' min déjà choisies':'')+').</div>';
   h+='<div style="max-height:200px;overflow-y:auto;border:1px solid var(--border2);border-radius:8px">';
   for(var i=0;i<svcs.length;i++){
     var s=svcs[i];
-    var _dS=svcTotalDur(s), _tient=_pz?(_dS>0&&_dS<=_pzMax):null;
+    var _dS=svcTotalDur(s), _deja=((window._rdvSvcIds||[]).indexOf(s.id)>=0), _tient=_pz?(_dS>0&&(_deja?_pzDeja:_pzDeja+_dS)<=_pzMax):null;
     h+='<div class="rdv-svc-l'+(_pz?(_tient?' lx-pz-ok':' lx-pz-ko'):'')+'" style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid var(--border2);cursor:pointer'+(_pz?(_tient?';border-left:4px solid #4caf50;background:rgba(76,175,80,.08)':';opacity:.45'):'')+'" onclick="pickRdvSvc('+s.id+')">';
-    h+='<div><div style="font-weight:700;font-size:14px">'+s.n+'</div>';
+    h+='<div><div style="font-weight:700;font-size:14px">'+_lxH(s.n)+'</div>';
     h+='<div style="font-size:11px;color:'+(_pz&&_tient?'#4caf50':'var(--text3)')+'">'+_dS+' min'+(_pz?(_tient?' \u2022 tient dans la pause':' \u2022 d\u00e9passe la pause'):'')+'</div></div>';
     h+='<div style="font-weight:800;font-family:var(--f1);color:var(--gold)">'+s.p+'\u20ac</div></div>';
   }
@@ -30740,7 +30764,7 @@ async function aCl(){
     // pf.cId sera lu et placé dans #mc, et pickRdvClient sera déclenché pour MAJ l'affichage
     setTimeout(function(){
       try{
-        oM("appt",{cId:newCl.id,time:ctx.time,stId:ctx.stId});
+        oM("appt",{cId:newCl.id,time:ctx.time,stId:ctx.stId,pause:!!ctx.pause});
         // Restaurer date si différente d'aujourd'hui
         setTimeout(function(){
           if(ctx.date){var elD=document.getElementById("md");if(elD)elD.value=ctx.date;}
