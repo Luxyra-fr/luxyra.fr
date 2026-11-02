@@ -417,12 +417,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261102-4"></script>
+<script src="luxyra-supabase.js?v=20261102-5"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261102-4";
+  var attendu="20261102-5";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -10944,9 +10944,26 @@ function _lxOnlinePhasesDe(rdv, dur){
 // modifiée par l'établissement (salon_edit), ni déléguée par étape, ni en cours de déplacement, ET si ses étapes sont
 // encore celles de l'ancien calcul automatique (catalogue de la 1re prestation ou bloc plein) : jamais d'écrasement
 // d'une retouche faite à la main. Renvoie true si l'entrée a changé.
+// 02/11/2026 : ids des réservations en ligne dont une retouche attend encore l'envoi (file de secours locale) ;
+// relu au plus une fois par seconde (appelé pour chaque réservation).
+var _lxWalRetCache={t:0,ids:{}};
+function _lxWalRetoucheEnAttente(id){
+  try{
+    if(!id) return false;
+    var now=Date.now();
+    if(now-_lxWalRetCache.t>1000){
+      var ids={}, wal=JSON.parse(localStorage.getItem("_lx_wal_v1")||"[]");
+      (Array.isArray(wal)?wal:[]).forEach(function(e){ var d=e&&e.data; if(e&&!e.synced&&e.type==="appointment"&&d&&typeof d.id==="string"&&d.id.indexOf("online_")===0&&Array.isArray(d.aPhases)&&d.aPhases.length) ids[d.id]=1; });
+      _lxWalRetCache={t:now,ids:ids};
+    }
+    return !!_lxWalRetCache.ids[id];
+  }catch(_e){ return false; }
+}
 function _lxOnlinePhasesMaj(ap, rdv, dur){
   try{
     if(!ap||ap.st==="done"||ap.tkNum) return false;
+    if(ap._lxPhasesMain===true) return false; // 02/11/2026 : étapes retouchées à la main (posé par saveAppointment)
+    if(_lxWalRetoucheEnAttente(ap.id)){ ap._lxPhasesMain=true; return false; } // retouche pas encore envoyée (file de secours)
     if(window._pendingDrag&&window._pendingDrag.id===ap.id) return false;
     var se=rdv&&rdv.salon_edit; if(se&&typeof se==="object"&&Array.isArray(se.phases)&&se.phases.length) return false;
     var cur=Array.isArray(ap.aPhases)?ap.aPhases:[];
