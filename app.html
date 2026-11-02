@@ -987,7 +987,7 @@ function _defaultCollabId(){
       }
     }
   }
-  return (typeof T!=="undefined" && T && T.length) ? T[0].id : null;
+  return lxPremierActifId();
 }
 var _operatorLockTimer = null;
 var _operatorPinBuffer = "";
@@ -1093,6 +1093,9 @@ function lxEquipeSelection(idDejaChoisi){
   return act;
 }
 window.getActiveTeam=getActiveTeam;
+// 02/11/2026 : collaborateur par défaut = 1er membre ACTIF (jamais un collaborateur parti) ; repli T[0] si l'équipe active est vide
+function lxPremierActif(){ var a=(typeof getActiveTeam==="function")?getActiveTeam():[]; return a[0]||((typeof T!=="undefined"&&T&&T[0])?T[0]:null); }
+function lxPremierActifId(){ var t=lxPremierActif(); return t?t.id:null; }
 
 // ===== WIZARD CONFIRMATION CHANGEMENT MODE CAUTION =====
 // Affiche une modal détaillée avec les implications avant d'activer un mode.
@@ -4638,7 +4641,7 @@ function convertDevis(idx){
 function convertDevisToRdv(idx){
   var dv=window.DEVIS[idx]; if(!dv) return;
   var todayStr = (typeof TD!=="undefined") ? TD : new Date().toISOString().slice(0,10);
-  var defaultStId = (T && T[0]) ? T[0].id : null;
+  var defaultStId = lxPremierActifId();
   // Calcul durée totale du devis (somme des durées des items)
   var totalDur = 0;
   if(dv.items){
@@ -10714,7 +10717,7 @@ function _lxResolveOnlineStId(date, heure, dur, curStId){
   }catch(_e){
     try{
       if(curStId!=null&&curStId!=="") return {stId:curStId,needAssign:false,ok:true};
-      var _t=(typeof T!=="undefined"&&T&&T.length)?T[0]:null;
+      var _t=lxPremierActif();
       return {stId:(_t?_t.id:null),needAssign:true,ok:!!_t};
     }catch(_e2){ return {stId:(curStId||null),needAssign:false,ok:false}; }
   }
@@ -13569,7 +13572,7 @@ function manageAbsence(stId,date){
   h+='</div></div></div>';
   document.getElementById("modal").innerHTML=h;
 }
-function showAddPause(){showAddPauseAt(T[0]?T[0].id:1,"12:00");}
+function showAddPause(){showAddPauseAt(lxPremierActifId()||1,"12:00");}
 function showAddPauseAt(stId,time){
   var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()">';
   h+='<h2>\u23f8 Pause</h2>';
@@ -13592,8 +13595,8 @@ function doAddPause(){
   saveAbsences();
   cM();go("planning");
 }
-function showAddAbsence(){showAddAbsenceAt(T[0]?T[0].id:1,"absent");}
-function showAddConge(){showAddAbsenceAt(T[0]?T[0].id:1,"conge");}
+function showAddAbsence(){showAddAbsenceAt(lxPremierActifId()||1,"absent");}
+function showAddConge(){showAddAbsenceAt(lxPremierActifId()||1,"conge");}
 function showAddAbsenceAt(stId,preType){
   var dk=dS(calD);
   var defType=preType||"absent";
@@ -29980,7 +29983,7 @@ function aApAndNew(){
   var t=document.getElementById("mt");
   var time=t?t.value:"09:00";
   var st=document.getElementById("mst");
-  var stId=st?parseInt(st.value):(T[0]?T[0].id:null);
+  var stId=st?parseInt(st.value):lxPremierActifId();
   setTimeout(function(){oM("appt",{stId:stId,time:time});},200);
 }
 
@@ -30217,7 +30220,7 @@ function renderRdv2ndBody(){
     if(_principalSt){
       window._rdv2nd.stId = _principalSt;
     } else {
-      window._rdv2nd.stId = (T[0]?T[0].id:null);
+      window._rdv2nd.stId = lxPremierActifId();
     }
   }
   // FIX 2026-05-15 : timing du 2ème RDV — 'same' (même créneau) ou 'planning' (placement visuel)
@@ -30403,7 +30406,7 @@ function renderRdvPhases(){
   var el=document.getElementById("depi");if(!el||!window._rdvPhases)return;
   var phases=window._rdvPhases;
   var stSel=document.getElementById("mst");
-  var defSt=stSel?parseInt(stSel.value):(T[0]?T[0].id:null);
+  var defSt=stSel?parseInt(stSel.value):lxPremierActifId();
   var h='<div style="margin-top:10px">';
   h+='<div style="font-size:12px;color:var(--text3);margin-bottom:6px">D\u00e9tail des phases (modifiable)</div>';
   for(var i=0;i<phases.length;i++){
@@ -35148,7 +35151,7 @@ function _doFinalPayExecuteSync(method){
     // Heure du service : utilise window._caisseDirectTime si saisi par l'utilisateur,
     // sinon prend l'heure actuelle (default). Permet d'afficher correctement sur planning.
     var _svcTime = window._caisseDirectTime || new Date().toTimeString().slice(0,5);
-    var newTk={id:U(),cId:_tk.cId||(_tk.passType?"passage-"+_tk.passType:"passage"),fromCaisse:true,sId:_tk.items[0]?_tk.items[0].sId:null,stId:_tk.stId||T[0].id,date:TD,time:_svcTime,heureEncaiss:heureNow,ts:tsNow,pr:total,brutTotal:brutTotal,remise:totalRemise,items:savedItems,st:"done",met:metStr,tkNum:tkN,
+    var newTk={id:U(),cId:_tk.cId||(_tk.passType?"passage-"+_tk.passType:"passage"),fromCaisse:true,sId:_tk.items[0]?_tk.items[0].sId:null,stId:_tk.stId||lxPremierActifId(),date:TD,time:_svcTime,heureEncaiss:heureNow,ts:tsNow,pr:total,brutTotal:brutTotal,remise:totalRemise,items:savedItems,st:"done",met:metStr,tkNum:tkN,
       // FIX 2026-05-12 : détail des paiements multi (méthode + montant + rendu espèces)
       payments: (_tk.payments && _tk.payments.length) ? JSON.parse(JSON.stringify(_tk.payments)) : null,
       // Persistance DB : nom client lisible + extras multi-client
@@ -35379,8 +35382,8 @@ function _ftDefaultCollab(){
       }
     }
   }
-  // 3) Fallback
-  return T[0];
+  // 3) Fallback (02/11/2026 : 1er membre actif)
+  return lxPremierActif();
 }
 function _ftCollabSelect(currentId){
   if(!T||T.length<=1) return ''; // pas la peine si 1 seul collab
