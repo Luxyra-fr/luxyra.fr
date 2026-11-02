@@ -417,12 +417,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261102-3"></script>
+<script src="luxyra-supabase.js?v=20261102-4"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261102-3";
+  var attendu="20261102-4";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -10905,26 +10905,33 @@ window._lxApOnlineEnrichir=_lxApOnlineEnrichir;
 // toutes les prestations réservées dans l'ordre (étapes du forfait, sinon sa durée) ; prudence : si la somme ne
 // correspond pas à la durée réservée (durée modifiée, déplacement) ou si le RDV est à domicile, un seul bloc de
 // travail sur toute la durée (jamais de trou). La modification par l'établissement (salon_edit) reste prioritaire.
+function _lxIntSur(v){ // même règle que public.lx_int_sur (entier, décimal arrondi, sinon null)
+  if(v===null||v===undefined) return null; var t=String(v).trim();
+  if(/^-?[0-9]{1,9}$/.test(t)) return parseInt(t,10);
+  if(/^-?[0-9]{1,9}\.[0-9]*$/.test(t)) return Math.round(Number(t));
+  return null;
+}
 function _lxOnlinePhasesDe(rdv, dur){
   var plein=[{t:"w",d:dur,l:rdv.service_nom||"RDV en ligne"}];
   try{
     var gs=(typeof gS==="function")?gS:function(){return null;};
     var src=[];
-    var its=Array.isArray(rdv.items)?rdv.items.filter(function(it){return it&&typeof it==="object";}):[];
+    var its=Array.isArray(rdv.items)?rdv.items:[];
     if(its.length){
-      its=its.map(function(it,i){return {it:it,i:i};}).sort(function(a,b){
-        var oa=parseInt(a.it.ordre,10), ob=parseInt(b.it.ordre,10);
-        if(isFinite(oa)&&isFinite(ob)&&oa!==ob) return oa-ob; if(isFinite(oa)!==isFinite(ob)) return isFinite(oa)?-1:1; return a.i-b.i; });
+      for(var q=0;q<its.length;q++){ if(!its[q]||typeof its[q]!=="object"||Array.isArray(its[q])) return plein; } // 02/11 : comme la base (entrée invalide -> bloc plein)
+      its=its.map(function(it,i){return {it:it,i:i,o:_lxIntSur(it.ordre)};}).sort(function(a,b){
+        if(a.o!=null&&b.o!=null&&a.o!==b.o) return a.o-b.o; if((a.o!=null)!==(b.o!=null)) return a.o!=null?-1:1; return a.i-b.i; });
       for(var k=0;k<its.length;k++){
-        var it=its[k].it, sid=it.service_id!=null?it.service_id:(it.sId!=null?it.sId:null), sv=sid!=null?gs(sid):null;
+        var it=its[k].it, sid=_lxIntSur(it.service_id); if(sid==null) sid=_lxIntSur(it.sId);
+        var sv=sid!=null?gs(sid):null;
         if(!sv) return plein;
-        if(Array.isArray(sv.phases)&&sv.phases.length){ sv.phases.forEach(function(p){ var pz=!!(p&&p.t==="p"); src.push(pz?{t:"p",d:Number(p.d)||0}:{t:"w",d:Number(p&&p.d)||0,l:(p&&p.l)||sv.n||it.nom||"",sId:(p&&p.sId)||sv.id}); }); }
-        else { var d0=Number(it.duree)||0; if(d0<=0) return plein; src.push({t:"w",d:d0,l:sv.n||it.nom||"",sId:sv.id}); }
+        if(Array.isArray(sv.phases)&&sv.phases.length){ sv.phases.forEach(function(p){ var pz=!!(p&&p.t==="p"); var dd=_lxIntSur(p&&p.d); var o=pz?{t:"p",d:dd}:{t:"w",d:dd,l:(p&&p.l)||sv.n||it.nom||"",sId:(p&&p.sId)||sv.id}; if(pz&&p.l) o.l=p.l; src.push(o); }); }
+        else { var d0=_lxIntSur(it.duree); if(!(d0>0)) return plein; src.push({t:"w",d:d0,l:sv.n||it.nom||"",sId:sv.id}); }
       }
     } else {
       var sv1=gs(rdv.service_id);
       if(!(sv1&&Array.isArray(sv1.phases)&&sv1.phases.length)) return plein;
-      sv1.phases.forEach(function(p){ var pz=!!(p&&p.t==="p"); var o=pz?{t:"p",d:Number(p.d)||0}:{t:"w",d:Number(p&&p.d)||0,l:(p&&p.l)||sv1.n||""}; if(!pz&&p&&p.sId) o.sId=p.sId; src.push(o); });
+      sv1.phases.forEach(function(p){ var pz=!!(p&&p.t==="p"); var dd=_lxIntSur(p&&p.d); var o=pz?{t:"p",d:dd}:{t:"w",d:dd,l:(p&&p.l)||sv1.n||""}; if(pz&&p.l) o.l=p.l; if(!pz&&p&&p.sId) o.sId=p.sId; src.push(o); });
     }
     if((rdv.lieu||"salon")==="domicile") return plein;
     var som=0; for(var j=0;j<src.length;j++){ if(!(src[j].d>0)) return plein; som+=src[j].d; }
@@ -10932,6 +10939,29 @@ function _lxOnlinePhasesDe(rdv, dur){
     return src;
   }catch(_e){ return plein; }
 }
+// 02/11/2026 (contre-audit) : une réservation en ligne DÉJÀ au planning (instantané local, chargement précédent) gardait
+// ses anciennes étapes (1re prestation seulement). On les recalcule, uniquement si l'entrée n'est ni encaissée, ni
+// modifiée par l'établissement (salon_edit), ni déléguée par étape, ni en cours de déplacement, ET si ses étapes sont
+// encore celles de l'ancien calcul automatique (catalogue de la 1re prestation ou bloc plein) : jamais d'écrasement
+// d'une retouche faite à la main. Renvoie true si l'entrée a changé.
+function _lxOnlinePhasesMaj(ap, rdv, dur){
+  try{
+    if(!ap||ap.st==="done"||ap.tkNum) return false;
+    if(window._pendingDrag&&window._pendingDrag.id===ap.id) return false;
+    var se=rdv&&rdv.salon_edit; if(se&&typeof se==="object"&&Array.isArray(se.phases)&&se.phases.length) return false;
+    var cur=Array.isArray(ap.aPhases)?ap.aPhases:[];
+    for(var i=0;i<cur.length;i++){ if(cur[i]&&cur[i].stId!=null&&String(cur[i].stId)!==String(ap.stId)) return false; }
+    var sig=function(a){ return JSON.stringify((a||[]).map(function(p){ return [p&&p.t==="p"?"p":"w", Number(p&&p.d)||0]; })); };
+    var neu=_lxOnlinePhasesDe(rdv, dur);
+    if(sig(cur)===sig(neu)) return false;
+    var sv=(typeof gS==="function")?gS(rdv.service_id):null;
+    var ancCat=(sv&&Array.isArray(sv.phases)&&sv.phases.length)?sv.phases:null;
+    var auto=!cur.length || sig(cur)===sig([{t:"w",d:dur}]) || (ancCat&&sig(cur)===sig(ancCat));
+    if(!auto) return false;
+    ap.aPhases=neu; window._apDirty=true; return true;
+  }catch(_e){ return false; }
+}
+window._lxOnlinePhasesMaj=_lxOnlinePhasesMaj;
 window._lxOnlinePhasesDe=_lxOnlinePhasesDe;
 function _lxOnlineToAP(rdv){
   try{
@@ -10956,6 +10986,7 @@ function _lxOnlineToAP(rdv){
             if(rdv.collaborateur_id!=null && String(_ex.stId)!==String(rdv.collaborateur_id)){ _lxRemapPhasesCollab(_ex,_ex.stId,rdv.collaborateur_id); _ex.stId=rdv.collaborateur_id; window._apDirty=true; }
           }
         }catch(_eSync){}
+        try{ _lxOnlinePhasesMaj(AP[i], rdv, rdv.duree_minutes||60); }catch(_eP){}
         try{ _lxApOnlineEnrichir(AP[i], (typeof window.lxMapRdvOnlineRow==="function")?window.lxMapRdvOnlineRow(rdv):null); }catch(_e2){}
         return;
       }
