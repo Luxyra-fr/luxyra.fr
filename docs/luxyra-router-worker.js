@@ -4383,6 +4383,12 @@ function lxSmMessage(type, d, opts, salon, rdv) {
   const o = opts.find((x) => x.id === d.option_choisie_id) || opts[0] || {};
   const acompte = Number(o.acompte_montant) || 0;
   const paye = !!(rdv && rdv.acompte_paye);
+  // 02/11/2026 (conformité, art. L221-13 C. conso) : rappel de la demande expresse d'exécution avant la fin du délai de rétractation
+  const retract = (rdv && rdv.exec_avant_retractation === true)
+    ? "Vous avez demandé que la prestation soit réalisée avant la fin de votre délai de rétractation de 14 jours. "
+      + (acompte > 0 ? "Si vous vous rétractez avant le rendez-vous, l'acompte vous est remboursé ; " : "Vous pouvez vous rétracter sans frais avant le rendez-vous ; ")
+      + "une fois la prestation entièrement réalisée, vous ne pouvez plus vous rétracter."
+    : "";
   const ligne = (k, v) => `<tr><td style="padding:6px 0;color:#777">${k}</td><td style="padding:6px 0;text-align:right;font-weight:600">${v}</td></tr>`;
   const recap = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:14px;border:1px solid #e6dcc3;border-radius:12px;padding:8px 16px;background:#fbf9f4">`
     + ligne("Quand", `${ccEsc(lxSmDateFr(o.date_rdv, true))} à ${ccEsc(String(o.heure_rdv || "").slice(0, 5))}`) + ligne("Durée", lxSmDuree(o.duree_minutes))
@@ -4391,9 +4397,10 @@ function lxSmMessage(type, d, opts, salon, rdv) {
   const maps = [salon.adresse, salon.cp, salon.ville].filter(Boolean).join(" ");
   const corps = titreBadge("Rendez-vous confirmé") + bonjour + `<p>Votre rendez-vous chez <b>${ccEsc(nomSalon)}</b> est confirmé.</p>` + recap
     + (maps ? lxMailBouton("Itinéraire", "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(maps)) : "")
+    + (retract ? `<p style="font-size:13px;color:#555">${ccEsc(retract)}</p>` : "")
     + `<p style="font-size:13px;color:#777">Un empêchement ? Prévenez l'établissement au plus tôt. Vous retrouvez ce rendez-vous dans votre espace Luxyra.</p>` + lxSmPiedSalon(salon);
   return { sujet: `Rendez-vous confirmé — ${nomSalon}`, html: lxMailLayout(corps, { salon: nomSalon }),
-    texte: `Bonjour${prenom ? " " + prenom : ""},\n\nVotre rendez-vous chez ${nomSalon} est confirmé : ${lxSmDateFr(o.date_rdv, true)} à ${String(o.heure_rdv || "").slice(0, 5)} (${lxSmDuree(o.duree_minutes)})${o.collaborateur_nom ? " avec " + o.collaborateur_nom : ""}.\nTotal ${ccEur(o.prix_total)}${acompte > 0 ? (paye ? " — acompte payé " : " — acompte à régler au salon ") + ccEur(acompte) : ""}.\n\n${nomSalon}`,
+    texte: `Bonjour${prenom ? " " + prenom : ""},\n\nVotre rendez-vous chez ${nomSalon} est confirmé : ${lxSmDateFr(o.date_rdv, true)} à ${String(o.heure_rdv || "").slice(0, 5)} (${lxSmDuree(o.duree_minutes)})${o.collaborateur_nom ? " avec " + o.collaborateur_nom : ""}.\nTotal ${ccEur(o.prix_total)}${acompte > 0 ? (paye ? " — acompte payé " : " — acompte à régler au salon ") + ccEur(acompte) : ""}.${retract ? "\n\n" + retract : ""}\n\n${nomSalon}`,
     sms: null, notif: { titre: "Rendez-vous confirmé", texte: `${nomSalon} : ${lxSmDateFr(o.date_rdv, true)} à ${String(o.heure_rdv || "").slice(0, 5)}`, url: "https://luxyra.fr/compte" } };
 }
 
@@ -4409,7 +4416,7 @@ async function lxSmNotifier(env, demandeId, type) {
   const salon = (await supabaseGet(env, d.salon_id)) || {};
   let rdv = null;
   if (type === "confirmation" && d.rdv_online_id) {
-    const rr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?id=eq.${d.rdv_online_id}&select=acompte_paye&limit=1`, { headers: _sbHeaders(env) });
+    const rr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?id=eq.${d.rdv_online_id}&select=acompte_paye,exec_avant_retractation&limit=1`, { headers: _sbHeaders(env) });
     const ra = rr.ok ? await rr.json() : []; rdv = ra[0] || null;
   }
   const m = lxSmMessage(type, d, Array.isArray(opts) ? opts : [], salon, rdv);

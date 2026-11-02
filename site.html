@@ -3806,9 +3806,10 @@ function renderBookingStep4(){
     h+='<strong style="color:#64b5f6">\ud83d\udd12 Empreinte bancaire : aucun d\u00e9bit imm\u00e9diat</strong><br>Une pr\u00e9-autorisation de <strong>'+_mtE.toFixed(2)+' \u20ac</strong> est r\u00e9alis\u00e9e sur votre carte. '+escapeHtmlSimple(lxTexteAnnulation(false));
     h+='<label style="display:flex;align-items:flex-start;gap:8px;margin-top:10px;font-size:12px;color:var(--text2,#ddd);cursor:pointer"><input type="checkbox" id="empreinteAccept" style="margin-top:2px;flex-shrink:0"><span>'+lxTexteEmpreinteHtml(_mtE)+'</span></label></div>';
   }
-  // 02/11/2026 (conformité B-1, art. L221-25 C. conso) : RDV dans les 14 jours + paiement en ligne demandé
-  // -> demande expresse d'exécution avant la fin du délai de rétractation (case obligatoire, mémorisée sur la réservation)
-  if(lxPaiementEnLigneDemande() && lxRdvDans14j(booking.date)){
+  // 02/11/2026 (conformité B-1, art. L221-25 C. conso) : RDV dans les 14 jours (avec ou sans paiement en ligne)
+  // -> demande expresse d'exécution avant la fin du délai de rétractation (case obligatoire, mémorisée sur la réservation).
+  // La règle des 14 jours est figée ici, à l'affichage : à l'envoi, la case n'est exigée que si elle est présente.
+  if(lxRdvDans14j(booking.date)){
     h+='<label style="display:flex;align-items:flex-start;gap:8px;margin:0 0 14px;padding:10px 12px;border:1px solid rgba(212,168,67,.35);border-radius:10px;font-size:12px;color:var(--text2,#ddd);line-height:1.5;cursor:pointer"><input type="checkbox" id="retractAccept" style="margin-top:2px;flex-shrink:0"><span>'+lxTexteRetractationHtml()+'</span></label>';
   }
   h+='<div class="fg"><label>Message (optionnel)</label><textarea id="bkMsg" rows="2" placeholder="Pr\u00e9cisions, souhaits..."></textarea></div>';
@@ -3887,6 +3888,7 @@ async function _lxSubmitBookingImpl(){
   var nom=document.getElementById("bkNom").value.trim();
   var tel=document.getElementById("bkTel").value.trim();
   if(!nom||!tel){showAlert("Nom et t\u00e9l\u00e9phone obligatoires","warning");return;}
+  if(!_lxRetractOk()) return; // 02/11/2026 (conformité) : case rétractation aussi sans paiement en ligne
   // Si lieu='domicile' : valider l'adresse (re-g\u00e9ocode si pas encore valid\u00e9e)
   if(booking.lieu==='domicile'){
     if(!booking.clientAdr || booking.clientAdr.frais_mt==null){
@@ -3935,7 +3937,8 @@ async function _lxSubmitBookingImpl(){
     date_rdv:booking.date,heure_rdv:booking.time,duree_minutes:dur,
     acompte_montant:acompte,status:(booking.lieu==='domicile')?"pending":(SITE_CFG.autoConfirm?"confirmed":"pending"),
     message:msg,
-    lieu: booking.lieu||'salon'
+    lieu: booking.lieu||'salon',
+    exec_avant_retractation: _lxRetractVal() // 02/11/2026 (conformité) : demande expresse (case cochée)
   };
   // Champs sp\u00e9cifiques RDV \u00e0 domicile
   if(booking.lieu==='domicile' && booking.clientAdr){
@@ -4153,9 +4156,7 @@ async function _lxSubmitWithStripeImpl(){
   if(modeC === "empreinte"){ var _ckE=document.getElementById("empreinteAccept"); if(_ckE && !_ckE.checked){ showAlert("Veuillez accepter les conditions de l\u2019empreinte bancaire.","warning"); return; } }
   // 02/11/2026 (conformité B-1) : RDV dans les 14 jours -> demande expresse d'exécution avant la fin du délai de rétractation
   var _ckR=document.getElementById("retractAccept");
-  if(lxPaiementEnLigneDemande() && lxRdvDans14j(booking.date) && (!_ckR || !_ckR.checked)){
-    showAlert("Votre rendez-vous a lieu dans les 14 jours : cochez la case concernant le d\u00e9lai de r\u00e9tractation pour continuer.","warning"); return;
-  }
+  if(!_lxRetractOk()) return;
   // Check slot availability before payment
   await refreshRDV();
   if(isSlotTaken(booking.date,booking.time,dur,booking.collabId)){
@@ -4603,6 +4604,13 @@ function lxPaiementEnLigneDemande(){
   }catch(e){}
   return false;
 }
+// 02/11/2026 (conformité) : la case n'est exigée que si elle a été affichée (règle des 14 jours figée à l'affichage)
+function _lxRetractOk(){
+  var ck=document.getElementById("retractAccept");
+  if(ck && !ck.checked){ showAlert("Votre rendez-vous a lieu dans les 14 jours : cochez la case concernant le d\u00e9lai de r\u00e9tractation pour continuer.","warning"); return false; }
+  return true;
+}
+function _lxRetractVal(){ var ck=document.getElementById("retractAccept"); return !!(ck && ck.checked); }
 function lxTexteRetractationHtml(){
   return 'Je demande que la prestation soit r\u00e9alis\u00e9e avant la fin du d\u00e9lai de r\u00e9tractation de 14 jours. Si je me r\u00e9tracte apr\u00e8s son d\u00e9but, je paierai la part d\u00e9j\u00e0 r\u00e9alis\u00e9e ; une fois la prestation enti\u00e8rement r\u00e9alis\u00e9e, je ne pourrai plus me r\u00e9tracter. <a href="/cgu#retractation" target="_blank" rel="noopener" style="color:var(--gold)">D\u00e9tails</a>';
 }

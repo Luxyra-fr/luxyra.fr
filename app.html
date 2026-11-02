@@ -417,12 +417,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261102-11"></script>
+<script src="luxyra-supabase.js?v=20261102-12"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261102-11";
+  var attendu="20261102-12";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -12918,11 +12918,15 @@ function rPlanning(){
     // sur l'un des jours affichés (sinon ses RDV disparaissaient en vue plusieurs jours).
     try{
       var _actifsM=(typeof getActiveTeam==="function")?getActiveTeam():T;
+      var _rdvM=[]; daysToShow.forEach(function(_d){ _rdvM=_rdvM.concat(_lxPlanRdvDuJour(dS(_d))); });
       if(_actifsM.every(function(t){ return _visT.indexOf(t)>=0; })){
-        var _rdvM=[]; daysToShow.forEach(function(_d){ _rdvM=_rdvM.concat(_lxPlanRdvDuJour(dS(_d))); });
         _visT=_visT.slice();
         T.forEach(function(t){ if(_visT.indexOf(t)<0 && _rdvM.some(function(a){ return a.stId===t.id; })) _visT.push(t); });
       }
+      // 02/11/2026 (contre-audit M3) : comme la vue 1 jour, un collaborateur déjà parti au 1er jour affiché et sans RDV
+      // sur la période n'a plus de colonne (s'il part pendant la période, sa colonne reste pour les jours travaillés).
+      var _d0M=dS(daysToShow[0]);
+      _visT=_visT.filter(function(t){ return !lxCollabDepartAu(t, _d0M) || _rdvM.some(function(a){ return a.stId===t.id; }); });
     }catch(_eM){}
 
     h+='<div class="pg-wrap"><div style="display:flex;width:100%">';
@@ -13017,14 +13021,15 @@ function rPlanning(){
                   var myBlock=null;for(var bi=0;bi<laid.length;bi++){if(laid[bi].a===a&&laid[bi].start===cur){myBlock=laid[bi];break;}}
                   var colW=myBlock?100/myBlock.maxCol:100;
                   var leftPct=myBlock?myBlock.col*colW:0;
-                  h+='<div class="pg-block" data-aid="'+a.id+'"'+(a.isOnline?' data-nodrag="1"':'')+' style="top:'+topPx+'px;height:'+Math.max(hPx-2,SLOT_H-2)+'px;left:'+leftPct+'%;width:'+(colW-1)+'%;background:'+(a.isOnline?'rgba(108,92,231,.35)':phColors1.bg)+';border-color:'+(a.isOnline?'#7c6dd8':phColors1.border)+';color:'+(a.isOnline?'#2d1b69':phColors1.text)+'" onclick="showRdvPopup(\''+a.id+'\',event)" ondblclick="hideRdvPopup();clickAppt(\''+a.id+'\')">';
+                  h+='<div class="pg-block" data-aid="'+a.id+'"'+(a.isOnline?' data-nodrag="1"':'')+' style="'+(a.fromCaisse?'border-style:dashed;border-width:2px;':'')+'top:'+topPx+'px;height:'+Math.max(hPx-2,SLOT_H-2)+'px;left:'+leftPct+'%;width:'+(colW-1)+'%;background:'+(a.isOnline?'rgba(108,92,231,.35)':phColors1.bg)+';border-color:'+(a.isOnline?'#7c6dd8':phColors1.border)+';color:'+(a.isOnline?'#2d1b69':phColors1.text)+'" onclick="showRdvPopup(\''+a.id+'\',event)" ondblclick="hideRdvPopup();clickAppt(\''+a.id+'\')">';
                   h+='<div class="pb-name">'+apptClientLabelH(a)+'</div>';
                   h+='<div class="pb-svc">'+_lxH((ph&&ph.l)||(sv?sv.n:""))+'</div>';
                   if(aPhases.length>1) h+='<div class="pb-svc lx-et-h" style="font-weight:800">'+frM(cur)+' \u2192 '+frM(cur+ph.d)+'</div>';
                   else h+='<div class="pb-svc" style="opacity:.7">'+_lxH(ph.l)+' \u2022 '+a.time+'\u2192'+_endTime1+'</div>';
                   // Badge statut texte (identique au mono-jour) si la place le permet
                   if(hPx>=50){
-                    if(a.isOnline&&a.st!=="done"&&(function(){var _r=_lxRdvOnlineDe(a);return _r&&_r.status==="pending";})()) h+='<div class="pb-badge" style="background:rgba(255,152,0,.9);color:#111">\u23f3 \u00c0 valider</div>';
+                    if(a.fromCaisse) h+='<div class="pb-badge" style="background:rgba(255,193,7,.2);color:#ffc107;font-weight:700">\ud83d\udcb3 Encaiss\u00e9 direct</div>'; // 02/11/2026 (contre-audit M2) : comme la vue 1 jour
+                    else if(a.isOnline&&a.st!=="done"&&(function(){var _r=_lxRdvOnlineDe(a);return _r&&_r.status==="pending";})()) h+='<div class="pb-badge" style="background:rgba(255,152,0,.9);color:#111">\u23f3 \u00c0 valider</div>';
                     else if(a.lieu==="domicile") h+='<div class="pb-badge" style="background:rgba(255,152,0,.15);color:#ff9800">\ud83d\ude97 Domicile</div>';
                     else if(a.isOnline) h+='<div class="pb-badge" style="background:rgba(108,92,231,.4);color:#fff;font-weight:800">\ud83c\udf10 En ligne</div>';
                     else if(a.acompte&&a.acompte>0&&a.st!=="done") h+='<div class="pb-badge" style="background:rgba(45,154,94,.15);color:#2d9a5e">\ud83d\udcb3 Acompte '+a.acompte+'\u20ac</div>';
@@ -13098,7 +13103,9 @@ function _lxPauseHTML(a, sty, dk, pS, pE, topPx, hPx, travaux, cl, compact){
     return '<div class="pg-pause" style="top:'+topPx+'px;height:'+hh+'px;left:0;width:100%;opacity:.4;pointer-events:none;flex-direction:column;line-height:1.2" title="Pause '+frM(pS)+' → '+frM(pE)+'">⏸ '+(dom?'Pause (domicile)':((cl?cNameH(cl).split(" ")[0]:"")+" "+(pE-pS)+'min'))+(hh>=26?'<span style="font-size:9px;font-weight:600">'+frM(pS)+' → '+frM(pE)+'</span>':'')+'</div>';
   }
   var k="p"+(++window._lxPauseSeq);
-  window._lxPauseZ[k]={stId:sty.id, dk:dk, deb:lib.deb, fin:lib.fin, pS:pS, pE:pE, h:hh, trous:_trous, cli:apptClientLabel(a)||""};
+  // av : début de l'étape de travail de ce collaborateur qui finit pile au début de la pause (case de grille à cheval)
+  var _av=null; try{ (travaux||[]).forEach(function(w){ if(w && w.a===a && w.end===pS) _av=w.start; }); }catch(_eAv){}
+  window._lxPauseZ[k]={stId:sty.id, dk:dk, deb:lib.deb, fin:lib.fin, pS:pS, pE:pE, h:hh, trous:_trous, cli:apptClientLabel(a)||"", av:_av};
   var x='<div class="pg-pause lx-pause-ok" data-pz="'+k+'" style="top:'+topPx+'px;height:'+hh+'px;left:0;width:100%;pointer-events:auto;cursor:pointer;flex-direction:column;line-height:1.2;background:repeating-linear-gradient(135deg,rgba(200,168,78,.16),rgba(200,168,78,.16) 5px,rgba(200,168,78,.04) 5px,rgba(200,168,78,.04) 10px);border:1.5px dashed var(--gold);color:#8a6d1f" onclick="event.stopPropagation();lxPauseClic(\''+k+'\',event)" title="Pause '+frM(pS)+' → '+frM(pE)+' : toucher pour placer un rendez-vous">';
   if(compact){
     // Vue plusieurs jours (colonnes étroites) : toute la bande reste touchable, textes réduits et coupés proprement
@@ -13170,7 +13177,7 @@ function rPlanningDay(dateObj,showDayHeader){
   // rendez-vous hors de cette plage — reservation prise pendant une ouverture
   // exceptionnelle ensuite supprimee, ou horaires modifies apres coup — comptait
   // dans le chiffre d'affaires mais n'apparaissait NULLE PART dans le planning.
-  // Constate en production : Ophelie Rozpadek, lundi 07/09 a 9h00, alors que le
+  // Constate en production : Julie M., lundi 07/09 a 9h00, alors que le
   // salon ouvre a 14h ce jour-la. Le client etait invisible pour le salon.
   // On elargit donc la grille pour englober TOUT rendez-vous du jour.
   var _apDebut=1440, _apFin=0, _apHorsPlage=false;
@@ -13548,16 +13555,6 @@ function clickSlot(stId,time,date,force){
     _place2ndRdvAtSlot(stId, time, date);
     return;
   }
-  // 02/11/2026 (O'R STUDIO) : une case de la grille qui tombe dans la pause libre d'un forfait de ce collaborateur
-  // ouvre la pause (heure exacte du temps libre, ex. 9h20) au lieu de l'heure arrondie de la grille (9h30 -> chevauchement).
-  if(!force){
-    try{
-      var _ck=null, _cdk=date||dS(calD), _ct=toM(time);
-      Object.keys(window._lxPauseZ||{}).forEach(function(k){ var z=window._lxPauseZ[k];
-        if(!_ck && z && String(z.stId)===String(stId) && z.dk===_cdk && _ct>=z.pS && _ct<z.pE && (z.trous||[]).some(function(t){ return _ct<t.fin; })) _ck=k; });
-      if(_ck){ lxPauseClic(_ck, null, _ct); return; }
-    }catch(_eP){}
-  }
   // Save current view state to restore after RDV creation
   window._savedCalD=new Date(calD.getTime());
   window._savedPlanDays=window._planDays;
@@ -13579,6 +13576,25 @@ function clickSlot(stId,time,date,force){
     var _forceArg2='clickSlot('+stId+',\''+time+'\',\''+dk+'\',true)';
     document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="max-width:340px;text-align:center"><div style="font-size:36px;margin-bottom:8px">\u26a0\ufe0f</div><h2 style="color:#ef5350">Hors horaires</h2><div style="font-size:14px;color:rgba(255,255,255,.6);margin-bottom:6px">'+(gT(stId)?gT(stId).n:"")+' \u2014 '+time+'</div><div style="padding:12px;border-radius:10px;background:rgba(244,67,54,.08);border:1px solid rgba(244,67,54,.15);color:#ef5350;font-weight:700;font-size:14px;margin-bottom:14px">Horaires normaux : '+dkHrs.o+' \u2192 '+dkHrs.c+'</div><div style="font-size:12px;color:rgba(255,255,255,.55);margin-bottom:14px;line-height:1.5">Vous pouvez cr\u00e9er ce RDV exceptionnellement en dehors des horaires d&apos;ouverture si le client l&apos;accepte.</div><div style="display:flex;flex-direction:column;gap:8px"><button class="btn" style="background:rgba(232,200,115,.12);color:#e8c873;border:1px solid rgba(232,200,115,.4);font-weight:700" onclick="cM();'+_forceArg2+'">\ud83d\udd13 Cr\u00e9er quand m\u00eame (RDV exceptionnel)</button><button class="btn" style="background:rgba(255,255,255,.06)" onclick="cM()">Annuler</button></div></div></div>';
     return;
+  }
+  // 02/11/2026 (O'R STUDIO) : une case de la grille qui tombe dans la pause libre d'un forfait de ce collaborateur
+  // ouvre la pause (heure exacte du temps libre, ex. 9h20) au lieu de l'heure arrondie de la grille (9h30 -> chevauchement).
+  // Contre-audit b75a973 : (M5) après les contrôles « jour fermé » / « hors horaires » ; (M1) une case qui commence sur
+  // l'étape de travail juste avant la pause (occupée) et déborde sur la pause libre ouvre aussi la pause.
+  if(!force){
+    try{
+      var _ck=null, _cAt=null, _ct=toM(time);
+      Object.keys(window._lxPauseZ||{}).forEach(function(k){ var z=window._lxPauseZ[k];
+        if(_ck || !z || String(z.stId)!==String(stId) || z.dk!==dk) return;
+        if(_ct>=z.pS && _ct<z.pE && (z.trous||[]).some(function(t){ return _ct<t.fin; })){ _ck=k; _cAt=_ct; return; }
+        if(z.av!=null && _ct>=z.av && _ct<z.pS && _ct+SLOT>z.pS && z.trous && z.trous.length && z.trous[0].deb===z.pS){ _ck=k; _cAt=z.pS; }
+      });
+      if(_ck){
+        // lxPauseClic mémorise lui-même la date affichée : on rétablit d'abord celle d'avant ce clic
+        if(window._savedCalD){ calD=window._savedCalD; window._planDays=window._savedPlanDays||window._planDays; window._savedCalD=null; window._savedPlanDays=null; }
+        lxPauseClic(_ck, null, _cAt); return;
+      }
+    }catch(_eP){}
   }
   // Check if this slot is blocked by absence/pause/congé
   var blocked=isStylistBlockedDuring(stId,dk,toM(time),toM(time)+1);
@@ -29849,7 +29865,16 @@ function oM(type,pf){
   h+='</div></div>';
   mc.innerHTML=h;
 }
-function cM(){document.getElementById("modal").innerHTML="";window._epTab=null;window._currentEditProdId=null;window._epBrouillon=null;window._epBrouillonId=null;/* 2026-10-17 audit réglages (#13) */window._rdv2nd=null;} // 2026-10-14 audit : 2e client d'un RDV groupé oublié à la fermeture (il se greffait au RDV suivant)
+function cM(){document.getElementById("modal").innerHTML="";window._epTab=null;window._currentEditProdId=null;window._epBrouillon=null;window._epBrouillonId=null;/* 2026-10-17 audit réglages (#13) */window._rdv2nd=null;
+  // 02/11/2026 (contre-audit M4) : fenêtre fermée sans créer de RDV après un toucher de case/pause en vue plusieurs jours
+  // -> on revient à la date et à la vue d'avant (si aucune autre fenêtre ne s'est ouverte juste après, ex. cM();oM(...)).
+  if(window._savedCalD){ setTimeout(function(){ try{ var _m=document.getElementById("modal");
+    if(!window._savedCalD || !_m || _m.innerHTML) return;
+    var _chg=(dS(calD)!==dS(window._savedCalD)) || ((window._planDays||1)!==(window._savedPlanDays||1));
+    calD=window._savedCalD; window._planDays=window._savedPlanDays||1; window._savedCalD=null; window._savedPlanDays=null;
+    if(_chg && window._currentPage==="planning" && typeof go==="function") go("planning");
+  }catch(_eR){} },0); }
+} // 2026-10-14 audit : 2e client d'un RDV groupé oublié à la fermeture (il se greffait au RDV suivant)
 
 // mO = "modal open" — helper universel pour ouvrir un modal.
 // Accepte le HTML d'un élément .mbox (ou n'importe quoi), l'enrobe dans un
@@ -37951,6 +37976,7 @@ function buildRdvEmailHTML(type,vars){
   h+='<div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:'+gold+';font-weight:700;margin-bottom:6px">'+getMetierConfig().icon+' Prestation</div>';
   h+='<div style="font-size:15px;font-weight:600;color:#fff">'+vars.prestation+'</div>';
   if(vars.prixAPartir) h+='<div style="font-size:13px;color:rgba(255,255,255,.7);margin-top:4px;line-height:1.5">Prix : '+_lxEsc(vars.prixAPartir)+'<br><span style="font-size:12px;color:rgba(255,255,255,.5)">Prix final fix\u00e9 \u00e0 l\u2019\u00e9tablissement selon la prestation r\u00e9alis\u00e9e.</span></div>'; // 2026-10-15
+  if(vars.retract) h+='<div style="font-size:12px;color:rgba(255,255,255,.65);margin-top:8px;line-height:1.5">'+_lxEsc(String(vars.retract).trim())+'</div>'; // 02/11/2026 (conformité L221-13)
   h+='</td></tr>';
 
   // Collab (if any)
@@ -38018,7 +38044,8 @@ async function doSendConfirm(mode,rdvId){
     slug:SALON_CONFIG.slug||(window.SALON&&window.SALON.slug)||"",
     collab:sty?sty.n:"",
     lieu:rdvObj.lieu||"", adresse:rdvObj.adresse||"",
-    prixAPartir:(sv&&sv.apartir&&!sv.devis)?_lxPrixTxt(sv):"" // 2026-10-15 : e-mail seulement (le SMS ne donne aucun prix)
+    prixAPartir:(sv&&sv.apartir&&!sv.devis)?_lxPrixTxt(sv):"", // 2026-10-15 : e-mail seulement (le SMS ne donne aucun prix)
+    retract:(function(){ try{ var _ro=_lxRdvOnlineDe(rdvObj); return _ro?lxTexteRetractConfirm(_ro, _ro.acompte):""; }catch(_e){ return ""; } })() // 02/11/2026 (conformité L221-13)
   };
   var sent=[];
   var errors=[];
@@ -38127,7 +38154,7 @@ async function sendSms(phone,message,context,clientNom){
   if(!cleanPhone.startsWith("+"))cleanPhone="+33"+cleanPhone;
   // FIX 2026-08-30 : le journal etait ecrit APRES l'envoi. Deux envois simultanes
   // (deux appareils, deux onglets, ou un double-clic sur « envoyer confirmation »)
-  // ne se voyaient donc pas : Elodie LETT a recu 3 confirmations en une minute.
+  // ne se voyaient donc pas : Julie M. a recu 3 confirmations en une minute.
   // Pour les SMS AUTOMATIQUES, on reserve desormais la ligne AVANT d'envoyer. Un
   // index unique en base (salon + contexte + destinataire + jour) fait que la
   // deuxieme reservation echoue : on n'envoie pas. Les campagnes et envois libres
@@ -40212,6 +40239,17 @@ function _lxBlocValidationRdv(a, ro){
 }
 function _lxJetonAcompte(){ var c="ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789",b=new Uint8Array(12),x=""; crypto.getRandomValues(b); for(var i=0;i<12;i++) x+=c[b[i]%c.length]; return x; }
 // Message au client : email (mise en page du salon) si adresse, sinon SMS court (1 crédit).
+// 02/11/2026 (conformité, art. L221-13 C. conso) : le client a coché « exécution avant la fin du délai de rétractation »
+// à la réservation -> la confirmation envoyée par e-mail le rappelle (support durable). Vide sinon.
+function lxTexteRetractConfirm(ro, acompte){
+  try{
+    if(!ro || ro.execRetract!==true) return "";
+    return "\n\nVous avez demandé que la prestation soit réalisée avant la fin de votre délai de rétractation de 14 jours."
+      +((Number(acompte)||0)>0
+        ? " Si vous vous rétractez avant le rendez-vous, l’acompte vous est remboursé ; une fois la prestation entièrement réalisée, vous ne pouvez plus vous rétracter."
+        : " Vous pouvez vous rétracter sans frais avant le rendez-vous ; une fois la prestation entièrement réalisée, vous ne pouvez plus vous rétracter.");
+  }catch(e){ return ""; }
+}
 async function _lxMessageCliente(ro, titre, icone, texteEmail, texteSms, lien){
   try{
     if(ro.email){
@@ -40248,6 +40286,7 @@ async function lxRdvAccepter(apId, msgHoraire){
   var quand=_lxDateCourte(a.date,a.time), nom=(SALON_CONFIG.nom||"").slice(0,22);
   var txtE=(msgHoraire?msgHoraire+"\n\n":"")+"Votre rendez-vous"+(ro.lieu==="domicile"?" à domicile":"")+" du "+quand+" est confirmé."+(lien?"\n\nPour le garantir, merci de régler l’acompte de "+ac.toFixed(2).replace(".",",")+" € (déduit du prix le jour du rendez-vous) :":(ac>0&&!ro.acomptePaye?"\n\nL’acompte de "+ac.toFixed(2).replace(".",",")+" € sera à régler sur place.":""));
   try{ if(Array.isArray(ro.items)&&ro.items.some(function(x){ return x&&x.a_partir_de===true; })) txtE+="\n\nPrix indiqu\u00e9 \u00ab \u00e0 partir de \u00bb : le prix final est fix\u00e9 \u00e0 l\u2019\u00e9tablissement selon la prestation r\u00e9alis\u00e9e."; }catch(_eAz){} // 2026-10-15
+  txtE+=lxTexteRetractConfirm(ro, ac); // 02/11/2026 (conformité L221-13) : confirmation sur support durable de la demande expresse
   var txtS=nom+": RDV confirme le "+quand+"."+(lien?" Acompte "+ac.toFixed(2).replace(".",",").replace(",00","")+"EUR: "+lien.replace("https://",""):"");
   var canal=await _lxMessageCliente(ro,"Rendez-vous confirmé","✅",txtE,txtS,lien);
   if(!canal && lien){ setTimeout(function(){ showPrompt({title:"Lien d’acompte à transmettre",label:"Le client n’a pas pu être prévenu automatiquement. Copiez ce lien et envoyez-le-lui :",defaultValue:lien,okLabel:"Fermer",onOk:function(){}}); },400); }
