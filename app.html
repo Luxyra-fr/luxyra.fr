@@ -417,12 +417,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261102-9"></script>
+<script src="luxyra-supabase.js?v=20261102-10"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261102-9";
+  var attendu="20261102-10";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -12953,6 +12953,11 @@ function rPlanning(){
             var allWork=[];
             for(var j=0;j<sa.length;j++){var blocks=getWorkBlocks(sa[j]);blocks.forEach(function(b){allWork.push(b);});}
             var laid=layoutBlocks(allWork);
+            // Étapes de travail de CE collaborateur (phases déléguées comprises), pour le temps libre des pauses
+            var _lxPwMD=[];
+            for(var j=0;j<sa.length;j++){(function(_a){var _sv=gS(_a.sId),_ph=(_a.aPhases&&_a.aPhases.length)?_a.aPhases:(_sv?_sv.phases:null);
+              if(!_ph||!_ph.length){if(_a.stId===sty.id){var _d=_sv?svcTotalDur(_sv):30;_lxPwMD.push({start:toM(_a.time),end:toM(_a.time)+(_d||30),a:_a});}return;}
+              var _c=toM(_a.time);for(var _i=0;_i<_ph.length;_i++){var _p=_ph[_i];if(_p.t==="w"&&(_p.stId||_a.stId)===sty.id)_lxPwMD.push({start:_c,end:_c+_p.d,a:_a});_c+=_p.d;}})(sa[j]);}
             for(var j=0;j<sa.length;j++){
               var a=sa[j],sv=gS(a.sId),cl=gC(a.cId);
               var colors=getSvcColor(sv?sv.cat:"Coupe");
@@ -12990,7 +12995,8 @@ function rPlanning(){
                   }
                   h+='</div>';
                 } else {
-                  h+='<div class="pg-pause" style="top:'+topPx+'px;height:'+Math.max(hPx-2,10)+'px;left:0;width:100%;opacity:.3;pointer-events:none;font-size:8px" title="Pause '+frM(cur)+' \u2192 '+frM(cur+ph.d)+'">\u23f8</div>';
+                  // 02/11/2026 : pause des forfaits touchable aussi en vue plusieurs jours (même règle que la vue 1 jour)
+                  h+=_lxPauseHTML(a, sty, ddk, cur, cur+ph.d, topPx, hPx, _lxPwMD, cl, true);
                 }
                 cur+=ph.d;
               }
@@ -13042,11 +13048,14 @@ function _lxPauseAbsences(stId, dk){
   try{ (window.ABSENCES||[]).forEach(function(ab){ if(ab&&ab.stId===stId&&ab.date===dk&&(ab.type==="pause"||ab.type==="absent_heures")&&ab.from&&ab.to) out.push({start:toM(ab.from),end:toM(ab.to),a:null}); }); }catch(_e){}
   return out;
 }
-function _lxPauseHTML(a, sty, dk, pS, pE, topPx, hPx, travaux, cl){
+function _lxPauseHTML(a, sty, dk, pS, pE, topPx, hPx, travaux, cl, compact){
   var dom=(a.lieu==="domicile");
   var _trav=(travaux||[]).concat(dom?[]:_lxPauseAbsences(sty.id, dk));
   var _trous=dom?[]:_lxPauseTrous(pS, pE, _trav, a), lib=_trous.length?_trous[0]:null;
   var hh=Math.max(hPx-2,10);
+  if(!lib && compact){
+    return '<div class="pg-pause" style="top:'+topPx+'px;height:'+hh+'px;left:0;width:100%;opacity:.3;pointer-events:none;font-size:8px" title="Pause '+frM(pS)+' → '+frM(pE)+(dom?' (domicile)':'')+'">⏸</div>';
+  }
   if(!lib){
     // Domicile (la personne est chez le client) ou pause déjà occupée : affichage seul, comme avant
     return '<div class="pg-pause" style="top:'+topPx+'px;height:'+hh+'px;left:0;width:100%;opacity:.4;pointer-events:none;flex-direction:column;line-height:1.2" title="Pause '+frM(pS)+' → '+frM(pE)+'">⏸ '+(dom?'Pause (domicile)':((cl?cNameH(cl).split(" ")[0]:"")+" "+(pE-pS)+'min'))+(hh>=26?'<span style="font-size:9px;font-weight:600">'+frM(pS)+' → '+frM(pE)+'</span>':'')+'</div>';
@@ -13054,6 +13063,15 @@ function _lxPauseHTML(a, sty, dk, pS, pE, topPx, hPx, travaux, cl){
   var k="p"+(++window._lxPauseSeq);
   window._lxPauseZ[k]={stId:sty.id, dk:dk, deb:lib.deb, fin:lib.fin, pS:pS, pE:pE, h:hh, trous:_trous, cli:apptClientLabel(a)||""};
   var x='<div class="pg-pause lx-pause-ok" data-pz="'+k+'" style="top:'+topPx+'px;height:'+hh+'px;left:0;width:100%;pointer-events:auto;cursor:pointer;flex-direction:column;line-height:1.2;background:repeating-linear-gradient(135deg,rgba(200,168,78,.16),rgba(200,168,78,.16) 5px,rgba(200,168,78,.04) 5px,rgba(200,168,78,.04) 10px);border:1.5px dashed var(--gold);color:#8a6d1f" onclick="event.stopPropagation();lxPauseClic(\''+k+'\',event)" title="Pause '+frM(pS)+' → '+frM(pE)+' : toucher pour placer un rendez-vous">';
+  if(compact){
+    // Vue plusieurs jours (colonnes étroites) : toute la bande reste touchable, textes réduits et coupés proprement
+    var _c='max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;';
+    x=x.replace('flex-direction:column;','flex-direction:column;overflow:hidden;padding:0 1px;box-sizing:border-box;');
+    x+='<span style="'+_c+'font-weight:800;font-size:9px">⏸'+(hh>=40?' Pause':'')+'</span>';
+    if(hh>=22) x+='<span style="'+_c+'font-size:8px;font-weight:700">'+frM(pS)+'→'+frM(pE)+'</span>';
+    if(hh>=48) x+='<span style="'+_c+'margin-top:2px;background:var(--gold);color:#111;border-radius:5px;padding:0 4px;font-weight:800;font-size:8px">＋ RDV</span>';
+    return x+'</div>';
+  }
   x+='<span style="font-weight:800;font-size:11px">⏸ Pause</span>';
   if(hh>=26) x+='<span style="font-size:10px;font-weight:700">'+frM(pS)+' → '+frM(pE)+'</span>';
   if(hh>=48) x+='<span style="margin-top:3px;background:var(--gold);color:#111;border-radius:6px;padding:1px 7px;font-weight:800;font-size:10px">＋ RDV ici</span>';
