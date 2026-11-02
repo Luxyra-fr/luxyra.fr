@@ -8112,7 +8112,7 @@ function lxRdvOnlinePhases(svcPh, serviceId, items, salonEdit, duree, lieu) {
   try {
     const dur = Number(duree);
     if (!svcPh || !(dur > 0) || (lieu || "salon") === "domicile") return null;
-    const entier = (v) => { const n = Number(v); return Number.isInteger(n) ? n : null; };
+    const entier = (v) => { if (v === null || v === undefined || v === "") return null; const n = Number(v); return Number.isInteger(n) ? n : null; }; // 02/11 : null/vide -> null (comme lx_int_sur côté base ; Number(null) = 0)
     let src = [];
     if (salonEdit && typeof salonEdit === "object" && Array.isArray(salonEdit.phases) && salonEdit.phases.length) {
       src = salonEdit.phases;
