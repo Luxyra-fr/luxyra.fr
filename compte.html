@@ -465,7 +465,7 @@ function renderRegister(){
   h+='<label style="align-items:flex-start"><input type="checkbox" id="rSms" style="margin-top:3px"> <span>J\u0027accepte de recevoir par SMS les offres et actualit\u00e9s des \u00e9tablissements o\u00f9 je r\u00e9serve (facultatif)</span></label>';
   h+='<label style="align-items:flex-start"><input type="checkbox" id="rEm" style="margin-top:3px"> <span>J\u0027accepte de recevoir par e-mail les offres et actualit\u00e9s des \u00e9tablissements o\u00f9 je r\u00e9serve (facultatif)</span></label>';
   h+='<div style="font-size:12px;color:var(--text3);padding:2px 0 6px 26px">Les confirmations et rappels de vos rendez-vous vous sont envoy\u00e9s dans tous les cas.</div>';
-  h+='<label><input type="checkbox" id="rCgu" required> J\u0027accepte les <a href="/cgv.html" target="_blank">CGU</a> et la <a href="/politique-confidentialite.html" target="_blank">politique de confidentialit\u00e9</a> *</label>';
+  h+='<label><input type="checkbox" id="rCgu" required> J\u0027accepte les <a href="/cgu" target="_blank">CGU</a> et la <a href="/politique-confidentialite.html" target="_blank">politique de confidentialit\u00e9</a> *</label>';
   h+='</div>';
   h+='<button class="btn btn-gold" style="margin-top:12px" onclick="doRegister()">Cr\u00e9er mon compte</button>';
   h+='<div style="text-align:center;margin-top:16px;font-size:14px">D\u00e9j\u00e0 un compte ? <a href="#" onclick="event.preventDefault();PAGE=\'login\';render()">Se connecter</a></div>';
@@ -1978,6 +1978,19 @@ async function submitModifyRdv(rdvId,salonId){
   }catch(e){alert("Erreur: "+e.message);}
 }
 
+// 02/11/2026 (conformité I-3, CGU art. 8) : réservation de moins de 14 jours avec acompte versé -> droit de rétractation :
+// l'acompte est remboursé intégralement par l'établissement, quelle que soit sa politique d'annulation (texte d'information,
+// le remboursement reste fait par l'établissement à réception de la demande).
+function _lxRetractInfoHtml(rdv){
+  try{
+    var paye = rdv.acompte_paye===true && Number(rdv.acompte_montant)>0;
+    if(!paye || !rdv.created_at) return "";
+    var ms = Date.now() - new Date(rdv.created_at).getTime();
+    if(!(ms>=0 && ms < 14*24*3600*1000)) return "";
+    var fin = new Date(new Date(rdv.created_at).getTime()+14*24*3600*1000).toLocaleDateString("fr-FR",{day:"numeric",month:"long"});
+    return '<div style="background:rgba(212,168,67,.08);border:1px solid rgba(212,168,67,.3);border-radius:8px;padding:10px 12px;font-size:12px;color:rgba(255,255,255,.8);margin-bottom:12px;text-align:left;line-height:1.5">\u2696\ufe0f <strong>Droit de r\u00e9tractation</strong> : vous avez r\u00e9serv\u00e9 il y a moins de 14 jours. Jusqu\u0027au '+fin+', vous pouvez vous r\u00e9tracter sans motif aupr\u00e8s de l\u0027\u00e9tablissement : l\u0027acompte vous est alors rembours\u00e9 int\u00e9gralement, quelle que soit sa politique d\u0027annulation (sauf prestation d\u00e9j\u00e0 commenc\u00e9e). Pr\u00e9venez-le en indiquant \u00ab r\u00e9tractation \u00bb, ou utilisez le <a href="/cgu#formulaire-retractation" target="_blank" rel="noopener" style="color:var(--gold)">formulaire</a> (copie possible \u00e0 contact@luxyra.fr).</div>';
+  }catch(e){ return ""; }
+}
 async function showCancelRdv(rdvId,salonId){
   var rdv=CLIENT_RDVS.find(function(r){return r.id===rdvId;});if(!rdv)return;
   // Quick Win #3 (2026-05-06) : check d\u00e9lai d'annulation par rapport \u00e0 la politique du salon.
@@ -1998,6 +2011,7 @@ async function showCancelRdv(rdvId,salonId){
       ? "Ce salon n'autorise pas les annulations en ligne. Contactez-le directement par t\u00e9l\u00e9phone."
       : "Annulation impossible : le d\u00e9lai de "+policyH+"h avant le rendez-vous est d\u00e9pass\u00e9 (il reste "+Math.max(0,Math.round(hoursUntil*10)/10)+"h). Contactez le salon par t\u00e9l\u00e9phone si vous ne pouvez vraiment pas venir.";
     h+='<div style="background:rgba(239,83,80,.1);border:1px solid rgba(239,83,80,.2);border-radius:10px;padding:14px;margin-bottom:16px;font-size:13px;color:#ef5350;text-align:left;line-height:1.5">\u26a0\ufe0f '+msgBloquant+'</div>';
+    h+=_lxRetractInfoHtml(rdv); // 02/11/2026 (conformité I-3)
     h+='<div id="cancelTelSalon" style="margin-bottom:10px"></div>';
     h+='<button onclick="closePopup(\'cancelModal\')" class="btn btn-outline" style="width:100%;padding:14px">Compris</button>';
     h+='</div></div>';
@@ -2010,8 +2024,9 @@ async function showCancelRdv(rdvId,salonId){
   if(policyH > 0){
     h+='<div style="background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.18);border-radius:8px;padding:8px 12px;font-size:12px;color:rgba(255,255,255,.7);margin-bottom:12px;text-align:left">\u2139\ufe0f Politique du salon : annulation possible jusqu\u0027\u00e0 '+policyH+'h avant le RDV. Au-del\u00e0, contactez le salon directement.</div>';
   }
+  h+=_lxRetractInfoHtml(rdv); // 02/11/2026 (conformité I-3)
   if(rdv.acompte_montant>0){
-    h+='<div style="padding:10px;background:rgba(251,146,60,.1);border-radius:8px;font-size:12px;color:var(--orange);margin-bottom:12px">\u26a0\ufe0f Un acompte de '+rdv.acompte_montant+'\u20ac a \u00e9t\u00e9 vers\u00e9. '+(rembourse?'Il sera rembours\u00e9 si vous \u00eates dans le d\u00e9lai.':'Non remboursable selon la politique du salon.')+'</div>';
+    h+='<div style="padding:10px;background:rgba(251,146,60,.1);border-radius:8px;font-size:12px;color:var(--orange);margin-bottom:12px">\u26a0\ufe0f Un acompte de '+rdv.acompte_montant+'\u20ac a \u00e9t\u00e9 vers\u00e9. '+(rembourse?'Il sera rembours\u00e9 si vous \u00eates dans le d\u00e9lai.':(_lxRetractInfoHtml(rdv)?'Hors r\u00e9tractation, il n\u0027est pas remboursable selon la politique du salon.':'Non remboursable selon la politique du salon.'))+'</div>';
   }
   h+='<div class="fg" style="text-align:left"><label>Motif d\u0027annulation</label><select id="cancelReason" style="width:100%;padding:10px;background:rgba(255,255,255,.04);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-size:13px">';
   h+='<option value="">Choisir...</option><option value="Emp\u00each\u00e9(e)">Emp\u00each\u00e9(e)</option><option value="Changement de date">Changement de date</option><option value="Raison personnelle">Raison personnelle</option><option value="Autre">Autre</option></select></div>';

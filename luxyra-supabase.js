@@ -4,7 +4,7 @@
 // BUILD: 20260426-04 — fix CSS options dropdown lisibles
 window.__LUXYRA_BUILD = "20260426-04";
 // 2026-10-14 : version de la couche donnees, comparee par app.html (evite un melange ancienne/nouvelle version via le cache)
-window.LX_DATA_VERSION = "20261102-8"; // 02/11 (-8) : planning, retour après création client depuis Nouveau RDV sur le bon collaborateur (contre-audit I1), libellés échappés (couche données inchangée). // 02/11 (-7) : 02/11 (-6) : planning, heures de chaque étape d un forfait + pause touchable (couche données inchangée). // 02/11 (-4) : réservations en ligne déjà au planning recalculées en entier au chargement (si étapes automatiques). // 02/11 (-3) : planning, réservation en ligne multi-prestations reprise en entier (couche données inchangée). // 02/11 (-2) : médiateur de la consommation (config_json.mediateur) relu. // 02/11 (-1) : offres refusées par le client (compte en ligne) lues (smsPub / emPub) et exclues des envois publicitaires. // 01/11 (-2) : annulation refusée par le serveur relue depuis meta (lxAnnulRefusee), lien de modification. // 01/11 (-1) : champs saisis par les clients sans < > " (audit global, lot S1). // 31/10 (-14) : vue établissement, garde-fou de navigation (window.open, liens et formulaires externes bloqués). // 31/10 (-13) : vue établissement, secrets jamais lus (vues lxv_*), opérateurs non chargés, ancienne vue luxyra.fr supprimée. // 31/10 (-12) : vue établissement sur vue.luxyra.fr (jeton de lecture 15 min, relais /sb, plus jamais la session admin). // 31/10 (-11) : vue admin, /api/stripe/fees retiré de la liste de lecture (refusé par le serveur). // 31/10 (-10) : factures Luxyra rendues par le serveur (FR complet). // 31/10 (-9) : e-mails en série espacés + nouvelle tentative, limite du jour affichée (couche données inchangée). Précédent -8 : // 31/10 (-8) : bons cadeaux, palettes + e-carte en caisse + formats A4. // 31/10 (-7) : tarif Fondateur sur l écran fin d essai. // 31/10 (-6) : bons cadeaux, échappement des champs acheteur (H1) + réserves R1-R7. // 2026-10-31 (-5) : modele des bons cadeaux (config_json.bonModele) lu au chargement. Precedent : "20261031-4"
+window.LX_DATA_VERSION = "20261102-9"; // 02/11 (-9) : conformité (slugs cgu/dpa réservés, message refus offres SMS, commentaires anonymisés). 02/11 (-8) : planning, retour après création client depuis Nouveau RDV sur le bon collaborateur (contre-audit I1), libellés échappés (couche données inchangée). // 02/11 (-7) : 02/11 (-6) : planning, heures de chaque étape d un forfait + pause touchable (couche données inchangée). // 02/11 (-4) : réservations en ligne déjà au planning recalculées en entier au chargement (si étapes automatiques). // 02/11 (-3) : planning, réservation en ligne multi-prestations reprise en entier (couche données inchangée). // 02/11 (-2) : médiateur de la consommation (config_json.mediateur) relu. // 02/11 (-1) : offres refusées par le client (compte en ligne) lues (smsPub / emPub) et exclues des envois publicitaires. // 01/11 (-2) : annulation refusée par le serveur relue depuis meta (lxAnnulRefusee), lien de modification. // 01/11 (-1) : champs saisis par les clients sans < > " (audit global, lot S1). // 31/10 (-14) : vue établissement, garde-fou de navigation (window.open, liens et formulaires externes bloqués). // 31/10 (-13) : vue établissement, secrets jamais lus (vues lxv_*), opérateurs non chargés, ancienne vue luxyra.fr supprimée. // 31/10 (-12) : vue établissement sur vue.luxyra.fr (jeton de lecture 15 min, relais /sb, plus jamais la session admin). // 31/10 (-11) : vue admin, /api/stripe/fees retiré de la liste de lecture (refusé par le serveur). // 31/10 (-10) : factures Luxyra rendues par le serveur (FR complet). // 31/10 (-9) : e-mails en série espacés + nouvelle tentative, limite du jour affichée (couche données inchangée). Précédent -8 : // 31/10 (-8) : bons cadeaux, palettes + e-carte en caisse + formats A4. // 31/10 (-7) : tarif Fondateur sur l écran fin d essai. // 31/10 (-6) : bons cadeaux, échappement des champs acheteur (H1) + réserves R1-R7. // 2026-10-31 (-5) : modele des bons cadeaux (config_json.bonModele) lu au chargement. Precedent : "20261031-4"
 // (historique) "20261028-3"; // 2026-10-28 (-3, Luxyra 6.8.1 : version de l'application transmise dans chaque ticket (raw_data.lxVersion, contrôlée par le serveur), série de n° imprimés propre au serveur (meta.tkNumServeur), copies serveur jamais réécrites, refus LX_APP_OBSOLETE / LX_TKNUM_SERIE_SERVEUR / LX_CC_DEJA_EN_CAISSE)
 // (historique) "20261028-2"; // 2026-10-28 (-2, Luxyra 6.8.0 : recettes en ligne enregistrées en caisse par le serveur — champs meta serveur / recetteKey…, refus définitif LX_CC_DEJA_EN_CAISSE)
 // (historique) "20261028-1"; // 2026-10-28 (-1 : bons cadeaux à usage unique / multiple — qualification TVA du bon (usage_tva, qualif_tva, repli historique), ticket v2 HT/TVA par ventilation de l'app, taux_tva 0 pour une vente de BUM seule, bonsUtil conservé dans appointments.meta) ; 2026-10-27 (-3 : rapport du mois en vrai PDF + correctifs d’exports comptables, app.html seulement ; -2 : envoi au comptable — FEC + pack Excel + rapport par défaut, ZIP en option, app.html seulement ; -1 : envoi automatique au comptable — changement dans app.html seulement, couche données inchangée) ; 2026-10-17 (-2 : audit réglages — taux TVA produits brut (tvaProduitsColonne), familles produit sans produit (pcats), ancien saveSalonConfig renommé ; -1 : retour / remboursement partiel — champs du ticket de retour conservés dans appointments.meta, refus définitif LX_RETOUR_REFUSE jamais rejoué, ticket de retour refusé au rejeu écarté de la caisse) ; 2026-10-16 (-1 : incident Z n°128 — 1 réservation en ligne = 1 entrée, Z refusée par la base si différente du journal, annotations correctives) ; 2026-10-15 (-3 : multi-appareils, champs modifiés seulement + lignes supprimées ailleurs jamais recréées ; -2 : plus aucun enregistrement muet, lxEcritureVerifiee ; -1 : « Prix à partir de » + sur devis sur les forfaits) ; 2026-10-14 (-8 : correctifs revue d intégration) intégration des audits (données, sécurité, planning, clients, caisse, site, réglages)
@@ -233,7 +233,7 @@ async function clearAllCache(){
 // chose plante après (bug JS, perte réseau, fermeture onglet), la donnée brute
 // reste récupérable au prochain boot via _walCheck() → popup de récupération.
 //
-// Trigger : 15/05/2026 — Amandine a perdu 1 encaissement + 1 client + 1 RDV
+// Trigger : 15/05/2026 — la gérante a perdu 1 encaissement + 1 client + 1 RDV
 // à cause d'un bug "ps is not defined" dans rAccounting (refactor _splitPrestProd
 // af401bd du 13/05). L'action a planté avant d'atteindre saveXxxToDb.
 // Avec ce WAL en place, la data aurait été préservée et récupérable.
@@ -1230,7 +1230,7 @@ async function checkSession() {
     if (elapsed > SALON_SESSION_INACTIVITY_MS && !window._lxVueAdmin) {
       // Session salon expirée → signOut Supabase + cleanup + login screen.
       // On vide aussi lx_current_op pour forcer le re-PIN après re-login
-      // (sinon Amandine resterait active après que le salon se reconnecte).
+      // (sinon la gérante resterait active après que le salon se reconnecte).
       try { await _sb.auth.signOut({ scope: "local" }); } catch(_){} // 2026-10-14 : cet appareil seulement
       try { localStorage.removeItem("lx_current_op"); } catch(_){}
       try { localStorage.removeItem("lx_salon_last_activity"); } catch(_){}
@@ -2681,7 +2681,7 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
   if (clotRes.data) {
     window.CLOTURES = clotRes.data.map(_mapClotureRow);
     // FIX 2026-05-12 : reconstitue LOCKED_DAYS depuis CLOTURES après chaque load DB.
-    // Avant ce fix, si Amandine ouvrait l'app sur un autre appareil (ou cache vidé),
+    // Avant ce fix, si la gérante ouvrait l'app sur un autre appareil (ou cache vidé),
     // LOCKED_DAYS était vide → le check de blocage dans showCaisse()/mD() était bypass
     // → on pouvait encaisser après cloture Z. Maintenant la source de vérité c'est DB.
     if (!window.LOCKED_DAYS) window.LOCKED_DAYS = {};
@@ -2744,7 +2744,7 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
   // Avant, loadSiteConfig() n'était appelée qu'UNE fois, 1 s après l'ouverture de la page :
   // sur un login frais (_salonId pas encore posé) elle ne faisait rien, et ne retentait jamais.
   // SITE_CONFIG restait vide (réglages du site abandonnés) et H gardait les horaires codés en dur
-  // — ceux d'Excellence Coiffure — que l'app republiait ensuite par-dessus les vrais horaires
+  // — ceux de l'établissement pilote — que l'app republiait ensuite par-dessus les vrais horaires
   // du salon (constaté chez Delphinecoiff les 05/10 et 06/10). Attente bornée à 8 s.
   try {
     if (typeof loadSiteConfig === "function") {
@@ -4796,7 +4796,7 @@ async function _lxSaveSalonConfigAncienInutilise() {
     var newCfg = {
       nom:SALON_CONFIG.nom,tel:SALON_CONFIG.tel,adresse:SALON_CONFIG.adresse,cp:SALON_CONFIG.cp,ville:SALON_CONFIG.ville,email:SALON_CONFIG.email,logo:SALON_CONFIG.logo,
       // Fix 2026-05-11 : on stocke le VRAI slogan (depuis site_config) et non
-      // plus le sousTitre. Avant : slogan=sousTitre||slogan → "by Amandine J"
+      // plus le sousTitre. Avant : slogan=sousTitre||slogan → "by Prénom N"
       // écrasait silencieusement "Chaque client, une création unique" dans
       // salons.config_json.slogan. Maintenant : slogan = SITE_CONFIG.slogan
       // (fallback sousTitre seulement si rien).
@@ -4896,7 +4896,7 @@ function _lxListeChargee(table, silencieux){
   // 2026-10-07 : pendant le chargement (affichage anticipe depuis le cache, qui appelle go()),
   // la liste n'est pas encore chargee : c'est NORMAL. On n'ecrit pas (la sauvegarde suivante,
   // apres chargement, le fera) et on ne declenche AUCUNE alerte. Faux positif constate chez
-  // Excellence Coiffure le 07/10 (2 DB_ERROR « liste collaborateurs non chargee »).
+  // l'établissement pilote le 07/10 (2 DB_ERROR « liste collaborateurs non chargee »).
   if (window._lxChargementEnCours === true) return false;
   try{
     if (!window._lxListeAlerte) window._lxListeAlerte = {};
@@ -5150,7 +5150,7 @@ async function _saveCollaborateursUneFois() {
   if (!_isOnline || !_salonId) return { ok:false, error:"hors ligne" };
   // appelee a chaque changement de page : blocage silencieux (une seule alerte monitoring)
   if (!_lxListeChargee("collaborateurs", true)) return { ok:false, error:"liste non chargee" };
-  // FIX 2026-05-11 (Manue photo perdue) : récupère img+id pour pouvoir
+  // FIX 2026-05-11 (une collaboratrice photo perdue) : récupère img+id pour pouvoir
   // PRÉSERVER une photo DB existante si la mémoire locale a img="" (race
   // condition entre 2 sessions / reload partiel). La suppression explicite
   // passe par clearStyImg → clearCollabPhoto(id) qui force img="" directement.
@@ -5230,7 +5230,7 @@ async function _saveCollaborateursUneFois() {
       // FIX 2026-08-31 : la sauvegarde en masse n'ecrit PLUS le statut RH d'une fiche
       // existante. Elle l'ecrivait depuis la memoire de l'appareil : un appareil dont
       // l'application datait d'avant un archivage reactivait le collaborateur a son
-      // insu (Manue, reapparue active le 31/08). Le statut RH ne se modifie desormais
+      // insu (une collaboratrice, reapparue active le 31/08). Le statut RH ne se modifie desormais
       // que par le chemin dedie (saveCollabRH), qui exprime une intention explicite.
       var dataUpd = {};
       Object.keys(data).forEach(function(k){

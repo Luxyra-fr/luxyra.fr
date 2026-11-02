@@ -1717,6 +1717,15 @@ async function handleConnectPayment(request, env) {
         }
         amount = _mtBase / 100;
         _rdvLib = _a[0]; // 01/11 (contre-audit S2) : prestation / date / heure relues en base pour le libellé du paiement
+        // 02/11/2026 (conformité B-1, page acompte.html des RDV à domicile) : demande expresse d'exécution avant la fin
+        // du délai de rétractation, cochée par le client -> mémorisée sur la réservation (sans effet sur le paiement si échec).
+        if (_type === "acompte" && (metadata?.exec_retract === "1" || metadata?.exec_retract === true)) {
+          try {
+            await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?id=eq.${encodeURIComponent(_rid)}`, { method: "PATCH",
+              headers: { ..._sbHeaders(env), "Content-Type": "application/json", "Prefer": "return=minimal" },
+              body: JSON.stringify({ exec_avant_retractation: true }) });
+          } catch (_) {}
+        }
       }
     }
 
@@ -6466,7 +6475,7 @@ async function handleSmsCustom(request, env) {
         try {
           const rq = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/clients?select=id&salon_id=eq.${salon_id}&telephone_norm=eq.${_n}&or=(sms_ok.is.false,sms_marketing_ok.is.false)&fusionne_dans=is.null&rgpd_anonymise_le=is.null&limit=1`, { headers: _sbHeaders(env) });
           const jq = rq.ok ? await rq.json() : [];
-          if (Array.isArray(jq) && jq.length) return jsonResponse({ success: false, code: "sans_consentement", requalifie: _requalifie, error: "Ce client n'a pas accepté les SMS (fiche client › RGPD)" }, 409);
+          if (Array.isArray(jq) && jq.length) return jsonResponse({ success: false, code: "sans_consentement", requalifie: _requalifie, error: "SMS publicitaire non envoyé : ce client a refusé les offres par SMS ou les SMS (fiche client › RGPD). Ses rappels de rendez-vous restent envoyés s'il accepte les SMS." }, 409);
         } catch (_) {}
       }
     }
@@ -8992,7 +9001,7 @@ Sitemap: https://luxyra.fr/sitemap.xml
     let segmentForSlug = path.replace(/^\/+|\/+$/g, "");
     const RESERVED_FOR_SLUG = new Set([
       "", "app", "admin", "compte", "inscription", "pro", "recherche",
-      "proposal", "cgv", "mentions", "mentions-legales",
+      "proposal", "cgv", "cgu", "mentions", "mentions-legales",
       "confidentialite", "politique-confidentialite",
       "suppression-donnees", "dpa", "reset-password",
       "site", "index", "home", "verif-nf525", "tarifs", "sans-commission", "a-propos", "about", "securite-rgpd", "securite", "rgpd", "blog", "aide", "migration",

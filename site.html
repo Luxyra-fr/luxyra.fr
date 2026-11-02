@@ -131,11 +131,11 @@
 /* ============================================================================
    FIX 2026-07-13 — RESERVATION IMPOSSIBLE sur /<slug>/reserver ("Can't find variable: LX")
    La balise de chargement de lx-client.js etait en chemin RELATIF. Sur l'URL propre
-   /excellence-coiffure/reserver, le navigateur le resolvait en
-   /excellence-coiffure/lx-client.js -> 404 -> window.LX jamais defini.
+   /mon-salon/reserver, le navigateur le resolvait en
+   /mon-salon/lx-client.js -> 404 -> window.LX jamais defini.
    Or la reservation EXIGE un compte (renderBooking -> showAuthModal) :
    LX.login()/LX.signup() levaient "LX is not defined" => AUCUNE reservation possible.
-   (Sur /excellence-coiffure, le chemin relatif tombait sur /lx-client.js => ca marchait.
+   (Sur /mon-salon, le chemin relatif tombait sur /lx-client.js => ca marchait.
     D'ou un bug invisible depuis la home et fatal depuis le lien Google Business.)
    -> Chemin ABSOLU. + Filet ci-dessous pour tout autre echec de chargement
    (reseau, cache, proxy) : on recharge le script depuis la racine.
@@ -1288,7 +1288,7 @@ async function loadSalon(){
     // 3. Collaborateurs (source de vérité = table collaborateurs)
     // Note : site_config.collaborateurs était utilisé en override mais peut être
     // désynchronisé avec la table → mauvais horaires affichés côté site
-    // (ex: Manue travaillait mardi/vendredi en DB mais "tous les jours" via site_config).
+    // (ex: une collaboratrice travaillait mardi/vendredi en DB mais "tous les jours" via site_config).
     // On retire l'override pour respecter la source de vérité.
     var tc=await _P.tc;
     // Filtre supplémentaire côté client : exclure les collabs marqués "inactif"
@@ -1356,7 +1356,7 @@ async function loadSalon(){
     if(SITE_CFG.horaires_salon){HORAIRES=SITE_CFG.horaires_salon;window._lxHorairesSalonSource=true;}
     else if(SALON.config&&SALON.config.horaires){HORAIRES=SALON.config.horaires;window._lxHorairesSalonSource=true;}
     else if(COLLABS.length>0&&COLLABS[0].hrs)HORAIRES=COLLABS[0].hrs;
-    // 2026-10-07 : sans horaires configures, le salon est affiche FERME (avant : horaires d'Excellence
+    // 2026-10-07 : sans horaires configures, le salon est affiche FERME (avant : horaires de l'établissement pilote
     // Coiffure, donc des creneaux reservables qui n'existaient pas).
     else HORAIRES={0:null,1:null,2:null,3:null,4:null,5:null,6:null};
 
@@ -1428,7 +1428,7 @@ function showAuthModal(mode){
     h+='<label style="font-size:12px;display:flex;align-items:flex-start;gap:8px;padding:2px 0;cursor:pointer"><input type="checkbox" id="aRegEm" style="margin-top:2px"> <span>J\u0027accepte de recevoir par e-mail les offres et actualit\u00e9s de cet \u00e9tablissement (facultatif)</span></label>';
     h+='<div style="font-size:11px;color:rgba(255,255,255,.55);padding:2px 0 4px 24px">Les confirmations et rappels de vos rendez-vous vous sont envoy\u00e9s dans tous les cas.</div>';
     // 2026-10-14 : consentement obligatoire, comme sur compte.html
-    h+='<label style="font-size:12px;display:flex;align-items:center;gap:8px;padding:2px 0;cursor:pointer"><input type="checkbox" id="aRegCgu" required> <span>J\u0027accepte les <a href="/cgv.html" target="_blank" rel="noopener" style="color:var(--gold)">CGU</a> et la <a href="/politique-confidentialite.html" target="_blank" rel="noopener" style="color:var(--gold)">politique de confidentialit\u00e9</a> *</span></label>';
+    h+='<label style="font-size:12px;display:flex;align-items:center;gap:8px;padding:2px 0;cursor:pointer"><input type="checkbox" id="aRegCgu" required> <span>J\u0027accepte les <a href="/cgu" target="_blank" rel="noopener" style="color:var(--gold)">CGU</a> et la <a href="/politique-confidentialite.html" target="_blank" rel="noopener" style="color:var(--gold)">politique de confidentialit\u00e9</a> *</span></label>';
     h+='</div>';
   }
   h+='<button class="btn btn-gold" style="width:100%;padding:10px;font-size:15px;margin-top:6px" onclick="'+(isLogin?'doClientLogin()':'doClientRegister()')+'">'+(isLogin?"Se connecter":"Cr\u00e9er mon compte")+'</button>';
@@ -2895,7 +2895,7 @@ function selectService(svcId){
 function renderBookingStep2(){
   // FIX 2026-08-30 : s'il n'y a qu'UN SEUL professionnel eligible, on saute cette etape.
   // Demander de choisir entre "Pas de preference" et l'unique personne du salon n'a aucun
-  // sens et ajoute un clic inutile (cas reel : Manue partie, il ne reste qu'Amandine).
+  // sens et ajoute un clic inutile (cas reel : une collaboratrice partie, il ne reste que la gérante).
   // Garde-fou _skipCollabDone : si le client revient en arriere depuis l'etape 3, l'etape
   // s'affiche normalement (pas de boucle, pas de blocage).
   try{
@@ -3427,7 +3427,7 @@ function isAllCollabsOff(date){
 // pour un créneau donné. NE PAS appeler avec collabId=null directement —
 // utiliser isSlotTaken qui gère le mode "sans préférence".
 // FIX 2026-07-04 : horaires EFFECTIFS d'un collab pour une date (hebdo base + override + ouverture except.).
-// Sans ça, un collab qui ne TRAVAILLE pas ce jour (ex. Manue le samedi) était compté "dispo"
+// Sans ça, un collab qui ne TRAVAILLE pas ce jour (ex. une collaboratrice le samedi) était compté "dispo"
 // -> en "sans préférence" le site laissait réserver un créneau déjà pris (double booking).
 // 2026-10-17 audit réglages (#5) : les horaires de l'ÉTABLISSEMENT sont une limite, même quand le collaborateur a
 // ses propres horaires (jour « Fermé » de l'établissement = aucun créneau ; plage = intersection des deux).
@@ -3806,6 +3806,11 @@ function renderBookingStep4(){
     h+='<strong style="color:#64b5f6">\ud83d\udd12 Empreinte bancaire : aucun d\u00e9bit imm\u00e9diat</strong><br>Une pr\u00e9-autorisation de <strong>'+_mtE.toFixed(2)+' \u20ac</strong> est r\u00e9alis\u00e9e sur votre carte. '+escapeHtmlSimple(lxTexteAnnulation(false));
     h+='<label style="display:flex;align-items:flex-start;gap:8px;margin-top:10px;font-size:12px;color:var(--text2,#ddd);cursor:pointer"><input type="checkbox" id="empreinteAccept" style="margin-top:2px;flex-shrink:0"><span>'+lxTexteEmpreinteHtml(_mtE)+'</span></label></div>';
   }
+  // 02/11/2026 (conformité B-1, art. L221-25 C. conso) : RDV dans les 14 jours + paiement en ligne demandé
+  // -> demande expresse d'exécution avant la fin du délai de rétractation (case obligatoire, mémorisée sur la réservation)
+  if(lxPaiementEnLigneDemande() && lxRdvDans14j(booking.date)){
+    h+='<label style="display:flex;align-items:flex-start;gap:8px;margin:0 0 14px;padding:10px 12px;border:1px solid rgba(212,168,67,.35);border-radius:10px;font-size:12px;color:var(--text2,#ddd);line-height:1.5;cursor:pointer"><input type="checkbox" id="retractAccept" style="margin-top:2px;flex-shrink:0"><span>'+lxTexteRetractationHtml()+'</span></label>';
+  }
   h+='<div class="fg"><label>Message (optionnel)</label><textarea id="bkMsg" rows="2" placeholder="Pr\u00e9cisions, souhaits..."></textarea></div>';
   
   h+='<div style="display:flex;gap:10px;margin-top:16px">';
@@ -4146,6 +4151,11 @@ async function _lxSubmitWithStripeImpl(){
 
   // 02/11/2026 (conformité) : empreinte = acceptation explicite des conditions réelles requise
   if(modeC === "empreinte"){ var _ckE=document.getElementById("empreinteAccept"); if(_ckE && !_ckE.checked){ showAlert("Veuillez accepter les conditions de l\u2019empreinte bancaire.","warning"); return; } }
+  // 02/11/2026 (conformité B-1) : RDV dans les 14 jours -> demande expresse d'exécution avant la fin du délai de rétractation
+  var _ckR=document.getElementById("retractAccept");
+  if(lxPaiementEnLigneDemande() && lxRdvDans14j(booking.date) && (!_ckR || !_ckR.checked)){
+    showAlert("Votre rendez-vous a lieu dans les 14 jours : cochez la case concernant le d\u00e9lai de r\u00e9tractation pour continuer.","warning"); return;
+  }
   // Check slot availability before payment
   await refreshRDV();
   if(isSlotTaken(booking.date,booking.time,dur,booking.collabId)){
@@ -4191,6 +4201,7 @@ async function _lxSubmitWithStripeImpl(){
       rdvData.distance_km = booking.clientAdr.distance_km;
       rdvData.frais_deplacement_montant = booking.clientAdr.frais_mt || 0;
     }
+    rdvData.exec_avant_retractation = !!(_ckR && _ckR.checked); // 02/11/2026 (conformité B-1)
     rdvData.id=_lxNewId();
     await _lxAbandonPreparer(rdvData); // 2026-10-14 : secret d'abandon (voir _lxAbandonner)
     var rdvRes=await sb.from("rdv_online").insert(rdvData);
@@ -4302,7 +4313,7 @@ async function _lxSubmitWithStripeImpl(){
   }
   // 02/11/2026 (conformité, art. L221-25 C. conso) : rendez-vous avant la fin du délai de rétractation de 14 jours -> demande expresse
   if(lxRdvDans14j(booking.date)){
-    h+='<label style="display:flex;align-items:flex-start;gap:8px;margin-top:10px;font-size:11px;color:rgba(255,255,255,.6);cursor:pointer"><input type="checkbox" id="retractAccept" style="margin-top:2px;flex-shrink:0"><span>Je demande que la prestation soit r\u00e9alis\u00e9e avant la fin du d\u00e9lai de r\u00e9tractation de 14 jours. Si je me r\u00e9tracte apr\u00e8s son d\u00e9but, je paierai la part d\u00e9j\u00e0 r\u00e9alis\u00e9e ; une fois la prestation enti\u00e8rement r\u00e9alis\u00e9e, je ne pourrai plus me r\u00e9tracter. <a href="/cgu#retractation" target="_blank" rel="noopener" style="color:var(--gold)">D\u00e9tails</a></span></label>';
+    h+='<label style="display:flex;align-items:flex-start;gap:8px;margin-top:10px;font-size:11px;color:rgba(255,255,255,.6);cursor:pointer"><input type="checkbox" id="retractAccept" style="margin-top:2px;flex-shrink:0"><span>'+lxTexteRetractationHtml()+'</span></label>';
   }
   h+='</div>';
   h+='<div style="display:flex;gap:10px;margin-top:16px">';
@@ -4577,6 +4588,23 @@ function lxMentionsEtab(){
   m.innerHTML='<div style="background:#141414;border:1px solid rgba(200,168,78,.35);border-radius:14px;max-width:520px;width:100%;max-height:85vh;overflow:auto;padding:20px;color:#eee"><div style="font-weight:800;color:var(--gold);margin-bottom:10px">Mentions l\u00e9gales et donn\u00e9es personnelles</div>'+b+'<button type="button" style="margin-top:8px;width:100%;padding:11px;border-radius:10px;border:none;background:var(--gold,#c8a84e);color:#111;font-weight:800;cursor:pointer">Fermer</button></div>';
   m.addEventListener("click",function(ev){ if(ev.target===m||ev.target.tagName==="BUTTON") m.remove(); });
   document.body.appendChild(m);
+}
+// 02/11/2026 (conformité B-1) : un paiement en ligne (acompte ou empreinte) peut-il être demandé ? (compte Stripe de
+// l'établissement actif, hors domicile, mode acompte ou empreinte). À l'envoi, _lxSubmitWithStripeImpl n'exige la case
+// qu'après avoir vérifié que le montant dû est > 0 (sinon il a déjà basculé sur la réservation sans paiement).
+function lxPaiementEnLigneDemande(){
+  try{
+    if(booking.lieu==='domicile') return false;
+    if(!(SALON && SALON.connectId && (SALON.connectStatus==="active" || SALON.connectStatus==="enabled" || SALON.connectStatus==="payouts_pending"))) return false;
+    var m=SITE_CFG.modeCaution||"aucun";
+    // Affichage : dès qu'un paiement en ligne est possible (le montant exact de l'acompte peut encore changer avec le réglage
+    // propre au client, connu seulement à l'envoi) ; contrôle à l'envoi : seulement si un montant est réellement demandé.
+    return m==="empreinte" || m==="acompte";
+  }catch(e){}
+  return false;
+}
+function lxTexteRetractationHtml(){
+  return 'Je demande que la prestation soit r\u00e9alis\u00e9e avant la fin du d\u00e9lai de r\u00e9tractation de 14 jours. Si je me r\u00e9tracte apr\u00e8s son d\u00e9but, je paierai la part d\u00e9j\u00e0 r\u00e9alis\u00e9e ; une fois la prestation enti\u00e8rement r\u00e9alis\u00e9e, je ne pourrai plus me r\u00e9tracter. <a href="/cgu#retractation" target="_blank" rel="noopener" style="color:var(--gold)">D\u00e9tails</a>';
 }
 function lxRdvDans14j(d){
   if(!d||!/^\d{4}-\d{2}-\d{2}/.test(String(d))) return false;

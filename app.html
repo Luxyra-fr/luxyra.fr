@@ -23,7 +23,7 @@
 </script>
 <script>
 // VUE ADMIN (2026-10-09) : isolation totale du navigateur. La session et les données locales du salon
-// connecté habituellement sur ce navigateur (ex. Amandine) ne sont ni lues ni modifiées.
+// connecté habituellement sur ce navigateur (ex. la gérante) ne sont ni lues ni modifiées.
 // 2026-10-31 (audit sécurité admin I3) : la session admin ne doit plus jamais rester stockée sur luxyra.fr
 // (la vue admin est désormais servie sur admin.luxyra.fr) -> purge des anciennes clés à chaque chargement hors admin.
 (function(){ try{ if(location.hostname!=="admin.luxyra.fr"){ var ls=window.localStorage, ks=[]; for(var i=0;i<ls.length;i++){ var k=ls.key(i); if(k&&k.indexOf("sb-luxyra-admin-auth")===0) ks.push(k); } ks.forEach(function(k){ ls.removeItem(k); }); } }catch(_e){} })();
@@ -417,12 +417,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261102-8"></script>
+<script src="luxyra-supabase.js?v=20261102-9"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261102-8";
+  var attendu="20261102-9";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -436,7 +436,7 @@ console.log("LUXYRA v6.7");
 // ===== HOOK ERREURS GLOBALES (depuis 2026-05-15) =====================
 // Capte les erreurs JS non gérées + promesses rejetées et les pousse en DB
 // dans audit_log avec action='JS_ERROR'. Permet de debugger en prod sans
-// dépendre des captures d'écran utilisateur (cas Amandine 15/05 — bug
+// dépendre des captures d'écran utilisateur (cas la gérante 15/05 — bug
 // "ps is not defined" passé inaperçu pendant des heures).
 // Rate-limit : max 10 erreurs par session pour ne pas flooder.
 // Queue offline : si saveAuditEntry pas encore dispo (avant login), buffer
@@ -966,7 +966,7 @@ var OPERATEURS = [];
 var CURRENT_OPERATOR = null; // {id, prenom, nom, role, permissions, ...}
 
 // FIX 2026-05-17 nuit : helper "collab par défaut"
-// Évite que ticket/fiche tech soit attribué à Amandine quand Manue est connectée.
+// Évite que ticket/fiche tech soit attribué à la gérante quand une collaboratrice est connectée.
 // Priorité :
 //  1) CURRENT_OPERATOR.collab_id (lien explicite stocké dans salon_operateurs)
 //  2) Match par prénom CURRENT_OPERATOR.prenom ↔ T[i].n (fallback robuste)
@@ -1532,8 +1532,8 @@ function getVisibleStylists() {
   // Filtrage de base : exclure les collabs inactifs (sauf admin pour gestion historique)
   // FIX 2026-08-30 : un collaborateur PARTI (inactif / date de depart) ne doit plus occuper
   // une colonne du planning, y compris pour un admin. Avant, l'admin voyait T entier -> une
-  // personne ayant quitte le salon restait affichee indefiniment (cas reel : Manue, partie le
-  // 19/08, toujours presente dans le planning d'Amandine qui est admin).
+  // personne ayant quitte le salon restait affichee indefiniment (cas reel : une collaboratrice, partie le
+  // 19/08, toujours presente dans le planning de la gérante qui est admin).
   // L'historique reste intact : stats, tickets et exports continuent d'utiliser T en entier.
   var _baseT = getActiveTeam();
   if (!CURRENT_OPERATOR) return _baseT;
@@ -1601,7 +1601,7 @@ async function refreshOperateurs() {
   }
   // Si déjà connecté en localStorage → restaurer SI session pas expirée
   // Avant : on restaurait l'opérateur sans vérifier le temps écoulé (bug : après
-  // arrêt PC > 5 min, Amandine restait active sans re-PIN).
+  // arrêt PC > 5 min, la gérante restait active sans re-PIN).
   // Maintenant : check lastActivity, si > 5 min → expire et redemande PIN.
   var saved = localStorage.getItem("lx_current_op");
   if (saved) {
@@ -2079,7 +2079,7 @@ function lockNow() {
 
 // Update header avatar to show current operator
 // FIX 2026-05-17 nuit : prénom visible + bouton "↻ Changer" à 1 tap pour éviter
-// que Manue hérite par erreur de la session d'Amandine (et vice versa).
+// qu'une collaboratrice hérite par erreur de la session de la gérante (et vice versa).
 // 2026-10-09 : pastille du solde SMS dans le bandeau (à gauche de la collaboratrice connectée).
 // Pro payant uniquement. Rouge à 10 et moins, orange à 30 et moins. Un clic ouvre l'achat de SMS.
 function lxMajPastilleSms(){
@@ -3663,7 +3663,7 @@ document.addEventListener("wheel", function(e){
 // Placeholders pour démos hors-ligne uniquement. Surchargés par loadSalonData
 // avec les vrais collaborateurs du salon dès la connexion. Noms génériques
 // (Membre 1/2) pour ne pas hardcoder un métier précis.
-// FIX 2026-10-07 : plus d'equipe par defaut ("Membre 1/2" aux horaires d'Excellence Coiffure).
+// FIX 2026-10-07 : plus d'equipe par defaut ("Membre 1/2" aux horaires de l'établissement pilote).
 // En cas d'echec de chargement, ces fiches pouvaient etre ENREGISTREES chez le salon connecte.
 // Un salon ne voit que l'equipe chargee depuis SA base.
 var T=[];
@@ -6478,7 +6478,7 @@ function doCloture(){
 // ventilation (a.payments : methode + montant net apres rendu), et non mis en entier dans
 // un seul bucket selon la chaine a.met (qui contenait "cb" -> tout en CB, faux ; ou "esp" -> tout en especes).
 // 2026-10-11 : tickets dont les règlements saisis dépassent la recette (ex. remise appliquée après la saisie du
-// paiement, ticket 701 Excellence Coiffure du 02/10). La ventilation n'est PAS retouchée (les totaux mensuels
+// paiement, un ticket de l'établissement pilote du 02/10). La ventilation n'est PAS retouchée (les totaux mensuels
 // restent égaux à la somme des clôtures scellées) ; l'écart est seulement EXPLIQUÉ sur la clôture.
 function _lxEcartsReglement(tickets){
   var L=[];
@@ -8499,7 +8499,7 @@ function showCAInstantane(){
 
 
 
-// FIX 2026-10-07 : plus d'horaires par defaut (c'etaient ceux d'Excellence Coiffure, republies
+// FIX 2026-10-07 : plus d'horaires par defaut (c'etaient ceux de l'établissement pilote, republies
 // chez le 1er client en essai). Tant que les horaires du salon ne sont pas charges : tout ferme.
 var H={0:null,1:null,2:null,3:null,4:null,5:null,6:null};
 // Get effective hours for a date, considering exceptional closings/openings
@@ -8578,7 +8578,7 @@ var MO=["Janvier","F\u00e9vrier","Mars","Avril","Mai","Juin","Juillet","Ao\u00fb
 var TD=(function(){var d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
 
 
-// FIX 2026-10-07 : plus de catalogue par defaut. C'etait le catalogue d'Excellence Coiffure
+// FIX 2026-10-07 : plus de catalogue par defaut. C'etait le catalogue de l'établissement pilote
 // (41 prestations, prix, marques) : s'il restait en memoire apres un echec de chargement, la
 // moindre creation/modification de prestation l'INSERAIT chez le salon connecte.
 var SVC=[];
@@ -12417,9 +12417,9 @@ function setCatColor(cat,hex){
 // Product category colors
 if(!window.PRODCOLORS)window.PRODCOLORS={};
 // FIX 2026-10-07 : plus de lecture localStorage (cle non propre a un salon : les marques
-// d'Excellence Coiffure se retrouvaient chez un autre salon). Source : config_json.prodcolors.
+// de l'établissement pilote se retrouvaient chez un autre salon). Source : config_json.prodcolors.
 // Default product category colors (only fill missing)
-// FIX 2026-10-07 : supprime -- couleurs par defaut aux noms des marques d'Excellence Coiffure
+// FIX 2026-10-07 : supprime -- couleurs par defaut aux noms des marques de l'établissement pilote
 // (Fibreclinix, Blond Me, L'Oreal, Osis+...), ajoutees puis enregistrees chez TOUS les salons.
 function getProdColor(cat){return window.PRODCOLORS[cat]||{bg:"#f0f0f0",border:"#999",text:"#333"};}
 function setProdCatColor(cat,hex){
@@ -13378,7 +13378,7 @@ function rPlanningDay(dateObj,showDayHeader){
     var sty=T[ti];
     var sa = dayAllForStylists.filter(function(a){ return a.stId===sty.id; });
     // 2026-10-07 : un ancien collaborateur n'apparait dans ce recapitulatif que s'il a de
-    // l'activite ce jour-la (avant : Manue, partie le 19/08, s'affichait chaque jour a 0 EUR).
+    // l'activite ce jour-la (avant : une collaboratrice, partie le 19/08, s'affichait chaque jour a 0 EUR).
     if(lxCollabPartiAu(sty, dk) && !sa.length) continue; // parti (Inactif ou date de depart atteinte ce jour-la)
     var tca = 0; sa.forEach(function(a){ tca += (Number(a.pr)||0); });
     var nbRdv = sa.filter(function(a){ return !_lxIsContraTicket(a); }).length;
@@ -16104,7 +16104,7 @@ function lxToggleMetierAutre(m){
 }
 window.lxToggleMetierAutre=lxToggleMetierAutre;
 // Mots r\u00e9serv\u00e9s (routes syst\u00e8me Luxyra) \u2014 synchronis\u00e9 avec la fonction Postgres is_reserved_slug
-var LX_RESERVED_SLUGS=["coiffeur","institut-de-beaute","spa-massage","onglerie","extension-de-cils","barbier","annuaire-retrait","annuaire-gerant","pro","app","compte","recherche","inscription","site","proposal","admin","api","pages","panel","login","signup","signin","logout","contact","terms","cgv","mentions","legal","about","help","support","blog","press","sitemap","robots","favicon","assets","static","public","www","mail","email","cdn","static-cdn","dashboard","settings","onboarding","index","home","root","test","dev","staging","prod","connexion","deconnexion","parametres","tarifs","prix","offres","professionnels","metiers","partenaires","salon","salons","rdv","reservation","booking","services","prestations","avis","reviews","search","recherche-pro"];
+var LX_RESERVED_SLUGS=["coiffeur","institut-de-beaute","spa-massage","onglerie","extension-de-cils","barbier","annuaire-retrait","annuaire-gerant","pro","app","compte","recherche","inscription","site","proposal","admin","api","pages","panel","login","signup","signin","logout","contact","terms","cgv","mentions","legal","about","help","support","blog","press","sitemap","robots","favicon","assets","static","public","www","mail","email","cdn","static-cdn","dashboard","settings","onboarding","index","home","root","test","dev","staging","prod","connexion","deconnexion","parametres","tarifs","prix","offres","professionnels","metiers","partenaires","salon","salons","rdv","reservation","booking","services","prestations","avis","reviews","search","recherche-pro","cgu","dpa"];
 
 // Sauvegarde du slug personnalis\u00e9 du salon
 async function saveSlug(){
@@ -16498,7 +16498,7 @@ function saveSiteConfig(){
     return;
   }
   // Garde-fou : jamais publier des horaires qui n'ont pas ete charges depuis la base
-  // (ce seraient les horaires codes en dur, ceux d'Excellence Coiffure).
+  // (ce seraient les horaires codes en dur, ceux de l'établissement pilote).
   if(!window._lxHCharge){
     if(window._lxSiteSaveReprise) return;
     window._lxSiteSaveReprise = true;
@@ -16945,7 +16945,7 @@ function rSettings(){
     h+='<div class="sec">Paramètres</div>';
 
     // Badge "Fondateur" — visible UNIQUEMENT pour les salons is_founder=true
-    // (Amandine et autres non-fondateurs ne voient rien changer)
+    // (la gérante et autres non-fondateurs ne voient rien changer)
     try {
       if (window.SALON_CONFIG && SALON_CONFIG.isFounder === true) {
         var fNum = SALON_CONFIG.founderNum || "?";
@@ -18731,7 +18731,7 @@ function editPhases(svcId){
 var clTab="infos",clPage=0,clPer=50;
 // Helper recherche client — FIX 2026-05-15 : update partiel sans toucher à l'input
 // Avant : go("clients") recréait tout le DOM → input détruit → clavier Android
-// disparaissait/réapparaissait à chaque lettre (clignotement signalé par Amandine).
+// disparaissait/réapparaissait à chaque lettre (clignotement signalé par la gérante).
 // Après : on met à jour SEULEMENT la div #clBody (filtres+liste+pagination),
 // l'input reste le même DOM element donc le clavier ne se ferme jamais.
 // FIX 2026-05-15 : debounce 150ms — évite le re-render à chaque keystroke
@@ -24497,7 +24497,7 @@ function chooseGiftThemeAncien(gcId){
   document.getElementById("modal").innerHTML=h;
 }
 
-// === Bon cadeau "texte seul" pour les bons pre-imprimes 21x9,5 (Excellence) ===
+// === Bon cadeau "texte seul" pour les bons pre-imprimes 21x9,5 (l'établissement pilote) ===
 // Imprime uniquement les valeurs (pre-remplies depuis la carte) + reference + QR,
 // positionnees pour tomber sur le bon physique. Calage X/Y reglable et memorise.
 function printGiftTexteSeul(gcId){
@@ -24831,7 +24831,7 @@ function printGiftThemed(gcId,themeId){
   // _mutedColor : couleur des textes SECONDAIRES (sous-titre, "N°", "Valable
   // jusqu'au", message). Avant on utilisait t.soft = pastel transparent qui
   // se confondait avec le fond pastel sur les thèmes clairs (le user a vu
-  // "BY AMANDINE J" + "Valable jusqu'au" quasi invisibles sur Bonne Fête Maman).
+  // "BY PRÉNOM N" + "Valable jusqu'au" quasi invisibles sur Bonne Fête Maman).
   // Maintenant : blanc cassé translucide sur sombre, gris foncé translucide
   // sur clair (rgba(0,0,0,.55) sur fond pastel rose/vert/jaune = bon contraste).
   var _sousColor = _gcDark ? "rgba(255,255,255,.55)" : "rgba(0,0,0,.55)";
@@ -28840,7 +28840,7 @@ function rStats(){
       sv2+="<text x=\""+cx+"\" y=\""+(cy-2)+"\" text-anchor=\"middle\" font-size=\"13\" font-weight=\"900\" fill=\"#fff\">"+_ttc+" \u20ac TTC</text>";
       sv2+="<text x=\""+cx+"\" y=\""+(cy+14)+"\" text-anchor=\"middle\" font-size=\"10\" font-weight=\"500\" fill=\"#fff\" opacity=\"0.7\">"+_ht+" \u20ac HT</text>";
     } else {
-      // Franchise TVA (Excellence en auto-entrepreneur) : un seul chiffre
+      // Franchise TVA (l'établissement pilote en auto-entrepreneur) : un seul chiffre
       sv2+="<text x=\""+cx+"\" y=\""+(cy+6)+"\" text-anchor=\"middle\" font-size=\"14\" font-weight=\"900\" fill=\"#fff\">"+total.toFixed(2)+" \u20ac</text>";
     }
     sv2+="</svg>";
@@ -29337,7 +29337,7 @@ function rStats(){
   // 12. Taux de remplissage
   // FIX 2026-05-13 v2 : it\u00e8re sur TOUS les jours de la p\u00e9riode (df \u2192 dt),
   // pas seulement ceux avec un RDV "done". Avant, un jour sans client mais
-  // o\u00f9 Amandine et Manue \u00e9taient ouvertes n'\u00e9tait pas compt\u00e9 dans la dispo,
+  // o\u00f9 la gérante et une collaboratrice \u00e9taient ouvertes n'\u00e9tait pas compt\u00e9 dans la dispo,
   // ce qui faussait gravement le taux (ex: 7h dispo affich\u00e9es au lieu de
   // 64h/semaine r\u00e9els). Maintenant on calcule la dispo pour chaque jour
   // calendaire de la p\u00e9riode, puis on agr\u00e8ge l'occupation des RDV done.
@@ -34067,7 +34067,7 @@ function doApplyTkRemise(type){
 // → UX rapide pour cas simple (1 clic = 1 paiement = full montant)
 // Le rendu monnaie pour espèces se gère ensuite via input inline dans le récap.
 // 2026-10-11 : la remise fidélité au seuil était proposée À LA FIN (bouton Encaisser), APRÈS la saisie du
-// règlement -> ticket 2079 Excellence Coiffure : CB 32 € saisie puis remise 10 % -> ticket 28,80 €, CB 32 €.
+// règlement -> un ticket de l'établissement pilote : CB 32 € saisie puis remise 10 % -> ticket 28,80 €, CB 32 €.
 // Désormais la décision fidélité est demandée AVANT le premier règlement. Retourne true si interception.
 function _lxFidAvantReglement(suite){
   try{
@@ -35070,7 +35070,7 @@ function _doFinalPayExecuteSync(method){
   // sur le bouton de validation du paiement appelle doFinalPayExecute() 2 fois.
   // Les 2 appels incr\u00e9mentent tkN, cr\u00e9ent 2 entr\u00e9es dans AP, font 2 INSERTs en
   // DB (appointments table) \u2014 le ticket DB est prot\u00e9g\u00e9 par UNIQUE(num,salon)
-  // mais appointments ne l'est pas. Cas r\u00e9el rencontr\u00e9 2026-05-04 sur Excellence
+  // mais appointments ne l'est pas. Cas r\u00e9el rencontr\u00e9 2026-05-04 sur l'établissement pilote
   // Coiffure : 6 entr\u00e9es appointments pour 3 vraies ventes, cl\u00f4ture Z #18
   // a compt\u00e9 6 tickets au lieu de 3 (298\u20ac au lieu de 149\u20ac).
   if(window._payingInProgress){
@@ -35252,7 +35252,7 @@ function _doFinalPayExecuteSync(method){
 
   // === Option B : si RDV lié (groupé), le marquer aussi done + lui lier le ticket ===
   // FIX 2026-05-15 : check défensif AVANT de marquer le 2ème done.
-  // Bug du 15/05 (Muller Murielle) : Amandine a supprimé les items du 2ème dans le panier
+  // Bug du 15/05 (une cliente) : la gérante a supprimé les items du 2ème dans le panier
   // pour n'encaisser que le 1er, MAIS le code marquait quand même le 2ème done (perte CA).
   // Now : si le panier final ne contient AUCUN item du 2ème client (séparateur retiré OU
   // tous les items après séparateur supprimés), on annule le linkedApptId.
@@ -35533,11 +35533,11 @@ function askFicheTech(cId){
 }
 
 // FIX 2026-05-17 nuit : attribution correcte du collab fiche tech
-// Avant : sty=T[0] toujours (= Amandine propri\u00e9taire) \u2192 bug Manue marqu\u00e9e Amandine
+// Avant : sty=T[0] toujours (= la gérante propri\u00e9taire) \u2192 bug une collaboratrice marqu\u00e9e la gérante
 // Maintenant : 1) CURRENT_OPERATOR (qui est connect\u00e9(e)) si dans la liste collab
 //              2) sinon _tk.stId (collab du ticket en cours si caisse ouverte)
 //              3) sinon T[0]
-// + S\u00e9lecteur dans la modal pour changer manuellement (cas Amandine connect\u00e9e mais Manue fait la presta)
+// + S\u00e9lecteur dans la modal pour changer manuellement (cas la gérante connect\u00e9e mais une collaboratrice fait la presta)
 // La fiche technique doit refléter QUI A FAIT LA PRESTATION (peut être différent de qui encaisse).
 // Ordre de priorité :
 //   1) _tk.stId : collab du ticket/RDV en cours = celui qui a réalisé la presta ← PRIORITÉ
@@ -38173,7 +38173,7 @@ async function sendSmsNative(phone,message,context,clientNom){
       var _mR=/LX_HORS_CRENEAU/.test(_mE)?{error:"hors_creneau",message:LX_SMS_PUB_REGLE}
             :/LX_STOP/.test(_mE)?{error:"stop",message:"Ce client a demand\u00e9 l'arr\u00eat des SMS publicitaires (Stop SMS)"}
             :/LX_SANS_LIEN/.test(_mE)?{error:"sans_lien",message:"SMS publicitaire non envoy\u00e9 : num\u00e9ro absent du fichier clients (lien de d\u00e9sinscription impossible)"}
-            :/LX_SANS_CONSENTEMENT/.test(_mE)?{error:"sans_consentement",message:"SMS publicitaire non envoy\u00e9 : ce client n'a pas accept\u00e9 les SMS"}:null; // 2026-10-17 (sms_libre)
+            :/LX_SANS_CONSENTEMENT/.test(_mE)?{error:"sans_consentement",message:"SMS publicitaire non envoy\u00e9 : ce client a refus\u00e9 les SMS publicitaires ou tous les SMS (le refus des offres seules ne coupe pas ses rappels de rendez-vous)"}:null; // 2026-10-17 (sms_libre)
       if(_mR){ auditLog("SMS_REFUS_NATIVE","T\u00e9l: ..."+cleanPhone.slice(-4)+" - "+_mR.error); return{ok:false,error:_mR.error,message:_mR.message}; }
       console.error("[SMS Native] Queue insert error:",insertRes.error);
       auditLog("SMS_ERREUR_NATIVE","T\u00e9l: ..."+cleanPhone.slice(-4)+" - "+insertRes.error.message);
@@ -44967,7 +44967,7 @@ function refreshCurrentView(){
 })();
 
 // === CHANTIER 2 — PUSH SALON — RESTAURÉ 2026-05-18 nuit ===
-// Les salons (Amandine etc.) reçoivent push pour : nouveau RDV en ligne, nouvel
+// Les salons (la gérante etc.) reçoivent push pour : nouveau RDV en ligne, nouvel
 // avis, bon cadeau acheté, message support. Critique business.
 window.VAPID_PUBLIC_KEY='BAg80uDJxWmu1ltDdXbiQbAFEUXn4v5bfNRVbvT1jRh07y29Opxqksn8MeomA-3K-AhVwzxqVXM_UetPDpy2vaI';
 function _urlB64ToU8(b64){var pad='='.repeat((4-b64.length%4)%4);var s=(b64+pad).replace(/-/g,'+').replace(/_/g,'/');var raw=atob(s),out=new Uint8Array(raw.length);for(var i=0;i<raw.length;i++)out[i]=raw.charCodeAt(i);return out;}
@@ -45199,7 +45199,7 @@ async function maybeShowPushBanner(){
     // FIX 2026-08-30 : la banniere etait masquee DEFINITIVEMENT au premier refus ou
     // a la premiere activation. Consequence : un salon dont plus aucun appareil n'est
     // abonne ne recoit plus rien et n'en est jamais averti. Constate ce soir — le
-    // telephone d'Amandine n'avait aucun abonnement, sans aucun signal dans l'app.
+    // telephone de la gérante n'avait aucun abonnement, sans aucun signal dans l'app.
     // On repropose donc si PLUS AUCUN appareil du salon n'est abonne.
     if(_masquee){
       try{
