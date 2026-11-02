@@ -417,12 +417,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261102-5"></script>
+<script src="luxyra-supabase.js?v=20261102-6"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261102-5";
+  var attendu="20261102-6";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -12978,7 +12978,8 @@ function rPlanning(){
                   h+='<div class="pg-block" data-aid="'+a.id+'"'+(a.isOnline?' data-nodrag="1"':'')+' style="top:'+topPx+'px;height:'+Math.max(hPx-2,SLOT_H-2)+'px;left:'+leftPct+'%;width:'+(colW-1)+'%;background:'+(a.isOnline?'rgba(108,92,231,.35)':phColors1.bg)+';border-color:'+(a.isOnline?'#7c6dd8':phColors1.border)+';color:'+(a.isOnline?'#2d1b69':phColors1.text)+'" onclick="showRdvPopup(\''+a.id+'\',event)" ondblclick="hideRdvPopup();clickAppt(\''+a.id+'\')">';
                   h+='<div class="pb-name">'+apptClientLabelH(a)+'</div>';
                   h+='<div class="pb-svc">'+((ph&&ph.l)||(sv?sv.n:""))+'</div>';
-                  h+='<div class="pb-svc" style="opacity:.7">'+ph.l+' \u2022 '+a.time+'\u2192'+_endTime1+'</div>';
+                  if(aPhases.length>1) h+='<div class="pb-svc lx-et-h" style="font-weight:800">'+frM(cur)+' \u2192 '+frM(cur+ph.d)+'</div>';
+                  else h+='<div class="pb-svc" style="opacity:.7">'+ph.l+' \u2022 '+a.time+'\u2192'+_endTime1+'</div>';
                   // Badge statut texte (identique au mono-jour) si la place le permet
                   if(hPx>=50){
                     if(a.isOnline&&a.st!=="done"&&(function(){var _r=_lxRdvOnlineDe(a);return _r&&_r.status==="pending";})()) h+='<div class="pb-badge" style="background:rgba(255,152,0,.9);color:#111">\u23f3 \u00c0 valider</div>';
@@ -12989,7 +12990,7 @@ function rPlanning(){
                   }
                   h+='</div>';
                 } else {
-                  h+='<div class="pg-pause" style="top:'+topPx+'px;height:'+Math.max(hPx-2,10)+'px;left:0;width:100%;opacity:.3;pointer-events:none;font-size:8px">\u23f8</div>';
+                  h+='<div class="pg-pause" style="top:'+topPx+'px;height:'+Math.max(hPx-2,10)+'px;left:0;width:100%;opacity:.3;pointer-events:none;font-size:8px" title="Pause '+frM(cur)+' \u2192 '+frM(cur+ph.d)+'">\u23f8</div>';
                 }
                 cur+=ph.d;
               }
@@ -13020,9 +13021,59 @@ function rPlanning(){
   return h;
 }
 
+// 02/11/2026 (demande O'R STUDIO, maquette validée) : pause d'un forfait au planning = zone touchable
+// qui ouvre « Nouveau rendez-vous » à l'heure exacte du début du temps libre, collaborateur choisi.
+window._lxPauseZ = window._lxPauseZ || {};
+// Premier intervalle libre [deb, fin) dans la pause [pS, pE) en retirant les étapes de travail des autres RDV du collaborateur.
+function _lxPauseLibre(pS, pE, travaux, aPropre){
+  var iv=(travaux||[]).filter(function(w){ return w && w.a!==aPropre && w.start<pE && w.end>pS; })
+    .map(function(w){ return [w.start,w.end]; }).sort(function(x,y){ return x[0]-y[0]; });
+  var deb=pS;
+  for(var i=0;i<iv.length;i++){ if(iv[i][0]<=deb && iv[i][1]>deb) deb=iv[i][1]; }
+  if(deb>=pE) return null;
+  var fin=pE;
+  for(var j=0;j<iv.length;j++){ if(iv[j][0]>=deb && iv[j][0]<fin) fin=iv[j][0]; }
+  return (fin-deb>=5)?{deb:deb,fin:fin}:null;
+}
+function _lxPauseHTML(a, sty, dk, pS, pE, topPx, hPx, travaux, cl){
+  var dom=(a.lieu==="domicile");
+  var lib=dom?null:_lxPauseLibre(pS, pE, travaux, a);
+  var hh=Math.max(hPx-2,10);
+  if(!lib){
+    // Domicile (la personne est chez le client) ou pause déjà occupée : affichage seul, comme avant
+    return '<div class="pg-pause" style="top:'+topPx+'px;height:'+hh+'px;left:0;width:100%;opacity:.4;pointer-events:none;flex-direction:column;line-height:1.2" title="Pause '+frM(pS)+' → '+frM(pE)+'">⏸ '+(dom?'Pause (domicile)':((cl?cNameH(cl).split(" ")[0]:"")+" "+(pE-pS)+'min'))+(hh>=26?'<span style="font-size:9px;font-weight:600">'+frM(pS)+' → '+frM(pE)+'</span>':'')+'</div>';
+  }
+  var k="p"+(++window._lxPauseSeq);
+  window._lxPauseZ[k]={stId:sty.id, dk:dk, deb:lib.deb, fin:lib.fin, cli:apptClientLabel(a)||""};
+  var x='<div class="pg-pause lx-pause-ok" data-pz="'+k+'" style="top:'+topPx+'px;height:'+hh+'px;left:0;width:100%;pointer-events:auto;cursor:pointer;flex-direction:column;line-height:1.2;background:repeating-linear-gradient(135deg,rgba(200,168,78,.16),rgba(200,168,78,.16) 5px,rgba(200,168,78,.04) 5px,rgba(200,168,78,.04) 10px);border:1.5px dashed var(--gold);color:#8a6d1f" onclick="event.stopPropagation();lxPauseClic(\''+k+'\')" title="Pause '+frM(pS)+' → '+frM(pE)+' : toucher pour placer un rendez-vous">';
+  x+='<span style="font-weight:800;font-size:11px">⏸ Pause</span>';
+  if(hh>=26) x+='<span style="font-size:10px;font-weight:700">'+frM(pS)+' → '+frM(pE)+'</span>';
+  if(hh>=48) x+='<span style="margin-top:3px;background:var(--gold);color:#111;border-radius:6px;padding:1px 7px;font-weight:800;font-size:10px">＋ RDV ici</span>';
+  return x+'</div>';
+}
+window._lxPauseSeq = window._lxPauseSeq || 0;
+function lxPauseClic(k){
+  var z=window._lxPauseZ&&window._lxPauseZ[k]; if(!z) return;
+  if(window._pending2ndRdv){ clickSlot(z.stId, frM(z.deb), z.dk); return; } // placement d'un 2e RDV en cours : même chemin qu'un créneau
+  window._savedCalD=new Date(calD.getTime()); window._savedPlanDays=window._planDays;
+  calD=new Date(z.dk+'T12:00:00');
+  window._lxPauseCtx={stId:z.stId, dk:z.dk, time:frM(z.deb), deb:z.deb, fin:z.fin, cli:z.cli};
+  oM("appt",{stId:z.stId, time:frM(z.deb), pause:true});
+}
+// Contexte « pause » encore valable pour le formulaire ouvert (même date, heure et collaborateur) ?
+function _lxPauseCtxActif(){
+  var c=window._lxPauseCtx; if(!c) return null;
+  var md=document.getElementById("md"), mt=document.getElementById("mt"), ms=document.getElementById("mst");
+  if(!md||!mt) return null;
+  if(md.value!==c.dk || mt.value!==c.time) return null;
+  if(ms && String(ms.value)!==String(c.stId)) return null;
+  return c;
+}
+
 function rPlanningDay(dateObj,showDayHeader){
   // FIX 2026-07-13 : filet — un RDV en ligne "sans préférence" ne doit JAMAIS rester sans colonne (invisible).
   try{ if(typeof _lxFixOnlineStId==="function") _lxFixOnlineStId(); }catch(_e){}
+  try{ if(Object.keys(window._lxPauseZ||{}).length>3000) window._lxPauseZ={}; }catch(_e){} // zones « pause » touchables (borne mémoire)
   var dk=dS(dateObj),dow=dateObj.getDay();
   var h='';
   if(showDayHeader){
@@ -13181,6 +13232,9 @@ function rPlanningDay(dateObj,showDayHeader){
         }
         _fusedPhases.push({t:_fph.t, d:Number(_fph.d)||0, l:_fph.l, sId:_fph.sId, _owner:_fOwner});
       }
+      // 02/11/2026 (maquette validée) : RDV à plusieurs étapes -> chaque étape affiche SES heures ; la dernière rappelle le forfait entier
+      var _multiEt=_fusedPhases.length>1, _derW=-1;
+      for(var _dw=0;_dw<_fusedPhases.length;_dw++){ if(_fusedPhases[_dw].t==="w") _derW=_dw; }
       for(var pi=0;pi<_fusedPhases.length;pi++){
         var ph=_fusedPhases[pi];
         var _phOwner=ph._owner;
@@ -13205,7 +13259,10 @@ function rPlanningDay(dateObj,showDayHeader){
           h+='<div class="pg-block" data-aid="'+a.id+'" data-stid="'+sty.id+'"'+(a.isOnline?' data-nodrag="1"':'')+' style="'+_borderStyle+'top:'+topPx+'px;height:'+Math.max(hPx-2,SLOT_H-2)+'px;left:'+leftPct+'%;width:'+(colW-1)+'%;background:'+(a.isOnline?'rgba(108,92,231,.35)':phColors.bg)+';border-color:'+(a.isOnline?'#7c6dd8':phColors.border)+';color:'+(a.isOnline?'#2d1b69':phColors.text)+'" onclick="showRdvPopup(\''+a.id+'\',event)" ondblclick="hideRdvPopup();clickAppt(\''+a.id+'\')">';
           h+='<div class="pb-name">'+apptClientLabelH(a)+'</div>';
           h+='<div class="pb-svc">'+((ph&&ph.l)||(sv?sv.n:""))+'</div>';
-          h+='<div class="pb-svc" style="opacity:.7">'+ph.l+' \u2022 '+a.time+'\u2192'+endTime+'</div>';
+          if(_multiEt){
+            h+='<div class="pb-svc lx-et-h" style="font-weight:800">'+frM(cur)+' \u2192 '+frM(cur+ph.d)+'</div>';
+            if(pi===_derW) h+='<div class="pb-svc lx-et-forfait" style="opacity:.55;font-size:10px">Forfait '+a.time+' \u2192 '+endTime+'</div>';
+          } else h+='<div class="pb-svc" style="opacity:.7">'+ph.l+' \u2022 '+a.time+'\u2192'+endTime+'</div>';
           if(hPx>=50){
             if(_isDirect)h+='<div class="pb-badge" style="background:rgba(255,193,7,.2);color:#ffc107;font-weight:700">\ud83d\udcb3 Encaiss\u00e9 direct</div>';
             else if(a.isOnline&&a.st!=="done"&&(function(){var _r=_lxRdvOnlineDe(a);return _r&&_r.status==="pending";})())h+='<div class="pb-badge" style="background:rgba(255,152,0,.9);color:#111">\u23f3 \u00c0 valider</div>';
@@ -13216,7 +13273,7 @@ function rPlanningDay(dateObj,showDayHeader){
           }
           h+='</div>';
         }else{
-          h+='<div class="pg-pause" style="top:'+topPx+'px;height:'+Math.max(hPx-2,10)+'px;left:0;width:100%;opacity:.4;pointer-events:none">\u23f8 '+(cl?cNameH(cl).split(" ")[0]:"")+" "+ph.d+'min</div>';
+          h+=_lxPauseHTML(a, sty, dk, cur, cur+ph.d, topPx, hPx, allWork, cl);
         }
         cur+=ph.d;
       }
@@ -29503,6 +29560,13 @@ function oM(type,pf){
     h+='<div style="flex:1"><div style="font-weight:800;font-size:14px;color:#fff">'+(pSty?pSty.n:"")+'</div>';
     h+='<div style="font-size:12px;color:rgba(255,255,255,.5)">'+dayLabel+' \u00e0 '+preTime+'</div></div>';
     h+='<div style="font-size:10px;color:rgba(255,255,255,.3)">Modifiable ci-dessous</div></div>';
+    // 02/11/2026 (maquette validée) : ouvert depuis la pause d'un forfait -> bandeau « libre de … à … »
+    if(!pf.pause) window._lxPauseCtx=null;
+    var _pzc=pf.pause?window._lxPauseCtx:null;
+    if(_pzc){
+      var _hFr=function(m){ return Math.floor(m/60)+"h"+String(m%60).padStart(2,"0"); };
+      h+='<div id="lxPauseBandeau" style="background:rgba(212,168,67,.1);border:1px solid rgba(212,168,67,.45);border-radius:10px;padding:9px 12px;font-size:13px;line-height:1.45;color:#f3d98a;margin-bottom:12px">\u23f8 Pendant la pause'+(_pzc.cli?' de <b>'+_lxH(_pzc.cli)+'</b>':'')+' : libre de <b>'+_hFr(_pzc.deb)+' \u00e0 '+_hFr(_pzc.fin)+'</b> ('+(_pzc.fin-_pzc.deb)+' min max).</div>';
+    }
     
     // HEADER: Informations client
     h+='<div style="background:var(--gold);color:#fff;text-align:center;padding:8px;border-radius:12px 12px 0 0;font-size:13px;font-weight:700;letter-spacing:1px">INFORMATIONS CLIENT</div>';
@@ -30205,12 +30269,16 @@ function pickRdvCat(cat){
   // Show services for this category (02/11/2026 : seulement le type choisi — Services ou Forfaits)
   var svcs=SVC.filter(function(s){return s.cat===cat && _rdvDuType(s);});
   var h='<div style="font-size:13px;color:var(--text3);margin-bottom:6px">Prestations \u2014 '+cat+'</div>';
+  // 02/11/2026 (maquette validée) : ouvert depuis une pause -> en vert ce qui tient dans le temps libre, le reste grisé (toujours sélectionnable)
+  var _pz=(typeof _lxPauseCtxActif==="function")?_lxPauseCtxActif():null, _pzMax=_pz?(_pz.fin-_pz.deb):0;
+  if(_pz) h+='<div style="font-size:11px;color:var(--text3);margin:-2px 0 6px">En vert : tient dans la pause ('+_pzMax+' min).</div>';
   h+='<div style="max-height:200px;overflow-y:auto;border:1px solid var(--border2);border-radius:8px">';
   for(var i=0;i<svcs.length;i++){
     var s=svcs[i];
-    h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid var(--border2);cursor:pointer" onclick="pickRdvSvc('+s.id+')">';
+    var _dS=svcTotalDur(s), _tient=_pz?(_dS>0&&_dS<=_pzMax):null;
+    h+='<div class="rdv-svc-l'+(_pz?(_tient?' lx-pz-ok':' lx-pz-ko'):'')+'" style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid var(--border2);cursor:pointer'+(_pz?(_tient?';border-left:4px solid #4caf50;background:rgba(76,175,80,.08)':';opacity:.45'):'')+'" onclick="pickRdvSvc('+s.id+')">';
     h+='<div><div style="font-weight:700;font-size:14px">'+s.n+'</div>';
-    h+='<div style="font-size:11px;color:var(--text3)">'+svcTotalDur(s)+' min</div></div>';
+    h+='<div style="font-size:11px;color:'+(_pz&&_tient?'#4caf50':'var(--text3)')+'">'+_dS+' min'+(_pz?(_tient?' \u2022 tient dans la pause':' \u2022 d\u00e9passe la pause'):'')+'</div></div>';
     h+='<div style="font-weight:800;font-family:var(--f1);color:var(--gold)">'+s.p+'\u20ac</div></div>';
   }
   h+='</div>';
