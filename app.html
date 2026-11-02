@@ -417,12 +417,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261102-10"></script>
+<script src="luxyra-supabase.js?v=20261102-11"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261102-10";
+  var attendu="20261102-11";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -12794,7 +12794,31 @@ async function lxRefreshPlanning(btn){
   }catch(e){ console.warn("refresh planning:",e); }
   try{ if(typeof go==="function") go("planning"); }catch(_e){}
 }
+// 02/11/2026 (O'R STUDIO) : MÊME sélection des RDV d'un jour pour la vue 1 jour et la vue plusieurs jours.
+// Avant, la vue plusieurs jours excluait les encaissements directs en caisse (fromCaisse) : un RDV visible
+// en vue 1 jour disparaissait en vue plusieurs jours.
+function _lxPlanRdvDuJour(dk){
+  return AP.filter(function(a){
+    if(a.date!==dk) return false;
+    if(a.st==="canc"||a.st==="cancelled"||a.st==="pause") return false;
+    if(a.cancelled) return false;
+    // FIX 2026-07-11 : un contre-ticket d annulation (isCancel, montant negatif, sans phases) est
+    // un ENREGISTREMENT FISCAL, pas un rendez-vous -> pas de bloc (0 min) au planning.
+    if(_lxIsContraTicket(a)) return false;
+    // Exclure les tickets done sans service (pas de durée à représenter, ex: vente produit pure)
+    if(a.st==="done" && !a.sId && (!a.aPhases||!a.aPhases.length) && (!a.items||!a.items.length)) return false;
+    // Vente directe sans aucune prestation (produits, bon cadeau, carte...) -> rien au planning
+    if(a.fromCaisse && (!a.aPhases||!a.aPhases.length) && _lxDureeTicketDirect(a)<=0) return false;
+    return true;
+  }).sort(function(a,b){return a.time<b.time?-1:1});
+}
+// Étapes affichées d'un RDV au planning (même règle que la vue 1 jour)
+function _lxPlanPhases(a){
+  var sv=gS(a.sId);
+  return (a.aPhases&&a.aPhases.length)?a.aPhases:((a.fromCaisse&&_lxPhasesTicketDirect(a))||(sv?sv.phases:null));
+}
 function rPlanning(){
+  window._lxPauseZ={}; // 02/11/2026 : zones de pause du rendu en cours seulement (pas d'anciennes zones périmées)
   var nd=window._planDays||1;
   var dk=dS(calD),dow=calD.getDay();
   var label=DF[dow]+" "+calD.getDate()+" "+MO[calD.getMonth()];
@@ -12890,6 +12914,16 @@ function rPlanning(){
     var mGridH=mTotalSlots*SLOT_H;
     // NF525: filtered stylists list based on operator permissions
     var _visT=(typeof getVisibleStylists==="function")?getVisibleStylists():T;
+    // 02/11/2026 : même règle que la vue 1 jour -> un ancien collaborateur garde une colonne s'il a des RDV
+    // sur l'un des jours affichés (sinon ses RDV disparaissaient en vue plusieurs jours).
+    try{
+      var _actifsM=(typeof getActiveTeam==="function")?getActiveTeam():T;
+      if(_actifsM.every(function(t){ return _visT.indexOf(t)>=0; })){
+        var _rdvM=[]; daysToShow.forEach(function(_d){ _rdvM=_rdvM.concat(_lxPlanRdvDuJour(dS(_d))); });
+        _visT=_visT.slice();
+        T.forEach(function(t){ if(_visT.indexOf(t)<0 && _rdvM.some(function(a){ return a.stId===t.id; })) _visT.push(t); });
+      }
+    }catch(_eM){}
 
     h+='<div class="pg-wrap"><div style="display:flex;width:100%">';
     // Time column
@@ -12904,7 +12938,7 @@ function rPlanning(){
       var exceptLabel=getExceptLabel(ddk);
       var isToday=ddk===TD;
       var dayLbl=DF[ddow].slice(0,3)+". "+dd.getDate()+"/"+(dd.getMonth()+1);
-      var dayApts=AP.filter(function(a){return a.date===ddk&&a.st!=="canc"&&a.st!=="cancelled"&&!a.cancelled&&a.st!=="pause"&&!a.fromCaisse}).sort(function(a,b){return a.time<b.time?-1:1}); // 2026-10-14 audit
+      var dayApts=_lxPlanRdvDuJour(ddk); // 02/11/2026 : même sélection que la vue 1 jour (encaissements directs compris)
 
       // Day group - each stylist sub-col is flex:1, so use _visT.length sub-cols for open days
       // For closed days, use _visT.length sub-cols too (merged visually) to keep same width
@@ -12951,17 +12985,20 @@ function rPlanning(){
           } else {
             for(var s=0;s<mTotalSlots;s++){var m=mgs+s*SLOT;var hh=Math.floor(m/60),mm=m%60;var isH=mm===0;var tm=String(hh).padStart(2,"0")+":"+String(mm).padStart(2,"0");h+='<div style="height:'+SLOT_H+'px" class="pg-slot'+(isH?' hr':'')+'" data-time="'+tm+'" onclick="clickSlot('+sty.id+',\''+tm+'\',\''+ddk+'\')"></div>';}
             var allWork=[];
-            for(var j=0;j<sa.length;j++){var blocks=getWorkBlocks(sa[j]);blocks.forEach(function(b){allWork.push(b);});}
+            // 02/11/2026 : mêmes étapes que la vue 1 jour (étapes de CE collaborateur, encaissements directs compris)
+            for(var j=0;j<sa.length;j++){(function(_a){var _ph=_lxPlanPhases(_a);
+              if(!_ph||!_ph.length){if(_a.stId===sty.id){var _sv=gS(_a.sId),_d=_sv?svcTotalDur(_sv):30;allWork.push({start:toM(_a.time),end:toM(_a.time)+(_d||30),a:_a});}return;}
+              var _c=toM(_a.time);for(var _i=0;_i<_ph.length;_i++){var _p=_ph[_i];if(_p.t==="w"&&(_p.stId||_a.stId)===sty.id)allWork.push({start:_c,end:_c+_p.d,a:_a,label:_p.l});_c+=_p.d;}})(sa[j]);}
             var laid=layoutBlocks(allWork);
             // Étapes de travail de CE collaborateur (phases déléguées comprises), pour le temps libre des pauses
             var _lxPwMD=[];
-            for(var j=0;j<sa.length;j++){(function(_a){var _sv=gS(_a.sId),_ph=(_a.aPhases&&_a.aPhases.length)?_a.aPhases:(_sv?_sv.phases:null);
+            for(var j=0;j<sa.length;j++){(function(_a){var _sv=gS(_a.sId),_ph=_lxPlanPhases(_a);
               if(!_ph||!_ph.length){if(_a.stId===sty.id){var _d=_sv?svcTotalDur(_sv):30;_lxPwMD.push({start:toM(_a.time),end:toM(_a.time)+(_d||30),a:_a});}return;}
               var _c=toM(_a.time);for(var _i=0;_i<_ph.length;_i++){var _p=_ph[_i];if(_p.t==="w"&&(_p.stId||_a.stId)===sty.id)_lxPwMD.push({start:_c,end:_c+_p.d,a:_a});_c+=_p.d;}})(sa[j]);}
             for(var j=0;j<sa.length;j++){
               var a=sa[j],sv=gS(a.sId),cl=gC(a.cId);
               var colors=getSvcColor(sv?sv.cat:"Coupe");
-              var aPhases=a.aPhases||(sv?sv.phases:null);
+              var aPhases=_lxPlanPhases(a);
               if(!aPhases||!aPhases.length){var defDur=sv?svcTotalDur(sv):30;if(defDur<=0)defDur=30;aPhases=[{t:"w",d:defDur,l:sv?sv.n:"RDV"}];}
               var startM=toM(a.time),cur=startM;
               var _totalDur1=0;aPhases.forEach(function(p){_totalDur1+=p.d;});
@@ -13078,12 +13115,14 @@ function _lxPauseHTML(a, sty, dk, pS, pE, topPx, hPx, travaux, cl, compact){
   return x+'</div>';
 }
 window._lxPauseSeq = window._lxPauseSeq || 0;
-function lxPauseClic(k, ev){
+function lxPauseClic(k, ev, mAt){
   var z=window._lxPauseZ&&window._lxPauseZ[k]; if(!z) return;
   try{ if(typeof hideRdvPopup==="function") hideRdvPopup(); }catch(_e){}
   window._lxHorsHorairesOkTime=null;
   // Trou sous le doigt (sinon le premier trou libre d'au moins 5 min)
   var t0={deb:z.deb, fin:z.fin};
+  // Ouvert depuis une case de la grille (mAt = minute de la case) : trou qui contient cette minute, sinon le suivant
+  if(mAt!=null && z.trous && z.trous.length){ for(var _j=0;_j<z.trous.length;_j++){ if(mAt<z.trous[_j].fin){ t0=z.trous[_j]; break; } } }
   try{
     if(ev && ev.currentTarget && z.trous && z.trous.length>1){
       var r=ev.currentTarget.getBoundingClientRect(), y=(ev.clientY||0)-r.top;
@@ -13164,19 +13203,7 @@ function rPlanningDay(dateObj,showDayHeader){
   }
   // Inclut maintenant les tickets caisse directs (fromCaisse=true) pour visualiser l'occupation
   // Exclus uniquement : annulés, pauses, et tickets done sans sId+sans aPhases (purs produits sans durée)
-  var dayA=AP.filter(function(a){
-    if(a.date!==dk) return false;
-    if(a.st==="canc"||a.st==="pause") return false;
-    if(a.cancelled) return false;
-    // FIX 2026-07-11 : un contre-ticket d annulation (isCancel, montant negatif, sans phases) est
-    // un ENREGISTREMENT FISCAL, pas un rendez-vous -> pas de bloc (0 min) au planning.
-    if(_lxIsContraTicket(a)) return false;
-    // Exclure les tickets done sans service (pas de durée à représenter, ex: vente produit pure)
-    if(a.st==="done" && !a.sId && (!a.aPhases||!a.aPhases.length) && (!a.items||!a.items.length)) return false;
-    // Vente directe sans aucune prestation (produits, bon cadeau, carte...) -> rien au planning
-    if(a.fromCaisse && (!a.aPhases||!a.aPhases.length) && _lxDureeTicketDirect(a)<=0) return false;
-    return true;
-  }).sort(function(a,b){return a.time<b.time?-1:1});
+  var dayA=_lxPlanRdvDuJour(dk);
   if(!hrs){
     var exceptMsg=getExceptLabel(dk);
     h+='<div class="card" style="text-align:center;padding:20px"><div style="font-size:28px;margin-bottom:6px">\ud83d\udeab</div><div style="font-family:var(--f1);color:'+(exceptMsg?'#e91e63':'var(--text2)')+';font-size:13px">'+(exceptMsg||'Ferm\u00e9 le '+DF[dow].toLowerCase())+'</div></div>';
@@ -13520,6 +13547,16 @@ function clickSlot(stId,time,date,force){
   if(window._pending2ndRdv && !force){
     _place2ndRdvAtSlot(stId, time, date);
     return;
+  }
+  // 02/11/2026 (O'R STUDIO) : une case de la grille qui tombe dans la pause libre d'un forfait de ce collaborateur
+  // ouvre la pause (heure exacte du temps libre, ex. 9h20) au lieu de l'heure arrondie de la grille (9h30 -> chevauchement).
+  if(!force){
+    try{
+      var _ck=null, _cdk=date||dS(calD), _ct=toM(time);
+      Object.keys(window._lxPauseZ||{}).forEach(function(k){ var z=window._lxPauseZ[k];
+        if(!_ck && z && String(z.stId)===String(stId) && z.dk===_cdk && _ct>=z.pS && _ct<z.pE && (z.trous||[]).some(function(t){ return _ct<t.fin; })) _ck=k; });
+      if(_ck){ lxPauseClic(_ck, null, _ct); return; }
+    }catch(_eP){}
   }
   // Save current view state to restore after RDV creation
   window._savedCalD=new Date(calD.getTime());
