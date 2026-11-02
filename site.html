@@ -158,7 +158,7 @@ window._lxEnsure=function(){
 };
 if(!window.LX){ try{ window._lxEnsure(); }catch(e){} }
 </script>
-<script src="https://js.stripe.com/v3/"></script>
+<!-- 02/11/2026 (conformité) : Stripe.js chargé seulement à l'étape de paiement (lxStripeCharger) -->
 <style>
 :root{--gold:#c8a84e;--gold-l:#e8d994;--bg:#0a0a0a;--bg2:#111;--bg3:#1a1a1e;--card-bg:linear-gradient(135deg,rgba(200,168,78,.035) 0%,rgba(255,255,255,.018) 50%,rgba(200,168,78,.025) 100%);--card-border:rgba(200,168,78,.12);--text:#f5f0e8;--text2:rgba(245,240,232,.6);--text3:rgba(245,240,232,.35);--green:#2d9a5e;--red:#c43838;--f1:'Playfair Display',serif;--f2:'Inter','Nunito','-apple-system','Segoe UI',sans-serif;--f3:'Cormorant Garamond',serif;--max:900px}
 *{margin:0;padding:0;box-sizing:border-box}html{scroll-behavior:smooth}
@@ -575,7 +575,21 @@ async function _lxFetchAcompteMode(email, tel){
 var SB_URL="https://kxdgjtvrkwugbifgppai.supabase.co";
 var SB_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt4ZGdqdHZya3d1Z2JpZmdwcGFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwNDE2NTgsImV4cCI6MjA4ODYxNzY1OH0.J3jVuoHSWA0wXyaWxiRzILEWVNr8hbbgVYg73UEDTuI";
 var sb=supabase.createClient(SB_URL,SB_KEY);
-var stripe=null;try{stripe=Stripe("pk_live_51TCS0KPk42Psx94TFs6cev5MA67bJtH7kOd5eBU1QQV8Qs9XQDz1SAnix1K4x9DOU6Qseb3fEap7eEfYGtRE7muk00hV4h1WVj");}catch(e){console.warn("Stripe not loaded",e);}
+var stripe=null;
+// 02/11/2026 (conformité) : Stripe.js n'est chargé qu'à l'étape de paiement (aucun appel à Stripe pour les simples visiteurs)
+var _lxStripeP=null;
+function lxStripeCharger(){
+  if(stripe) return Promise.resolve(stripe);
+  if(_lxStripeP) return _lxStripeP;
+  _lxStripeP=new Promise(function(ok,ko){
+    function init(){ try{ stripe=Stripe("pk_live_51TCS0KPk42Psx94TFs6cev5MA67bJtH7kOd5eBU1QQV8Qs9XQDz1SAnix1K4x9DOU6Qseb3fEap7eEfYGtRE7muk00hV4h1WVj"); ok(stripe); }catch(e){ ko(e); } }
+    if(typeof Stripe==="function") return init();
+    var sc=document.createElement("script"); sc.src="https://js.stripe.com/v3/"; sc.async=true;
+    sc.onload=init; sc.onerror=function(){ _lxStripeP=null; ko(new Error("Stripe indisponible")); };
+    document.head.appendChild(sc);
+  });
+  return _lxStripeP;
+}
 
 // Helper sécurisé : appelle un endpoint /api/client/* du worker.
 // Le worker valide le session_token JWT (issu de lx-login) puis utilise
@@ -1073,7 +1087,7 @@ async function loadSalon(){
     window._lxCfgJsonPublic = r.data && r.data[0] ? r.data[0].config_json : null; // réutilisé plus bas (plus de 2 relectures)
     if(!r.data||!r.data[0]){showError("Établissement introuvable ou fermé : il n'accepte plus de réservations en ligne.");return;}
     var s=r.data[0];
-    SALON={id:s.id,slug:s.slug||"",nom:s.nom||"Salon",sousTitre:s.sous_titre||"",adresse:s.adresse||"",cp:s.cp||"",ville:s.ville||"",tel:s.tel||s.telephone||"",email:s.email||"",siret:s.siret||"",logo:s.logo||"",config:s.config||{},connectId:s.stripe_connect_id||"",connectStatus:s.stripe_connect_status||"",metier:s.metier||"coiffure",latitude:s.latitude!==null&&s.latitude!==undefined?Number(s.latitude):null,longitude:s.longitude!==null&&s.longitude!==undefined?Number(s.longitude):null,note_moyenne:Number(s.note_moyenne)||0,nb_avis:Number(s.nb_avis)||0,mode_activite:s.mode_activite||"salon",zone_deplacement_km:s.zone_deplacement_km!=null?Number(s.zone_deplacement_km):0,frais_deplacement:s.frais_deplacement!=null?Number(s.frais_deplacement):0,frais_deplacement_type:s.frais_deplacement_type||"forfait",bons_cadeaux_online_actif:s.bons_cadeaux_online_actif===true};
+    SALON={id:s.id,slug:s.slug||"",nom:s.nom||"Salon",sousTitre:s.sous_titre||"",adresse:s.adresse||"",cp:s.cp||"",ville:s.ville||"",tel:s.tel||s.telephone||"",email:s.email||"",siret:s.siret||"",siren:s.siren||"",logo:s.logo||"",config:s.config||{},connectId:s.stripe_connect_id||"",connectStatus:s.stripe_connect_status||"",metier:s.metier||"coiffure",latitude:s.latitude!==null&&s.latitude!==undefined?Number(s.latitude):null,longitude:s.longitude!==null&&s.longitude!==undefined?Number(s.longitude):null,note_moyenne:Number(s.note_moyenne)||0,nb_avis:Number(s.nb_avis)||0,mode_activite:s.mode_activite||"salon",zone_deplacement_km:s.zone_deplacement_km!=null?Number(s.zone_deplacement_km):0,frais_deplacement:s.frais_deplacement!=null?Number(s.frais_deplacement):0,frais_deplacement_type:s.frais_deplacement_type||"forfait",bons_cadeaux_online_actif:s.bons_cadeaux_online_actif===true};
     try{ window.LX_SALON_PAGE={slug:SALON.slug,nom:SALON.nom,ville:SALON.ville}; if(window.lxClientRecent) window.lxClientRecent(window.LX_SALON_PAGE); }catch(_e){}
     // Canonicalisation URL : si arrivé via ?s=uuid et que le salon a un slug, bascule l'URL visible
     // FIX 2026-05-12 : préserver les params payment/rdv/order/cmd qui doivent être traités
@@ -2365,6 +2379,8 @@ function renderSite(){
       +'<a class="lxgp-badge" href="https://play.google.com/store/apps/details?id=fr.luxyra.client&amp;referrer='+_gpRef+'" target="_blank" rel="noopener" aria-label="Disponible sur Google Play">'
       +'<svg class="lxgp-tri" viewBox="0 0 30 33" width="26" height="29" aria-hidden="true" focusable="false"><path d="M1.5 1.6 14.2 16.5 1.5 31.4Z" fill="#00a0ff"/><path d="M1.5 1.6 20.3 11.7 14.2 16.5Z" fill="#00e676"/><path d="M20.3 11.7 28.6 16.5 20.3 21.3 14.2 16.5Z" fill="#ffc400"/><path d="M14.2 16.5 20.3 21.3 1.5 31.4Z" fill="#ff3d47"/></svg>'+'<span class="lxgp-bt"><small>DISPONIBLE SUR</small><b>Google Play</b></span></a></div>';
   }catch(_eGp){}
+  // 02/11/2026 (conformité) : mentions légales et information RGPD de l'établissement (LCEN art. 6-III, RGPD art. 13, C. conso L616-1)
+  h+='<br><a href="#" onclick="lxMentionsEtab();return false" style="color:var(--text3);text-decoration:underline;font-size:11px">Mentions l\u00e9gales et donn\u00e9es personnelles</a> \u00b7 <a href="/cgu" target="_blank" rel="noopener" style="color:var(--text3);text-decoration:underline;font-size:11px">Conditions</a>';
   h+='<br>Propuls\u00e9 par <a href=\"mailto:contact@luxyra.fr\" style=\"color:var(--gold);text-decoration:none\">Luxyra</a></div></div>';
   
   var rootEl=document.getElementById("root");if(rootEl)rootEl.innerHTML=h;
@@ -4283,6 +4299,10 @@ async function _lxSubmitWithStripeImpl(){
     // 02/11/2026 (conformité) : texte = politique d'annulation réelle (lxTexteEmpreinteHtml)
     h+='<label style="display:flex;align-items:flex-start;gap:8px;margin-top:10px;font-size:11px;color:rgba(255,255,255,.6);cursor:pointer"><input type="checkbox" id="empreinteAccept" style="margin-top:2px;flex-shrink:0"><span>'+lxTexteEmpreinteHtml(acompte)+'</span></label>';
   }
+  // 02/11/2026 (conformité, art. L221-25 C. conso) : rendez-vous avant la fin du délai de rétractation de 14 jours -> demande expresse
+  if(lxRdvDans14j(booking.date)){
+    h+='<label style="display:flex;align-items:flex-start;gap:8px;margin-top:10px;font-size:11px;color:rgba(255,255,255,.6);cursor:pointer"><input type="checkbox" id="retractAccept" style="margin-top:2px;flex-shrink:0"><span>Je demande que la prestation soit r\u00e9alis\u00e9e avant la fin du d\u00e9lai de r\u00e9tractation de 14 jours. Si je me r\u00e9tracte apr\u00e8s son d\u00e9but, je paierai la part d\u00e9j\u00e0 r\u00e9alis\u00e9e ; une fois la prestation enti\u00e8rement r\u00e9alis\u00e9e, je ne pourrai plus me r\u00e9tracter. <a href="/cgu#retractation" target="_blank" rel="noopener" style="color:var(--gold)">D\u00e9tails</a></span></label>';
+  }
   h+='</div>';
   h+='<div style="display:flex;gap:10px;margin-top:16px">';
   h+='<button class="btn btn-outline" onclick="renderBookingStep4()">\u25c0 Retour</button>';
@@ -4292,7 +4312,9 @@ async function _lxSubmitWithStripeImpl(){
   h+='</div>';
   
   document.getElementById("bookingFlow").innerHTML=h;
-  
+  var _btnP=document.getElementById("stripePayBtn"); if(_btnP) _btnP.disabled=true;
+  lxStripeCharger().then(function(){
+  if(_btnP) _btnP.disabled=false;
   var elements=stripe.elements({
     appearance:{
       theme:"night",
@@ -4305,6 +4327,9 @@ async function _lxSubmitWithStripeImpl(){
   window._stripeCard.mount("#stripeCardElement");
   window._stripeCard.on("change",function(ev){
     document.getElementById("stripeError").textContent=ev.error?ev.error.message:"";
+  });
+  }).catch(function(){
+    var er=document.getElementById("stripeError"); if(er) er.textContent="Le paiement s\u00e9curis\u00e9 n\u2019a pas pu se charger (bloqueur de publicit\u00e9 ou connexion). D\u00e9sactivez le bloqueur pour ce site ou r\u00e9essayez.";
   });
 }
 
@@ -4333,6 +4358,12 @@ async function processStripePayment(){
   
   // Mode caution : empreinte (pré-autorisation Stripe sans débit) ou acompte (débit immédiat)
   var isEmp = (pb.mode === 'empreinte');
+  // 02/11/2026 (conformité) : demande expresse d'exécution avant la fin du délai de rétractation (RDV dans les 14 jours)
+  var ckRet = document.getElementById("retractAccept");
+  if(ckRet && !ckRet.checked){
+    document.getElementById("stripeError").textContent="Cochez la case concernant le d\u00e9lai de r\u00e9tractation pour un rendez-vous dans les 14 jours.";
+    btn.disabled=false; btn.textContent=isEmp?("\ud83d\udd12 Pr\u00e9-autoriser "+acompte.toFixed(2)+" \u20ac"):("\ud83d\udd12 Payer "+acompte.toFixed(2)+" \u20ac"); return;
+  }
   if(isEmp){
     var ckEmp = document.getElementById("empreinteAccept");
     if(!ckEmp || !ckEmp.checked){
@@ -4529,6 +4560,28 @@ function lxPolitiqueAnnulation(){
 function lxDureeTexte(h){ if(h>=24&&h%24===0){ var j=h/24; return j+(j>1?" jours":" jour"); } return h+" h"; }
 // 02/11/2026 (conformité) : texte d'acceptation de l'empreinte construit avec la politique d'annulation RÉELLE
 // (mêmes règles que le worker : libérée si annulation dans le délai ; capturable si absence ou annulation tardive)
+// 02/11/2026 : rendez-vous fixé avant la fin du délai de rétractation de 14 jours (à compter d'aujourd'hui)
+function lxMentionsEtab(){
+  var cfg={}; try{ var c=window._lxCfgJsonPublic; cfg=(typeof c==="string")?JSON.parse(c):(c||{}); }catch(_e){ cfg={}; }
+  var E=escapeHtmlSimple, adr=[SALON.adresse,[SALON.cp,SALON.ville].filter(Boolean).join(" ")].filter(Boolean).join(", ");
+  var med=String(cfg.mediateur||"").trim();
+  var b='<div style="font-size:13px;line-height:1.6;text-align:left">'
+    +'<p><b>\u00c9tablissement</b><br>'+E(SALON.nom||"")+(adr?'<br>'+E(adr):'')+(SALON.siren?'<br>SIREN '+E(SALON.siren):'')+(SALON.email?'<br>'+E(SALON.email):'')+(SALON.tel?'<br>'+E(SALON.tel):'')+'</p>'
+    +'<p><b>H\u00e9bergement de la page</b><br>Luxyra (Alexandre Jensen EI, 29 rue de l\u2019Abb\u00e9 Alexandre Pax, 57200 Sarreguemines, contact@luxyra.fr), donn\u00e9es h\u00e9berg\u00e9es \u00e0 Paris (Supabase), pages diffus\u00e9es par Cloudflare et GitHub. <a href="/mentions-legales" target="_blank" rel="noopener" style="color:var(--gold)">D\u00e9tails</a></p>'
+    +'<p><b>M\u00e9diation de la consommation</b><br>'+(med?'En cas de litige non r\u00e9solu avec l\u2019\u00e9tablissement, vous pouvez saisir gratuitement son m\u00e9diateur : '+E(med)+'.':'Coordonn\u00e9es du m\u00e9diateur de la consommation : \u00e0 demander \u00e0 l\u2019\u00e9tablissement.')+'</p>'
+    +'<p><b>Vos donn\u00e9es personnelles</b><br>'+E(SALON.nom||"L\u2019\u00e9tablissement")+' est responsable des donn\u00e9es de vos rendez-vous, de votre fiche client et de vos achats (gestion des rendez-vous, rappels, caisse et obligations comptables). Luxyra les h\u00e9berge pour son compte et g\u00e8re votre compte client en ligne. Les offres ne vous sont envoy\u00e9es qu\u2019avec votre accord. Pour exercer vos droits (acc\u00e8s, rectification, effacement, opposition), adressez-vous \u00e0 l\u2019\u00e9tablissement ou \u00e0 contact@luxyra.fr ; vous pouvez aussi saisir la CNIL. <a href="/confidentialite" target="_blank" rel="noopener" style="color:var(--gold)">Politique de confidentialit\u00e9</a></p>'
+    +'</div>';
+  var m=document.createElement("div");
+  m.setAttribute("style","position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px");
+  m.innerHTML='<div style="background:#141414;border:1px solid rgba(200,168,78,.35);border-radius:14px;max-width:520px;width:100%;max-height:85vh;overflow:auto;padding:20px;color:#eee"><div style="font-weight:800;color:var(--gold);margin-bottom:10px">Mentions l\u00e9gales et donn\u00e9es personnelles</div>'+b+'<button type="button" style="margin-top:8px;width:100%;padding:11px;border-radius:10px;border:none;background:var(--gold,#c8a84e);color:#111;font-weight:800;cursor:pointer">Fermer</button></div>';
+  m.addEventListener("click",function(ev){ if(ev.target===m||ev.target.tagName==="BUTTON") m.remove(); });
+  document.body.appendChild(m);
+}
+function lxRdvDans14j(d){
+  if(!d||!/^\d{4}-\d{2}-\d{2}/.test(String(d))) return false;
+  var t=new Date(String(d).slice(0,10)+"T12:00:00"), lim=new Date(); lim.setDate(lim.getDate()+14);
+  return t.getTime()<=lim.getTime();
+}
 function lxTexteEmpreinteHtml(montant){
   var p=lxPolitiqueAnnulation(), c;
   if(p.heures===-1) c="si je ne me pr\u00e9sente pas au rendez-vous ou si je l\u2019annule (annulation en ligne impossible : contactez l\u2019\u00e9tablissement)";

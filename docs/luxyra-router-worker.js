@@ -129,6 +129,8 @@ async function __wrappedApiHandler(request, url, env) {
       // Endpoint /health (GET) — monitoring externe
       if (url.pathname === "/health" || url.pathname === "/api/health") return await handleHealth(request, env);
       if (url.pathname === "/api/qr" && request.method === "GET") return handleQr(url); // 2026-10-28 (-3)
+      // 02/11/2026 (conformité) : adresse IP publique du signataire du contrat, lue par Luxyra (plus de service tiers ipify)
+      if (url.pathname === "/api/mon-ip" && request.method === "GET") return new Response(JSON.stringify({ ip: String(request.headers.get("cf-connecting-ip") || "").slice(0, 64) }), { headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
       if (url.pathname.startsWith("/api/qr/t/") && request.method === "GET") return await handleQrJeton(url, env); // 2026-10-31 (-3) R3
       if (url.pathname === "/api/bons/ecarte" && request.method === "POST") return await handleBonEcarte(request, env); // 2026-10-31 (-3) R1
       // 2026-10-31 : factures d'abonnement Luxyra (rendu FR complet, lien signé, envoi à l'abonné, Stripe en français)
@@ -2198,7 +2200,9 @@ function ccLignesHtml(items) {
 function lxMailLayout(corpsHtml, opts) {
   opts = opts || {};
   const titre = opts.titre ? `<h1 style="margin:0 0 16px;font-family:Georgia,'Times New Roman',serif;font-size:22px;font-weight:400;color:#1a1a1a;line-height:1.3">${opts.titre}</h1>` : "";
-  const pixel = opts.idSuivi ? `<img src="https://luxyra.fr/api/e/o/${opts.idSuivi}.gif" width="1" height="1" alt="" style="display:block;border:0">` : "";
+  // 02/11/2026 (conformité, recommandation CNIL sur les pixels de suivi) : plus aucun pixel d'ouverture dans les e-mails.
+  //   (/api/e/o/ répond toujours pour les anciens e-mails déjà envoyés, sans rien enregistrer de nouveau.)
+  const pixel = "";
   // 2026-10-27 : opts.salon = nom de l'établissement pour lequel Luxyra envoie (envoi au comptable) : en-tête + pied
   // « envoyé pour le compte de … via Luxyra ». Sans opts.salon : rendu strictement inchangé.
   const _salonNom = opts.salon ? ccEsc(String(opts.salon).slice(0, 120)) : "";
@@ -3565,7 +3569,7 @@ async function runAttestationRelanceJob(env) {
 // GET /api/e/o/<uuid>.gif — ouverture d'un email automatique
 const PIXEL_GIF = Uint8Array.from(atob("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"), (c) => c.charCodeAt(0));
 async function handlePixelOuverture(request, env, url) {
-  const m = url.pathname.match(/^\/api\/e\/o\/([0-9a-f-]{36})\.gif$/i);
+  const m = null; // 02/11/2026 : plus aucune ouverture enregistrée (pixel retiré des e-mails ; anciens e-mails : image renvoyée seule)
   if (m) {
     try { await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salon_emails_auto?id=eq.${m[1]}&ouvert_le=is.null`, { method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify({ ouvert_le: new Date().toISOString() }) }); } catch (_) {}
   }
