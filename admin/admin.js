@@ -1372,10 +1372,11 @@ function chatThreadColHtml(){
   h+='<div style="border-top:1px solid var(--border);padding:8px 10px">';
   h+='<div style="display:flex;gap:6px;margin-bottom:6px;align-items:center;flex-wrap:wrap"><button id="chatModeRep" class="tb-btn'+(CHAT_NOTE_MODE?'':' primary')+'" style="padding:4px 10px;font-size:12px" data-lx-click="chatMode(false)">↩️ Réponse</button><button id="chatModeNote" class="tb-btn'+(CHAT_NOTE_MODE?' primary':'')+'" style="padding:4px 10px;font-size:12px" data-lx-click="chatMode(true)">🔒 Note interne</button><span style="font-size:11px;color:var(--text3)">'+(CHAT_NOTE_MODE?'Visible uniquement par l’équipe Luxyra':'« / » pour une réponse type')+'</span></div>';
   h+='<div id="chatFichiers" style="display:flex;gap:6px;flex-wrap:wrap"></div>';
+  h+='<div id="chatIaProp"></div>'; // 02/11/2026 : proposition « Corriger » / « Améliorer »
   h+='<div style="display:flex;gap:6px;align-items:flex-end;position:relative">';
   h+='<label class="tb-btn" title="Joindre une image ou un PDF (5 Mo max)" style="cursor:pointer;padding:9px 10px">📎<input type="file" id="chatFile" accept="image/png,image/jpeg,image/webp,application/pdf" multiple style="display:none" data-lx-change="lxChatFichiers(this)"></label>';
   h+='<div style="flex:1;position:relative"><div id="chatAc" style="display:none"></div><textarea id="chatInput" rows="1" maxlength="4000" placeholder="'+(CHAT_NOTE_MODE?'Note interne…':'Réponse… (Ctrl+Entrée pour envoyer)')+'" style="width:100%;resize:none;max-height:180px;padding:10px;border-radius:8px;border:1px solid '+(CHAT_NOTE_MODE?'var(--orange)':'var(--border)')+';background:'+(CHAT_NOTE_MODE?'rgba(251,146,60,.07)':'var(--bg3)')+';color:var(--text);font-family:var(--f1);font-size:13px" data-lx-input="chatSurSaisie(this)" data-lx-keydown="chatTouchesSaisie(event)" data-lx-paste="chatColler(event)"></textarea></div>';
-  h+='<button class="tb-btn primary" id="chatSendBtn" data-lx-click="sendChatMsg()">Envoyer</button></div></div>';
+  h+='<div style="display:flex;flex-direction:column;gap:4px"><div style="display:flex;gap:4px"><button class="tb-btn chat-ia" id="chatIaCorr" '+(((CHAT_DRAFT[window.CHAT_ACTIVE]||"").trim())?'':'disabled ')+'title="Corriger les fautes (orthographe, accents, ponctuation) sans reformuler" style="padding:6px 8px;font-size:12px" data-lx-click="chatIa(\'corriger\')">✨ Corriger</button><button class="tb-btn chat-ia" id="chatIaAmel" '+(((CHAT_DRAFT[window.CHAT_ACTIVE]||"").trim())?'':'disabled ')+'title="Même sens, phrase plus claire et plus professionnelle" style="padding:6px 8px;font-size:12px" data-lx-click="chatIa(\'ameliorer\')">✍️ Améliorer</button></div><button class="tb-btn primary" id="chatSendBtn" data-lx-click="sendChatMsg()">Envoyer</button></div></div></div>';
   return h;
 }
 function chatHeadHtml(c){
@@ -1561,6 +1562,76 @@ async function chatTeleverser(salonId,convId){
   }
   return out;
 }
+
+// ===== 02/11/2026 : « ✨ Corriger » / « ✍️ Améliorer » la réponse (edge lx-texte-support, admin seulement) =====
+// Rien n'est envoyé au client sans clic sur « Utiliser et envoyer » (ou « Envoyer »).
+var CHAT_IA = { mode: null, original: "", propose: "" };
+function chatIaEtat(){
+  var t=document.getElementById('chatInput'), vide=!(t&&t.value.trim());
+  ['chatIaCorr','chatIaAmel'].forEach(function(id){ var b=document.getElementById(id); if(b){ b.disabled=vide||!!CHAT_IA.enCours; b.style.opacity=b.disabled?'.45':'1'; } });
+}
+function chatIaDiffHtml(a,b){
+  // différence mot à mot (plus longue sous-suite commune) : retiré = rouge barré, ajouté = vert
+  var A=String(a).split(/(\s+)/), B=String(b).split(/(\s+)/), n=A.length, m=B.length;
+  if(n*m>250000) return '<span style="color:#a5d6a7">'+saEsc(b).replace(/\n/g,'<br>')+'</span>';
+  var L=[]; for(var i=0;i<=n;i++){ L.push(new Array(m+1).fill(0)); }
+  for(var i2=n-1;i2>=0;i2--) for(var j2=m-1;j2>=0;j2--) L[i2][j2]=(A[i2]===B[j2])?L[i2+1][j2+1]+1:Math.max(L[i2+1][j2],L[i2][j2+1]);
+  var h='', i3=0, j3=0, nb=0;
+  var del=function(x){ if(/^\s+$/.test(x)) return ''; nb++; return '<del style="color:#ef9a9a">'+saEsc(x)+'</del>'; };
+  var ins=function(x){ if(/^\s+$/.test(x)) return saEsc(x).replace(/\n/g,'<br>'); return '<ins style="color:#a5d6a7;text-decoration:none;border-bottom:1px dotted #a5d6a7">'+saEsc(x)+'</ins>'; };
+  while(i3<n&&j3<m){
+    if(A[i3]===B[j3]){ h+=saEsc(A[i3]).replace(/\n/g,'<br>'); i3++; j3++; }
+    else if(L[i3+1][j3]>=L[i3][j3+1]){ h+=del(A[i3]); i3++; }
+    else { h+=ins(B[j3]); j3++; }
+  }
+  while(i3<n){ h+=del(A[i3]); i3++; } while(j3<m){ h+=ins(B[j3]); j3++; }
+  CHAT_IA.nbCorr=nb; return h;
+}
+async function chatIa(mode){
+  var t=document.getElementById('chatInput'), zone=document.getElementById('chatIaProp');
+  if(!t||!zone) return; var txt=t.value.trim();
+  if(!txt){ chatIaEtat(); return; }
+  if(CHAT_IA.enCours) return;
+  CHAT_IA={ mode:mode, original:txt, propose:"", enCours:true }; chatIaEtat();
+  zone.innerHTML='<div style="margin:6px 0;padding:10px;border:1px solid rgba(212,168,67,.4);border-radius:10px;font-size:12px;color:var(--gold)">'+(mode==='corriger'?'✨ Correction en cours…':'✍️ Amélioration en cours…')+'</div>';
+  try{
+    var jt=await lxAdminJeton();
+    var r=await fetch((window.SUPABASE_URL||"https://kxdgjtvrkwugbifgppai.supabase.co")+"/functions/v1/lx-texte-support",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+jt,"apikey":SUPABASE_KEY},body:JSON.stringify({mode:mode,texte:txt})});
+    var j=await r.json().catch(function(){return {};});
+    if(!r.ok||!j.texte) throw new Error(j.error||("Service indisponible (HTTP "+r.status+")"));
+    CHAT_IA.propose=String(j.texte);
+    chatIaAfficher();
+  }catch(e){
+    zone.innerHTML='<div style="margin:6px 0;padding:10px;border:1px solid var(--red);border-radius:10px;font-size:12px;color:var(--red)">❌ '+saEsc(e.message||'Erreur')+' — votre message n\'a pas été modifié.</div>';
+  }finally{ CHAT_IA.enCours=false; chatIaEtat(); }
+}
+function chatIaAfficher(){
+  var zone=document.getElementById('chatIaProp'); if(!zone) return;
+  var same=CHAT_IA.propose.trim()===CHAT_IA.original.trim();
+  var rendu=(CHAT_IA.mode==='corriger')?chatIaDiffHtml(CHAT_IA.original,CHAT_IA.propose):saEsc(CHAT_IA.propose).replace(/\n/g,'<br>');
+  var titre=(CHAT_IA.mode==='corriger')?(same?'Aucune faute trouvée ✓':'Proposition corrigée — '+(CHAT_IA.nbCorr||0)+' correction'+((CHAT_IA.nbCorr||0)>1?'s':'')):'Proposition améliorée';
+  var h='<div style="margin:6px 0;padding:10px;border:1.5px solid var(--gold);border-radius:10px;background:rgba(212,168,67,.07)">';
+  h+='<div style="font-size:12px;color:var(--gold);font-weight:800;margin-bottom:6px">'+titre+'</div>';
+  h+='<div style="font-size:13px;line-height:1.5;margin-bottom:8px">'+rendu+'</div>';
+  h+='<textarea id="chatIaTexte" rows="3" maxlength="4000" style="width:100%;box-sizing:border-box;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px;font-family:var(--f1)" title="Vous pouvez retoucher le texte avant de l\'envoyer">'+saEsc(CHAT_IA.propose)+'</textarea>';
+  h+='<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap"><button class="tb-btn" data-lx-click="chatIaGarder()">Garder la mienne</button><button class="tb-btn" data-lx-click="chatIaReprendre()">Remplacer sans envoyer</button><button class="tb-btn primary" data-lx-click="chatIaUtiliser()">Utiliser et envoyer</button></div>';
+  h+='</div>';
+  zone.innerHTML=h;
+}
+function chatIaGarder(){ var z=document.getElementById('chatIaProp'); if(z) z.innerHTML=''; CHAT_IA={mode:null,original:"",propose:""}; var t=document.getElementById('chatInput'); if(t) t.focus(); chatIaEtat(); }
+function chatIaReprendre(){
+  var t=document.getElementById('chatInput'), p=document.getElementById('chatIaTexte'); if(!t||!p) return;
+  t.value=p.value; CHAT_DRAFT[window.CHAT_ACTIVE]=t.value; try{ chatAjusterHauteur(t); }catch(_){}
+  chatIaGarder();
+}
+async function chatIaUtiliser(){
+  var t=document.getElementById('chatInput'), p=document.getElementById('chatIaTexte'); if(!t||!p) return;
+  var v=p.value.trim(); if(!v) return;
+  t.value=v; CHAT_DRAFT[window.CHAT_ACTIVE]=v;
+  var z=document.getElementById('chatIaProp'); if(z) z.innerHTML=''; CHAT_IA={mode:null,original:"",propose:""};
+  await sendChatMsg();
+}
+
 async function sendChatMsg(){
   var i=document.getElementById('chatInput'), conv=window.CHAT_ACTIVE, c=chatConv(conv);
   if(!i||!conv||!c) return;
@@ -1581,7 +1652,7 @@ async function sendChatMsg(){
       CHAT_MSGS.push(rI.data[0]); CHAT_FICHIERS=[]; chatRenderFichiers();
       if(c.bot_active!==false){ var rU=await _sb.from('support_conversations').update({bot_active:false}).eq('id',conv); if(rU&&rU.error) console.warn('[chat] maj conversation',rU.error); }
     }
-    i.value=''; CHAT_DRAFT[conv]=''; chatAjusterHauteur(i);
+    i.value=''; CHAT_DRAFT[conv]=''; chatAjusterHauteur(i); try{ chatIaEtat(); }catch(_){}
     chatRenderThread();
     loadChatConvs().then(function(){ chatRenderHead(); chatRenderListe(); });
   }catch(e){ (await lxAlert('Erreur envoi : '+(e&&e.message||e))); }
@@ -1591,6 +1662,7 @@ async function sendChatMsg(){
 function chatAjusterHauteur(t){ if(!t) return; t.style.height='auto'; t.style.height=Math.min(180,t.scrollHeight+2)+'px'; }
 function chatSurSaisie(t){
   CHAT_DRAFT[window.CHAT_ACTIVE]=t.value; chatAjusterHauteur(t);
+  chatIaEtat();
   if(!CHAT_NOTE_MODE&&Date.now()-CHAT_TYPING_ENVOYE>2500){ CHAT_TYPING_ENVOYE=Date.now(); chatDiffuser('typing',{}); }
   var avant=t.value.slice(0,t.selectionStart), m=avant.match(/(^|\s)\/([a-z0-9_-]*)$/i);
   if(m&&!CHAT_NOTE_MODE) chatAcOuvrir(m[2]); else chatAcFermer();
@@ -6173,7 +6245,7 @@ function lxOuvrirLien(u){ if(/^(mailto|tel):/i.test(String(u||''))) window.open(
 // event.stopPropagation() et return false. Tout le reste est refusé (et signalé en console).
 var LX_ACTIONS=Object.create(null);
 // liste blanche générée à partir des attributs data-lx-* du panneau (lot B) ; toute nouvelle action doit y être ajoutée
-['addModal','addSmsCredits','addSmsCreditsCustom','annAction','asAction','asAjouterEtiquette','asAjouterNote','asChargerSupport','asExport','asGroupe','asOnglet','asRepondreSupport','asRetirerEtiquette','asSauverRappel','asSel','asSelTout','asSet','asVoirApp','brevoCharger','brevoSauverReglages','chatAcChoisir','chatChangerStatut','chatColler','chatMode','chatOuvrirPiece','chatRTypesEditer','chatRTypesSupprimer','chatReactiverBot','chatRevueAjouterKb','chatRevueCharger','chatSurSaisie','chatTouchesSaisie','chatVue','closeDetail','closeMod','createFromDem','delDem','delMig','doAdminLogout','doAdminLogoutPartout','doLogin','doSaveLegal','editLegal','editUserId','emBasculer','emEditer','emSauver','emSupprimer','kbEditer','loadAppConfigEditor','loadSystemHealth','lxARCharger','lxARDetail','lxARTraiter','lxAlerteOuvrir','lxAnaCacheClear','lxAppliquerSiret','lxAsActionMenu','lxAsFiltres','lxAsRech','lxAsSelVider','lxAttEdOuvrir','lxAttEdVoir','lxAttRelanceBasculer','lxAutoFixPgrst','lxBandeauReplier','lxBasculerSuivant','lxBonsCharger','lxCdAccord','lxCdAnnuler','lxCdEnvoyer','lxCdOuvrir','lxCdPlus','lxChatCtx','lxChatFermer','lxChatFichiers','lxChatFiltre','lxChatOuvrirBoite','lxChatPlus','lxChatRechEffacer','lxChatRechEntree','lxChatRecharger','lxChatRetirerFichier','lxChatSalonRech','lxCloseErrorDetail','lxClotJour','lxClotPlus','lxClotSalon','lxContratHash','lxCopier','lxDesinsCharger','lxEmailStatsCharger','lxExportNf525','lxFermerSiFond','lxJF','lxJournalCharger','lxJournalPlus','lxLienCopier','lxLienMail','lxLienMaj','lxMarkResolvedManual','lxMfaActiver','lxMfaBandeauReplier','lxMfaFermer','lxModeAvanceBasculer','lxOfferMonths','lxOuvrirDoc','lxOuvrirLien','lxPoserRendre','lxPushDisable','lxPushEnable','lxPushPlusTard','lxPushTest','lxPushToggleEtRendre','lxRaccourci','lxRechAller','lxRechSalon','lxRechercheOuvrir','lxRequestClaudeFix','lxRetentionLancer','lxRetirerId','lxRetirerProche','lxRgpdCharger','lxSaAction','lxSauvCharger','lxScDrag','lxScDragEnd','lxScDrop','lxScMove','lxScSurvol','lxSelectionner','lxSetGroupedPeriod','lxShowErrorDetail','lxSidebarBascule','lxSmsSimul','lxSnoozeSignature','lxSuiviEtape','lxSuiviRappelEffacer','lxTdbCharger','lxTdbPlusMemo','lxTdbRessayer','lxTestMigrationPush','lxToggle1000','lxVerifierSiret','nav','openChatConv','openD','rMonitoringRefresh','resetDocs','resetSmsCredits','resolveChatConv','saChargerOverview','saChargerSalon','saExportFactures','saForfait','saLienInscription','saRelancer','saRembourser','saRemise','saveAppConfig','saveFreePlan','saveNotes','sendChatMsg','showMigrationMessage','showSalonContrat','smsAjuster','smsBloquer','smsHistorique','smsSauverReglages','toggleDocLock','toggleDrawerFull','updDem','updMig','verifSalon','lxAller'].forEach(function(k){ LX_ACTIONS[k]=1; });
+['addModal','addSmsCredits','addSmsCreditsCustom','annAction','asAction','asAjouterEtiquette','asAjouterNote','asChargerSupport','asExport','asGroupe','asOnglet','asRepondreSupport','asRetirerEtiquette','asSauverRappel','asSel','asSelTout','asSet','asVoirApp','brevoCharger','brevoSauverReglages','chatAcChoisir','chatChangerStatut','chatColler','chatMode','chatOuvrirPiece','chatRTypesEditer','chatRTypesSupprimer','chatReactiverBot','chatRevueAjouterKb','chatRevueCharger','chatSurSaisie','chatTouchesSaisie','chatVue','chatIa','chatIaGarder','chatIaReprendre','chatIaUtiliser','closeDetail','closeMod','createFromDem','delDem','delMig','doAdminLogout','doAdminLogoutPartout','doLogin','doSaveLegal','editLegal','editUserId','emBasculer','emEditer','emSauver','emSupprimer','kbEditer','loadAppConfigEditor','loadSystemHealth','lxARCharger','lxARDetail','lxARTraiter','lxAlerteOuvrir','lxAnaCacheClear','lxAppliquerSiret','lxAsActionMenu','lxAsFiltres','lxAsRech','lxAsSelVider','lxAttEdOuvrir','lxAttEdVoir','lxAttRelanceBasculer','lxAutoFixPgrst','lxBandeauReplier','lxBasculerSuivant','lxBonsCharger','lxCdAccord','lxCdAnnuler','lxCdEnvoyer','lxCdOuvrir','lxCdPlus','lxChatCtx','lxChatFermer','lxChatFichiers','lxChatFiltre','lxChatOuvrirBoite','lxChatPlus','lxChatRechEffacer','lxChatRechEntree','lxChatRecharger','lxChatRetirerFichier','lxChatSalonRech','lxCloseErrorDetail','lxClotJour','lxClotPlus','lxClotSalon','lxContratHash','lxCopier','lxDesinsCharger','lxEmailStatsCharger','lxExportNf525','lxFermerSiFond','lxJF','lxJournalCharger','lxJournalPlus','lxLienCopier','lxLienMail','lxLienMaj','lxMarkResolvedManual','lxMfaActiver','lxMfaBandeauReplier','lxMfaFermer','lxModeAvanceBasculer','lxOfferMonths','lxOuvrirDoc','lxOuvrirLien','lxPoserRendre','lxPushDisable','lxPushEnable','lxPushPlusTard','lxPushTest','lxPushToggleEtRendre','lxRaccourci','lxRechAller','lxRechSalon','lxRechercheOuvrir','lxRequestClaudeFix','lxRetentionLancer','lxRetirerId','lxRetirerProche','lxRgpdCharger','lxSaAction','lxSauvCharger','lxScDrag','lxScDragEnd','lxScDrop','lxScMove','lxScSurvol','lxSelectionner','lxSetGroupedPeriod','lxShowErrorDetail','lxSidebarBascule','lxSmsSimul','lxSnoozeSignature','lxSuiviEtape','lxSuiviRappelEffacer','lxTdbCharger','lxTdbPlusMemo','lxTdbRessayer','lxTestMigrationPush','lxToggle1000','lxVerifierSiret','nav','openChatConv','openD','rMonitoringRefresh','resetDocs','resetSmsCredits','resolveChatConv','saChargerOverview','saChargerSalon','saExportFactures','saForfait','saLienInscription','saRelancer','saRembourser','saRemise','saveAppConfig','saveFreePlan','saveNotes','sendChatMsg','showMigrationMessage','showSalonContrat','smsAjuster','smsBloquer','smsHistorique','smsSauverReglages','toggleDocLock','toggleDrawerFull','updDem','updMig','verifSalon','lxAller'].forEach(function(k){ LX_ACTIONS[k]=1; });
 var LX_SEULES=Object.create(null);
 ['asAction','saRembourser','resetSmsCredits','lxSaAction','saveFreePlan','saRemise','saForfait','lxRetentionLancer','emSupprimer','delDem','delMig','lxExportNf525','doAdminLogoutPartout','smsAjuster','smsBloquer','addSmsCredits','addSmsCreditsCustom','lxOfferMonths','verifSalon','toggleDocLock','resetDocs','lxAppliquerSiret','doSaveLegal','editUserId','lxAsActionMenu','asGroupe','saExportFactures','lxMarkResolvedManual','lxARTraiter','chatRTypesSupprimer','kbEditer','saveAppConfig','annAction','updDem','updMig','createFromDem','asVoirApp'].forEach(function(k){ LX_SEULES[k]=1; });
 var _lxGramCache=Object.create(null);
