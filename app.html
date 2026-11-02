@@ -417,12 +417,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261102-7"></script>
+<script src="luxyra-supabase.js?v=20261102-8"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261102-7";
+  var attendu="20261102-8";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -12977,9 +12977,9 @@ function rPlanning(){
                   var leftPct=myBlock?myBlock.col*colW:0;
                   h+='<div class="pg-block" data-aid="'+a.id+'"'+(a.isOnline?' data-nodrag="1"':'')+' style="top:'+topPx+'px;height:'+Math.max(hPx-2,SLOT_H-2)+'px;left:'+leftPct+'%;width:'+(colW-1)+'%;background:'+(a.isOnline?'rgba(108,92,231,.35)':phColors1.bg)+';border-color:'+(a.isOnline?'#7c6dd8':phColors1.border)+';color:'+(a.isOnline?'#2d1b69':phColors1.text)+'" onclick="showRdvPopup(\''+a.id+'\',event)" ondblclick="hideRdvPopup();clickAppt(\''+a.id+'\')">';
                   h+='<div class="pb-name">'+apptClientLabelH(a)+'</div>';
-                  h+='<div class="pb-svc">'+((ph&&ph.l)||(sv?sv.n:""))+'</div>';
+                  h+='<div class="pb-svc">'+_lxH((ph&&ph.l)||(sv?sv.n:""))+'</div>';
                   if(aPhases.length>1) h+='<div class="pb-svc lx-et-h" style="font-weight:800">'+frM(cur)+' \u2192 '+frM(cur+ph.d)+'</div>';
-                  else h+='<div class="pb-svc" style="opacity:.7">'+ph.l+' \u2022 '+a.time+'\u2192'+_endTime1+'</div>';
+                  else h+='<div class="pb-svc" style="opacity:.7">'+_lxH(ph.l)+' \u2022 '+a.time+'\u2192'+_endTime1+'</div>';
                   // Badge statut texte (identique au mono-jour) si la place le permet
                   if(hPx>=50){
                     if(a.isOnline&&a.st!=="done"&&(function(){var _r=_lxRdvOnlineDe(a);return _r&&_r.status==="pending";})()) h+='<div class="pb-badge" style="background:rgba(255,152,0,.9);color:#111">\u23f3 \u00c0 valider</div>';
@@ -29525,8 +29525,12 @@ function _openClientFromRdv(){
     var elD=document.getElementById("md");if(elD)ctx.date=elD.value;
     var elT=document.getElementById("mt");if(elT)ctx.time=elT.value;
     try{ if(typeof _lxPauseCtxActif==="function" && _lxPauseCtxActif()) ctx.pause=true; }catch(_e){}
-    // Coiffeur : pas exposé en input visible, mais pf.stId est posé via calStId si dispo
-    if(typeof calStId!=="undefined")ctx.stId=calStId;
+    // Coiffeur : 02/11/2026 (contre-audit I1) — lu dans #mst (calStId n'existait pas -> retour sur le 1er collaborateur)
+    try{
+      var _pzA=(typeof _lxPauseCtxActif==="function")?_lxPauseCtxActif():null;
+      if(_pzA) ctx.stId=_pzA.stId;
+      else { var _msE=document.getElementById("mst"); if(_msE&&_msE.value!==""){ var _stF=(typeof T!=="undefined"&&Array.isArray(T))?T.filter(function(x){return x&&String(x.id)===String(_msE.value);})[0]:null; ctx.stId=_stF?_stF.id:_msE.value; } }
+    }catch(_e2){}
     // Passage en cours (Homme/Femme/Enfant) si déjà cliqué
     if(window._rdvPassage)ctx.passage=window._rdvPassage;
     // Catégorie déjà choisie (le bouton actif a une classe ou attr)
@@ -29586,6 +29590,7 @@ function oM(type,pf){
     // 02/11/2026 (maquette validée) : ouvert depuis la pause d'un forfait -> bandeau « libre de … à … »
     if(!pf.pause) window._lxPauseCtx=null;
     var _pzc=pf.pause?window._lxPauseCtx:null;
+    if(_pzc && String(_pzc.stId)!==String(preStId)) _pzc=null; // contre-audit I1 : bandeau seulement pour le collaborateur de la pause
     if(_pzc){
       var _hFr=function(m){ return Math.floor(m/60)+"h"+String(m%60).padStart(2,"0"); };
       h+='<div id="lxPauseBandeau" style="background:rgba(212,168,67,.1);border:1px solid rgba(212,168,67,.45);border-radius:10px;padding:9px 12px;font-size:13px;line-height:1.45;color:#f3d98a;margin-bottom:12px">\u23f8 Pendant la pause'+(_pzc.cli?' de <b>'+_lxH(_pzc.cli)+'</b>':'')+' : libre de <b>'+_hFr(_pzc.deb)+' \u00e0 '+_hFr(_pzc.fin)+'</b> ('+(_pzc.fin-_pzc.deb)+' min max).</div>';
@@ -30361,7 +30366,7 @@ function renderSelectedSvcsList(){
     if(!s) return;
     total += Number(s.p)||0;
     h += '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.05);gap:8px">';
-    h += '<div style="flex:1;min-width:0"><strong style="color:var(--gold);font-size:14px">'+s.n+'</strong> <span style="color:rgba(255,255,255,.5);font-size:12px">\u2014 '+(Number(s.p)||0).toFixed(2)+'\u20ac</span></div>';
+    h += '<div style="flex:1;min-width:0"><strong style="color:var(--gold);font-size:14px">'+_lxH(s.n)+'</strong> <span style="color:rgba(255,255,255,.5);font-size:12px">\u2014 '+(Number(s.p)||0).toFixed(2)+'\u20ac</span></div>';
     h += '<button onclick="removeRdvSvc('+sid+')" style="background:rgba(239,83,80,.1);border:1px solid rgba(239,83,80,.3);color:#ef5350;border-radius:6px;padding:3px 9px;cursor:pointer;font-size:12px;flex-shrink:0">\u2716</button>';
     h += '</div>';
   });
