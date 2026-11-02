@@ -8106,6 +8106,46 @@ async function handleClientInviteVerify(request, env) {
 // SALON AVAILABILITY (bypasses RLS for booking site)
 // Returns appointments + rdv_online for a salon using service key
 // ============================================================
+// 02/11/2026 : étapes d'une réservation en ligne (copie de lx_prive.rdv_online_phases) ; null = bloc plein (prudence) :
+// domicile, durée modifiée (somme des étapes différente de la durée), prestation inconnue ou sans pause.
+function lxRdvOnlinePhases(svcPh, serviceId, items, salonEdit, duree, lieu) {
+  try {
+    const dur = Number(duree);
+    if (!svcPh || !(dur > 0) || (lieu || "salon") === "domicile") return null;
+    const entier = (v) => { const n = Number(v); return Number.isInteger(n) ? n : null; };
+    let src = [];
+    if (salonEdit && typeof salonEdit === "object" && Array.isArray(salonEdit.phases) && salonEdit.phases.length) {
+      src = salonEdit.phases;
+    } else if (Array.isArray(items) && items.length) {
+      const its = items.map((it, i) => ({ it, i })).sort((a, b) => {
+        const oa = entier(a.it && a.it.ordre), ob = entier(b.it && b.it.ordre);
+        if (oa === null && ob === null) return a.i - b.i; if (oa === null) return 1; if (ob === null) return -1;
+        return oa - ob || a.i - b.i;
+      });
+      for (const { it } of its) {
+        const sid = entier(it && it.service_id) ?? entier(it && it.sId);
+        if (sid === null || !svcPh.has(sid)) return null;
+        const sp = svcPh.get(sid);
+        if (Array.isArray(sp) && sp.length) src = src.concat(sp);
+        else { const d = entier(it.duree); if (!(d > 0)) return null; src.push({ t: "w", d }); }
+      }
+    } else if (serviceId != null) {
+      const sp = svcPh.get(Number(serviceId));
+      if (!Array.isArray(sp) || !sp.length) return null;
+      src = sp;
+    } else return null;
+    let somme = 0, pause = false; const out = [];
+    for (const e of src) {
+      const d = entier(e && e.d);
+      if (!(d > 0)) return null;
+      const t = e.t === "p" ? "p" : "w";
+      if (t === "p") pause = true;
+      somme += d; out.push({ t, d });
+    }
+    return (pause && somme === dur) ? out : null;
+  } catch (_e) { return null; }
+}
+
 async function handleSalonAvailability(request, env) {
   try {
     const { salon_id, date_from, date_to } = await request.json();
@@ -8141,10 +8181,27 @@ async function handleSalonAvailability(request, env) {
     // FIX 2026-05-12 : on récupère aussi created_at pour permettre au client de
     // filtrer les pending_payment stales (paiement abandonné depuis > 35 min — 2026-10-14, avant 15 min).
     const roRes = await fetch(
-      `${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=date_rdv,heure_rdv,collaborateur_id,duree_minutes,status,created_at&salon_id=eq.${salon_id}&date_rdv=gte.${from}&date_rdv=lte.${to}&status=neq.cancelled`,
+      `${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=date_rdv,heure_rdv,collaborateur_id,duree_minutes,status,created_at,service_id,items,salon_edit,lieu&salon_id=eq.${salon_id}&date_rdv=gte.${from}&date_rdv=lte.${to}&status=neq.cancelled`,
       { headers }
     );
-    const rdvOnlineBrut = await roRes.json();
+    const rdvOnlineLu = await roRes.json();
+    // 02/11/2026 : forfait réservé en ligne -> on renvoie ses étapes (a_phases) pour que ses pauses restent libres,
+    // même règle que la base (lx_prive.rdv_online_phases). Les prestations, items et modifications ne sont pas exposés.
+    let rdvOnlineBrut = rdvOnlineLu;
+    if (Array.isArray(rdvOnlineLu)) {
+      let _svcPh = null;
+      if (rdvOnlineLu.some((r) => r && (r.service_id != null || (Array.isArray(r.items) && r.items.length)))) {
+        try {
+          const svRes = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/services?select=id,phases&salon_id=eq.${salon_id}`, { headers });
+          const svs = await svRes.json();
+          if (Array.isArray(svs)) { _svcPh = new Map(); svs.forEach((s) => _svcPh.set(Number(s.id), s.phases)); }
+        } catch (_eSv) { _svcPh = null; }
+      }
+      rdvOnlineBrut = rdvOnlineLu.map(({ service_id, items, salon_edit, lieu, ...r }) => {
+        const ph = lxRdvOnlinePhases(_svcPh, service_id, items, salon_edit, r.duree_minutes, lieu);
+        return ph ? { ...r, a_phases: ph } : r;
+      });
+    }
     // 2026-10-14 : un paiement en cours (pending_payment) bloque le créneau 35 min (session Stripe = 31 min,
     // même délai que le déclencheur de la base). Au-delà : paiement abandonné, créneau libre.
     const _limPP = Date.now() - 35 * 60 * 1000;

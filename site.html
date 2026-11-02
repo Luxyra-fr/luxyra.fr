@@ -1345,7 +1345,7 @@ async function loadSalon(){
           }
           return true;
         }).forEach(function(r){
-          RDV_EXISTING.push({date_rdv:r.date_rdv,heure:r.heure_rdv?r.heure_rdv.slice(0,5):null,collab_id:r.collaborateur_id,status:"conf",a_phases:[{t:"w",d:r.duree_minutes||60,l:"RDV"}]});
+          RDV_EXISTING.push({date_rdv:r.date_rdv,heure:r.heure_rdv?r.heure_rdv.slice(0,5):null,collab_id:r.collaborateur_id,status:"conf",a_phases:lxPhasesResaEnLigne(r)});
         });
       }
     }catch(e){console.log("Availability load error:",e);}
@@ -3522,8 +3522,9 @@ function _lxNbSansCollab(date,time,duration){
   var s0=toMin(time), e0=s0+duration, n=0;
   for(var i=0;i<RDV_EXISTING.length;i++){
     var r=RDV_EXISTING[i]; if(r.date_rdv!==date||!r.heure||!_lxRdvSansCollab(r)) continue;
-    var st=toMin(r.heure), d=0; (r.a_phases||[]).forEach(function(p){ d+=(p&&p.d)||0; }); if(!d) d=30;
-    if(s0<st+d && e0>st) n++;
+    var st=toMin(r.heure), d=0, chev=false; (r.a_phases||[]).forEach(function(p){ var pd=(p&&p.d)||0; if(p&&p.t!=="p"&&s0<st+d+pd&&e0>st+d) chev=true; d+=pd; }); // 02/11 : pauses libres (comme la base)
+    if(!d){ d=30; chev=(s0<st+d && e0>st); }
+    if(chev) n++;
   }
   return n;
 }
@@ -3856,7 +3857,7 @@ async function refreshRDV(){
         }
         return true;
       }).forEach(function(r){
-        RDV_EXISTING.push({date_rdv:r.date_rdv,heure:r.heure_rdv?r.heure_rdv.slice(0,5):null,collab_id:r.collaborateur_id,status:"conf",a_phases:[{t:"w",d:r.duree_minutes||60,l:"RDV"}]});
+        RDV_EXISTING.push({date_rdv:r.date_rdv,heure:r.heure_rdv?r.heure_rdv.slice(0,5):null,collab_id:r.collaborateur_id,status:"conf",a_phases:lxPhasesResaEnLigne(r)});
       });
     }
   }catch(e){console.log("refreshRDV:",e);}
@@ -4848,6 +4849,14 @@ function _lxLocalDT(ymd,hm){                // "2026-07-15" + "09:00"/"09:00:00"
   var p=String(ymd||"").split("-"), t=String(hm||"0:0").split(":");
   return new Date(parseInt(p[0],10), parseInt(p[1],10)-1, parseInt(p[2],10),
                   parseInt(t[0],10)||0, parseInt(t[1],10)||0, parseInt(t[2],10)||0);
+}
+// 02/11/2026 : étapes d'une réservation en ligne renvoyées par le serveur (forfait : pauses libres, même règle
+// que la base) ; sinon, ou si elles ne correspondent pas à la durée, toute la durée est occupée (comme avant).
+function lxPhasesResaEnLigne(r){
+  var ph=r&&r.a_phases, d=Number(r&&r.duree_minutes)||60;
+  var ok=Array.isArray(ph)&&ph.length>0&&ph.every(function(p){return p&&(p.t==="w"||p.t==="p")&&Number(p.d)>0;})
+    &&ph.reduce(function(t,p){return t+Number(p.d);},0)===Number(r.duree_minutes);
+  return ok?ph.map(function(p){return {t:p.t,d:Number(p.d),l:"RDV"};}):[{t:"w",d:d,l:"RDV"}];
 }
 function toMin(t){var p=t.split(":");return parseInt(p[0])*60+parseInt(p[1]);}
 function fromMin(m){return String(Math.floor(m/60)).padStart(2,"0")+":"+String(m%60).padStart(2,"0");}
