@@ -417,12 +417,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261102-12"></script>
+<script src="luxyra-supabase.js?v=20261103-1"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261102-12";
+  var attendu="20261103-1";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -13556,8 +13556,9 @@ function clickSlot(stId,time,date,force){
     return;
   }
   // Save current view state to restore after RDV creation
-  window._savedCalD=new Date(calD.getTime());
-  window._savedPlanDays=window._planDays;
+  // 03/11/2026 (contre-audit M1) : relance « Créer quand même » (force) -> la date d'avant est déjà mémorisée, on ne l'écrase
+  // pas avec le jour touché (sinon, fermeture sans création = vue plusieurs jours recalée sur le jour touché).
+  if(!force || !window._savedCalD){ window._savedCalD=new Date(calD.getTime()); window._savedPlanDays=window._planDays; }
   if(date)calD=new Date(date+'T12:00:00');
   var dk=date||dS(calD);
   // Check if establishment is closed this day
@@ -13959,6 +13960,9 @@ function dragStart(e){
   var aid=el.getAttribute('data-aid');
   if(aid){for(var _di=0;_di<AP.length;_di++){if(AP[_di].id===aid){if(AP[_di].st==="done"||AP[_di].st==="canc")return;break;}}}
   e.stopPropagation();
+  // 03/11/2026 : glisser en cours -> le rafraîchissement automatique (30 s) attend la fin du geste (refreshCurrentView).
+  // Avant : le planning était redessiné sous le doigt, le bloc touché disparaissait et la fin du geste n'arrivait plus (~1/10 au tactile).
+  _drag.enCours=true; _drag.debut=Date.now();
   _drag.aid=el.getAttribute('data-aid');
   _drag.el=el;
   _drag.moved=false;
@@ -13988,6 +13992,40 @@ function dragStart(e){
   document.addEventListener('mousemove',dragMove);
   document.addEventListener('touchend',dragEnd);
   document.addEventListener('mouseup',dragEnd);
+  document.addEventListener('touchcancel',dragAnnuler);
+  // filet : fin du geste écoutée aussi sur le bloc lui-même (un seul traitement grâce à _drag.enCours)
+  if(e.touches){ try{ el.addEventListener('touchend',dragEnd,{once:true}); el.addEventListener('touchcancel',dragAnnuler,{once:true}); }catch(_eT){} }
+}
+// 03/11/2026 : geste interrompu par le système (appel, notification, défilement repris…) -> tout est remis à zéro, rien n'est déplacé
+function dragAnnuler(){
+  if(!_drag.enCours) return;
+  _drag.enCours=false;
+  clearTimeout(_drag.timer);
+  document.removeEventListener('touchmove',dragMove);
+  document.removeEventListener('mousemove',dragMove);
+  document.removeEventListener('touchend',dragEnd);
+  document.removeEventListener('mouseup',dragEnd);
+  document.removeEventListener('touchcancel',dragAnnuler);
+  document.body.style.overflow='';
+  document.body.style.touchAction='';
+  if(_drag.ghost){_drag.ghost.remove();_drag.ghost=null;}
+  document.querySelectorAll('.pg-dropline').forEach(function(l){l.remove();});
+  if(_drag.el){_drag.el.classList.remove('dragging');}
+  _drag.active=false; _drag.moved=false;
+  setTimeout(function(){window._dragInProgress=false;},200);
+  _lxRedessinApresGlisser();
+}
+function _lxGlisserEnCours(){ return !!(_drag.enCours && _drag.debut && (Date.now()-_drag.debut)<20000); }
+function _lxRedessinApresGlisser(){
+  if(!window._lxRedessinDiffere) return;
+  window._lxRedessinDiffere=false;
+  setTimeout(function(){
+    if(_lxGlisserEnCours()) { window._lxRedessinDiffere=true; return; }
+    var _m=document.getElementById("modal"); if(_m && _m.innerHTML.trim()) { return; } // fenêtre ouverte : le prochain cycle (30 s) s'en charge
+    if(window._pendingDrag) return;
+    var _pp=document.getElementById("rdvPopup"); if(_pp && _pp.style.display!=="none" && _pp.innerHTML.trim()) return; // bulle ouverte : idem
+    try{ refreshCurrentView(); }catch(_eR){}
+  },800);
 }
 
 function dragMove(e){
@@ -14029,6 +14067,10 @@ function dragMove(e){
 }
 
 function dragEnd(e){
+  if(!_drag.enCours) return; // déjà traité (écouteur du bloc + du document) ou geste annulé
+  _drag.enCours=false;
+  document.removeEventListener('touchcancel',dragAnnuler);
+  setTimeout(_lxRedessinApresGlisser,0);
   clearTimeout(_drag.timer);
   document.removeEventListener('touchmove',dragMove);
   document.removeEventListener('mousemove',dragMove);
@@ -37883,6 +37925,22 @@ function sendRdvConfirmation(rdvObj){
 
   // Store rdv data for doSendConfirm
   window._confirmRdv=rdvObj;
+  // 03/11/2026 : réservation en ligne déjà confirmée AUTOMATIQUEMENT par e-mail (serveur, une seule fois) -> on le signale
+  // pour éviter d'envoyer une seconde confirmation identique sans le savoir (rien n'est bloqué : un envoi reste possible).
+  try{
+    var _roC=(typeof _lxRdvOnlineDe==="function")?_lxRdvOnlineDe(rdvObj):null;
+    if(_roC && _roC.id && typeof _sb!=="undefined" && _sb && _salonId){
+      _sb.from("messaging_log").select("created_at").eq("dedup_key",_salonId+"|confirmation_resa_auto|"+_roC.id).limit(1).then(function(r){
+        if(!r || r.error || !r.data || !r.data.length || window._confirmRdv!==rdvObj) return;
+        var _bx=document.querySelector("#modal .mbox"); if(!_bx) return;
+        var _d=new Date(r.data[0].created_at), _q=String(_d.getDate()).padStart(2,"0")+"/"+String(_d.getMonth()+1).padStart(2,"0")+" à "+String(_d.getHours()).padStart(2,"0")+"h"+String(_d.getMinutes()).padStart(2,"0");
+        var _n=document.createElement("div");
+        _n.style.cssText="font-size:12px;color:#4caf50;background:rgba(76,175,80,.08);border:1px solid rgba(76,175,80,.3);border-radius:8px;padding:8px 10px;margin:-6px 0 12px";
+        _n.textContent="✅ Une confirmation a déjà été envoyée automatiquement par e-mail au client le "+_q+" (réservation en ligne).";
+        var _h=_bx.querySelector("h2"); if(_h&&_h.nextSibling) _bx.insertBefore(_n,_h.nextSibling.nextSibling||null); else _bx.appendChild(_n);
+      }).catch(function(){});
+    }
+  }catch(_eCA){}
 }
 
 // 2026-10-17 audit réglages (#17) : texte personnalisé de l'e-mail de confirmation ("" = texte standard)
@@ -44626,6 +44684,8 @@ function refreshCurrentView(){
   if(window._lxCalendrierOuvertJusqua && Date.now() < window._lxCalendrierOuvertJusqua) return;
   // FIX 2026-05-23 : ne pas re-render si l'utilisateur saisit (évite de perdre focus/saisie)
   try{var ae=document.activeElement;if(ae&&/^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName))return;}catch(_e){}
+  // 03/11/2026 : pas de redessin pendant un glisser-déposer (doigt posé sur un RDV) -> fait juste après la fin du geste
+  try{ if(typeof _lxGlisserEnCours==="function" && _lxGlisserEnCours()){ window._lxRedessinDiffere=true; return; } }catch(_eG){}
   // Get current page from the header title
   var hdr=document.querySelector("#hdr h1");
   var page=hdr?hdr.textContent:"";

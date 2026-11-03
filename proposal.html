@@ -600,7 +600,10 @@ function v2Barre(){
   if(!o) h+='<div class="k">Choisissez une option</div><div class="s">Une seule option peut être retenue. Les autres seront libérées.</div>';
   else { var ac=Number(o.acompte_montant)||0, paye=ac>0&&STATE.salon&&STATE.salon.stripe_actif;
     h+='<div class="k">Option '+v2Lettre(o.rang)+' sélectionnée</div><div class="t">'+escapeHtml(v2Jour(o.date))+', '+escapeHtml(o.heure)+(o.collaborateur_nom?' avec '+escapeHtml(o.collaborateur_nom):'')+(paye?' · acompte '+v2Eur(ac):'')+'</div>';
-    h+='<div class="s">'+(paye?'Le créneau est revérifié au moment du paiement. Si vous ne payez pas, rien n\'est réservé.':(ac>0?'Acompte de '+v2Eur(ac)+' à régler au salon. ':'')+'Le créneau est revérifié au moment de la confirmation.')+'</div>'; }
+    h+='<div class="s">'+(paye?'Le créneau est revérifié au moment du paiement. Si vous ne payez pas, rien n\'est réservé.':(ac>0?'Acompte de '+v2Eur(ac)+' à régler au salon. ':'')+'Le créneau est revérifié au moment de la confirmation.')+'</div>';
+    // 03/11/2026 (conformité, art. L221-25 C. conso) : RDV dans les 14 jours -> demande expresse d'exécution avant la fin
+    // du délai de rétractation (même case et même texte que la réservation en ligne, site.html)
+    if(v2Dans14j(o.date)) h+='<label style="display:flex;align-items:flex-start;gap:8px;margin-top:10px;padding:10px 12px;border:1px solid rgba(212,168,67,.35);border-radius:10px;font-size:12px;color:var(--text2);line-height:1.5;cursor:pointer;text-align:left"><input type="checkbox" id="v2Retract"'+(V2.retract?' checked':'')+' onchange="V2.retract=this.checked" style="margin-top:2px;flex-shrink:0"><span>'+v2TexteRetractation()+'</span></label>'; }
   h+='</div>';
   if(d.paiement_en_cours&&!o) h+='<div class="s" style="color:#fbbf24">Un paiement est en cours sur cette proposition.</div>';
   if(o){ var ac2=Number(o.acompte_montant)||0, paye2=ac2>0&&STATE.salon&&STATE.salon.stripe_actif;
@@ -608,6 +611,14 @@ function v2Barre(){
   else h+='<button class="btn btn-gold" disabled>Choisissez une option</button>';
   h+='<div class="v2m" style="width:100%;text-align:center"><a href="#refuser" role="button" style="color:#f8a3a3;font-weight:800" onclick="openRefuseModal();return false;">Refuser les propositions</a><div style="font-size:12px;color:var(--text3)">Valable jusqu\'au '+escapeHtml(v2Echeance(d.expires_at))+'</div></div>';
   return h+'</div>';
+}
+function v2Dans14j(d){
+  if(!d||!/^\d{4}-\d{2}-\d{2}/.test(String(d))) return false;
+  var t=new Date(String(d).slice(0,10)+"T12:00:00"), lim=new Date(); lim.setDate(lim.getDate()+14);
+  return t.getTime()<=lim.getTime();
+}
+function v2TexteRetractation(){
+  return 'Je demande que la prestation soit réalisée avant la fin du délai de rétractation de 14 jours. Si je me rétracte après son début, je paierai la part déjà réalisée ; une fois la prestation entièrement réalisée, je ne pourrai plus me rétracter. <a href="/cgu#retractation" target="_blank" rel="noopener" style="color:var(--gold)">Détails</a>';
 }
 function v2Choisir(id){ V2.sel=id; try{ sessionStorage.setItem("lxv2sel_"+STATE.token,id); }catch(_){} renderV2(); try{ var c=document.querySelector('.v2opt[data-id="'+id+'"]'); if(c) c.focus(); }catch(_){} }
 function v2Clavier(ev,el){ var k=ev.key; if(k==="Enter"||k===" "){ ev.preventDefault(); if(el.getAttribute("aria-disabled")!=="true") v2Choisir(el.getAttribute("data-id")); return; }
@@ -617,16 +628,19 @@ function v2Erreur(msg){ var e=document.getElementById("errBox"); if(e){ e.style.
 async function v2Valider(){
   if(V2.envoi) return; var o=v2Opt(V2.sel); if(!o) return;
   var ac=Number(o.acompte_montant)||0, paye=ac>0&&STATE.salon&&STATE.salon.stripe_actif;
+  // 03/11/2026 (L221-25) : la case n'est exigée que si elle est affichée (règle des 14 jours figée à l'affichage)
+  var _ckR=document.getElementById("v2Retract"), _exec=!!(_ckR&&_ckR.checked);
+  if(_ckR && !_ckR.checked){ v2Erreur("Pour un rendez-vous dans les 14 jours, cochez la case : vous demandez que la prestation soit réalisée avant la fin de votre délai de rétractation."); try{ _ckR.focus(); }catch(_){} return; }
   if(!paye && !confirm("Confirmer l'option "+v2Lettre(o.rang)+" : "+v2Jour(o.date)+" à "+o.heure+" ?")) return;
   V2.envoi=true; var b=document.getElementById("v2go"); if(b){ b.disabled=true; b.textContent=paye?"Redirection vers le paiement…":"Confirmation…"; }
   try{
     if(paye){
-      var r=await fetch("/api/rdv-demande/connect-pay",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({token:STATE.token,option_id:o.id})});
+      var r=await fetch("/api/rdv-demande/connect-pay",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({token:STATE.token,option_id:o.id,exec_retract:_exec})});
       var j=await r.json().catch(function(){return {};});
       if(!r.ok||!j.url){ V2.envoi=false; await v2Recharger(); v2Erreur(j.error||"Impossible de créer le paiement"); return; }
       window.location.href=j.url; return;
     }
-    var r2=await fetch(SB_URL+"/functions/v1/rdv-demande-proposal-action",{method:"POST",headers:{"Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY},body:JSON.stringify({token:STATE.token,action:"choose",option_id:o.id})});
+    var r2=await fetch(SB_URL+"/functions/v1/rdv-demande-proposal-action",{method:"POST",headers:{"Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY},body:JSON.stringify({token:STATE.token,action:"choose",option_id:o.id,exec_retract:_exec})});
     var j2=await r2.json().catch(function(){return {};});
     V2.envoi=false;
     if(!r2.ok){ await v2Recharger(); v2Erreur(j2.error||"Confirmation impossible"); return; }

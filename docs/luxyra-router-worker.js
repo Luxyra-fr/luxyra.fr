@@ -188,6 +188,8 @@ async function __wrappedApiHandler(request, url, env) {
       if (url.pathname === "/api/rdv-demande/finalize" && request.method === "POST") return await handleRdvDemandeFinalize(request, env);
       // 2026-10-30 : RDV sur mesure v2 (plusieurs options) — e-mails du serveur (appel interne) et actions de l'établissement
       if (url.pathname === "/api/rdv-demande/notifier" && request.method === "POST") return await handleRdvDemandeNotifier(request, env);
+      // 03/11/2026 (conformité L221-13) : e-mail de confirmation automatique d'une réservation en ligne confirmée sans action de l'établissement (appel interne de la base)
+      if (url.pathname === "/api/rdv-online/confirmation-auto" && request.method === "POST") return await handleRdvOnlineConfirmationAuto(request, env);
       if (url.pathname === "/api/rdv-demande/salon-action" && request.method === "POST") return await handleRdvDemandeSalonAction(request, env);
       // 2026-10-30 (contre-audit, a) : retour depuis Stripe / autre choix / refus -> session de paiement ouverte expirée tout de suite
       if (url.pathname === "/api/rdv-demande/liberer-paiement" && request.method === "POST") return await handleRdvDemandeLibererPaiement(request, env);
@@ -3809,10 +3811,11 @@ async function handleEmpreinteFinalize(request, env) {
 
 async function handleRdvDemandeConnectPay(request, env) {
   try {
-    const { token, option_id } = await readJsonBody(request);
+    const { token, option_id, exec_retract } = await readJsonBody(request);
     if (!token) return jsonResponse({ error: "token requis" }, 400);
     // 2026-10-30 : proposition à plusieurs options -> acompte de l'OPTION choisie (montant relu en base)
-    if (option_id) return await lxSmConnectPay(env, String(token), String(option_id));
+    // 03/11/2026 (L221-25) : case « exécution avant la fin du délai de rétractation » cochée -> transmise au paiement
+    if (option_id) return await lxSmConnectPay(env, String(token), String(option_id), exec_retract === true);
 
     // Récupère la demande via service_role
     const sbUrl = CONFIG.SUPABASE_URL;
@@ -4129,7 +4132,7 @@ function lxSmRefusMetier(r) {
   return null;
 }
 
-async function lxSmConnectPay(env, token, optionId) {
+async function lxSmConnectPay(env, token, optionId, execRetract) {
   try {
     if (!/^[0-9a-f-]{36}$/i.test(optionId)) return jsonResponse({ error: "Choisissez une option" }, 400);
     const p = await lxSmRpc(env, "lx_demande_paiement_preparer", { p_token: token, p_option: optionId });
@@ -4165,6 +4168,7 @@ async function lxSmConnectPay(env, token, optionId) {
       "metadata[demande_id]": d.demande_id,
       "metadata[option_id]": optionId,
       "metadata[option]": String(d.lettre || ""),
+      ...(execRetract ? { "metadata[exec_retract]": "1" } : {}),
       "metadata[customer_name]": String(d.nom || "").slice(0, 120),
       "payment_intent_data[description]": String(d.description || "Acompte").slice(0, 200),
       "payment_intent_data[metadata][demande_id]": d.demande_id,
@@ -4173,7 +4177,7 @@ async function lxSmConnectPay(env, token, optionId) {
     if (d.email) params.customer_email = String(d.email);
     if (!direct) params["payment_intent_data[transfer_data][destination]"] = salon.stripe_connect_id;
     const minute = Math.floor(Date.now() / 60000);
-    const session = await stripeAPI(env, "checkout/sessions", lxBrandingSalon(params, salon), "POST", compte, `lx_sm_cs_${optionId}_${d.session_precedente || "0"}_${minute}`);
+    const session = await stripeAPI(env, "checkout/sessions", lxBrandingSalon(params, salon), "POST", compte, `lx_sm_cs_${optionId}_${d.session_precedente || "0"}_${minute}${execRetract ? "_r" : ""}`);
     if (!session?.url || !session?.id) return jsonResponse({ error: "Erreur du service de paiement : " + String(session?.error?.message || "session non créée").slice(0, 200) }, 502);
     const e = await lxSmRpc(env, "lx_demande_paiement_enregistrer", { p_token: token, p_option: optionId, p_session: session.id, p_expires_at: new Date(expiresAt * 1000).toISOString() });
     if (e.erreur !== undefined || (e.data && e.data.ok === false)) {
@@ -4247,6 +4251,10 @@ async function lxSmFinaliser(env, token, session, compte) {
   }
   const d = f.data || {};
   if (d.ok === true) {
+    // 03/11/2026 (L221-25) : demande expresse cochée sur la proposition -> enregistrée sur le RDV (date posée par la base)
+    if (md.exec_retract === "1" && d.rdv_online_id) {
+      try { await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?id=eq.${encodeURIComponent(d.rdv_online_id)}&exec_avant_retractation=is.false`, { method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify({ exec_avant_retractation: true }) }); } catch (_) {}
+    }
     if (!d.deja) { try { await lxSmNotifier(env, md.demande_id, "confirmation"); } catch (_) {} }
     return jsonResponse({ ok: true, rdv_online_id: d.rdv_online_id, already_confirmed: !!d.deja });
   }
@@ -4386,7 +4394,7 @@ function lxSmMessage(type, d, opts, salon, rdv) {
   // 02/11/2026 (conformité, art. L221-13 C. conso) : rappel de la demande expresse d'exécution avant la fin du délai de rétractation
   const retract = (rdv && rdv.exec_avant_retractation === true)
     ? "Vous avez demandé que la prestation soit réalisée avant la fin de votre délai de rétractation de 14 jours. "
-      + (acompte > 0 ? "Si vous vous rétractez avant le rendez-vous, l'acompte vous est remboursé ; " : "Vous pouvez vous rétracter sans frais avant le rendez-vous ; ")
+      + (acompte > 0 ? "Si vous vous rétractez avant le rendez-vous, l’acompte vous est remboursé ; " : "Vous pouvez vous rétracter sans frais avant le rendez-vous ; ")
       + "une fois la prestation entièrement réalisée, vous ne pouvez plus vous rétracter."
     : "";
   const ligne = (k, v) => `<tr><td style="padding:6px 0;color:#777">${k}</td><td style="padding:6px 0;text-align:right;font-weight:600">${v}</td></tr>`;
@@ -4468,6 +4476,114 @@ async function lxSmNotifier(env, demandeId, type) {
     res.notif = n.erreur === undefined;
   }
   return res;
+}
+
+// ============================================================
+// 03/11/2026 — E-MAIL DE CONFIRMATION AUTOMATIQUE (réservation en ligne)
+// Appelé par la base (déclencheur différé lx_prive.rdv_online_email_confirmation_auto, en-tête x-lx-internal) quand une
+// réservation en ligne devient « confirmée » SANS action de l'établissement : confirmation automatique à la réservation, ou
+// après le paiement en ligne (pending_payment -> confirmed). L'acceptation manuelle (pending -> confirmed) envoie déjà son
+// propre message depuis l'application, et le « sur mesure » a son e-mail de confirmation (lxSmNotifier) : exclus ici.
+// - une seule fois par réservation (clé messaging_log `${salon}|confirmation_resa_auto|${id}`, index unique) ;
+// - e-mail transactionnel : envoyé quel que soit l'accord pour les offres ; adresse marquée « rejetée » -> rien ;
+// - rappel L221-13 si le client a demandé l'exécution avant la fin du délai de rétractation.
+// ============================================================
+function lxConfAutoMessage(r, salon, msgSalon) {
+  const prenom = String(r.client_prenom || "").trim();
+  const nomSalon = String(salon.nom || "L'établissement");
+  const acompte = Number(r.acompte_montant) || 0;
+  const paye = r.acompte_paye === true;
+  const empreinte = ["held", "pending"].includes(String(r.empreinte_status || "")) && Number(r.empreinte_amount) > 0;
+  const items = Array.isArray(r.items) ? r.items : [];
+  const aPartir = items.some((x) => x && x.a_partir_de === true);
+  const domicile = r.lieu === "domicile";
+  const retract = r.exec_avant_retractation === true
+    ? "Vous avez demandé que la prestation soit réalisée avant la fin de votre délai de rétractation de 14 jours. "
+      + (acompte > 0 ? "Si vous vous rétractez avant le rendez-vous, l’acompte vous est remboursé ; " : "Vous pouvez vous rétracter sans frais avant le rendez-vous ; ")
+      + "une fois la prestation entièrement réalisée, vous ne pouvez plus vous rétracter."
+    : "";
+  const titreBadge = (t) => `<div style="text-align:center;margin:-6px 0 18px"><span style="display:inline-block;border:1px solid #c8a84e;background:#fbf6e8;color:#8a6a1a;border-radius:20px;padding:6px 16px;font-size:13px;font-weight:700">${t}</span></div>`;
+  const ligne = (k, v) => `<tr><td style="padding:6px 0;color:#777">${k}</td><td style="padding:6px 0;text-align:right;font-weight:600">${v}</td></tr>`;
+  const quand = `${lxSmDateFr(r.date_rdv, true)} à ${String(r.heure_rdv || "").slice(0, 5)}`;
+  const prix = Number(r.service_prix) || 0;
+  const adrDom = [r.client_adresse, [r.client_adresse_cp, r.client_adresse_ville].filter(Boolean).join(" ")].filter(Boolean).join(", ");
+  const recap = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:14px;border:1px solid #e6dcc3;border-radius:12px;padding:8px 16px;background:#fbf9f4">`
+    + ligne("Quand", ccEsc(quand)) + (Number(r.duree_minutes) > 0 ? ligne("Durée", lxSmDuree(r.duree_minutes)) : "")
+    + (r.collaborateur_nom ? ligne("Avec", ccEsc(r.collaborateur_nom)) : "") + ligne("Prestation", ccEsc(r.service_nom || ""))
+    + (domicile ? ligne("Lieu", "À domicile" + (adrDom ? " — " + ccEsc(adrDom) : "")) : "")
+    + (prix > 0 ? ligne(aPartir ? "Prix (à partir de)" : "Prix", ccEur(prix)) : "")
+    + (acompte > 0 ? ligne(paye ? "Acompte payé" : "Acompte (à régler)", ccEur(acompte)) : "")
+    + (empreinte ? ligne("Empreinte bancaire", "Pré-autorisation de " + ccEur(r.empreinte_amount) + " (non débitée)") : "")
+    + `</table>`;
+  const maps = domicile ? "" : [salon.adresse, salon.cp, salon.ville].filter(Boolean).join(" ");
+  const msg = String(msgSalon || "").trim().slice(0, 600);
+  const corps = titreBadge("Rendez-vous confirmé") + `<p style="font-weight:700;margin:0 0 10px">Bonjour${prenom ? " " + ccEsc(prenom) : ""},</p>`
+    + `<p>Votre rendez-vous ${domicile ? "à domicile " : ""}avec <b>${ccEsc(nomSalon)}</b> est confirmé.</p>` + recap
+    + (aPartir ? `<p style="font-size:13px;color:#555">Prix indiqué « à partir de » : le prix final est fixé à l’établissement selon la prestation réalisée.</p>` : "")
+    + (msg ? `<div style="border-left:3px solid #c8a84e;padding:4px 12px;margin:14px 0;color:#444;font-style:italic;font-size:14px">${ccEsc(msg).replace(/\n/g, "<br>")}</div>` : "")
+    + (maps ? lxMailBouton("Itinéraire", "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(maps)) : "")
+    + (retract ? `<p style="font-size:13px;color:#555">${ccEsc(retract)}</p>` : "")
+    + `<p style="font-size:13px;color:#777">Un empêchement ? Prévenez l’établissement au plus tôt. Vous retrouvez ce rendez-vous dans votre espace Luxyra.</p>` + lxSmPiedSalon(salon);
+  return {
+    sujet: `Rendez-vous confirmé — ${nomSalon}`,
+    html: lxMailLayout(corps, { salon: nomSalon }),
+    texte: `Bonjour${prenom ? " " + prenom : ""},\n\nVotre rendez-vous ${domicile ? "à domicile " : ""}avec ${nomSalon} est confirmé : ${quand}${Number(r.duree_minutes) > 0 ? " (" + lxSmDuree(r.duree_minutes) + ")" : ""}${r.collaborateur_nom ? " avec " + r.collaborateur_nom : ""}.\nPrestation : ${r.service_nom || ""}${prix > 0 ? " — " + (aPartir ? "à partir de " : "") + ccEur(prix) : ""}${acompte > 0 ? (paye ? " — acompte payé " : " — acompte à régler ") + ccEur(acompte) : ""}.${msg ? "\n\n" + msg : ""}${retract ? "\n\n" + retract : ""}\n\nUn empêchement ? Prévenez l’établissement au plus tôt.\n\n${nomSalon}`,
+  };
+}
+async function lxConfAutoEnvoyer(env, rdvId, opts) {
+  opts = opts || {};
+  const sel = "id,salon_id,status,client_email,client_prenom,client_nom,date_rdv,heure_rdv,duree_minutes,service_nom,service_prix,items,collaborateur_nom,acompte_montant,acompte_paye,empreinte_status,empreinte_amount,lieu,client_adresse,client_adresse_cp,client_adresse_ville,exec_avant_retractation,payment_intent_id,message";
+  const lire = async () => {
+    const rr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?id=eq.${encodeURIComponent(rdvId)}&select=${sel}&limit=1`, { headers: _sbHeaders(env) });
+    const a = rr.ok ? await rr.json() : [];
+    return Array.isArray(a) ? a[0] || null : null;
+  };
+  let r = await lire();
+  if (!r) return { ok: true, ignore: "introuvable" };
+  // paiement Stripe : laisse le temps à un ancien parcours « sur mesure » (v1) de rattacher sa demande avant de décider
+  if (r.payment_intent_id && !opts.sansAttente) { await new Promise((ok) => setTimeout(ok, 3000)); r = (await lire()) || r; }
+  if (r.status !== "confirmed") return { ok: true, ignore: "statut " + r.status };
+  if (String(r.date_rdv || "") < lxParisAujourdhui()) return { ok: true, ignore: "rdv passé" };
+  const email = String(r.client_email || "").trim();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { ok: true, ignore: "sans e-mail" };
+  // « sur mesure » : e-mail de confirmation propre (lxSmNotifier) -> jamais deux confirmations
+  if (/^RDV sur mesure \(proposition #/.test(String(r.message || ""))) return { ok: true, ignore: "sur mesure" };
+  for (const q of [`rdv_demandes?rdv_online_id=eq.${r.id}&select=id&limit=1`, `rdv_demande_paiements?rdv_online_id=eq.${r.id}&select=id&limit=1`]) {
+    const rq = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/${q}`, { headers: _sbHeaders(env) });
+    if (!rq.ok) return { ok: false, erreur: "lecture " + q.split("?")[0] };
+    const aq = await rq.json();
+    if (Array.isArray(aq) && aq.length) return { ok: true, ignore: "sur mesure" };
+  }
+  if (await lxEmailClientRejete(env, email)) return { ok: true, ignore: "adresse rejetée" };
+  const salon = await supabaseGet(env, r.salon_id);
+  if (!salon || salon.ferme_le) return { ok: true, ignore: "établissement indisponible" };
+  let msgSalon = "";
+  try {
+    const rs = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/site_config?salon_id=eq.${r.salon_id}&select=message_confirmation&limit=1`, { headers: _sbHeaders(env) });
+    const as = rs.ok ? await rs.json() : [];
+    msgSalon = (Array.isArray(as) && as[0] && as[0].message_confirmation) || "";
+  } catch (_) {}
+  const m = lxConfAutoMessage(r, salon, msgSalon);
+  if (opts.apercu) return { ok: true, apercu: m };
+  const toName = [r.client_prenom, r.client_nom].filter(Boolean).join(" ");
+  const cle = `${r.salon_id}|confirmation_resa_auto|${r.id}`;
+  const resa = await lxEmailReserver(env, { salonId: r.salon_id, to: email, toName, subject: m.sujet, html: m.html, dedupKey: cle });
+  if (resa.doublon) return { ok: true, email: "deja" };
+  if (!resa.cle) return { ok: false, erreur: "réservation anti-doublon impossible" }; // jamais d'envoi sans verrou (pas de doublon possible)
+  let envoi = null;
+  try { envoi = await brevoSendEmail(env, { to: email, toName, senderName: String(salon.nom || "Luxyra").slice(0, 70), replyTo: salon.email || undefined, subject: m.sujet, htmlContent: m.html, textContent: m.texte }); }
+  catch (e) { envoi = { code: "exception", message: String((e && e.message) || e) }; }
+  if (envoi && envoi.messageId) return { ok: true, email: "envoye" };
+  await lxEmailLiberer(env, resa.cle);
+  await reportWorkerError(env, "worker:confirmation-auto", new Error("E-mail de confirmation automatique refusé par Brevo"), { rdv_online_id: r.id, reponse: JSON.stringify(envoi || {}).slice(0, 200) }, "warning");
+  return { ok: false, email: "echec" };
+}
+async function handleRdvOnlineConfirmationAuto(request, env) {
+  if (!(await lxIsInternal(request, env))) return jsonResponse({ error: "Accès refusé" }, 403);
+  const { rdv_online_id } = await readJsonBody(request);
+  if (!/^[0-9a-f-]{36}$/i.test(String(rdv_online_id || ""))) return jsonResponse({ error: "Paramètres invalides" }, 400);
+  try { return jsonResponse(await lxConfAutoEnvoyer(env, String(rdv_online_id))); }
+  catch (e) { await reportWorkerError(env, "worker:confirmation-auto", e, { rdv_online_id }, "error"); return jsonResponse({ ok: false, error: "Envoi impossible" }, 500); }
 }
 
 async function handleRdvDemandeNotifier(request, env) {
