@@ -417,12 +417,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261103-4"></script>
+<script src="luxyra-supabase.js?v=20261103-5"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261103-4";
+  var attendu="20261103-5";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -12144,6 +12144,8 @@ function rHome(){
     _lxNbBandeaux++;
     h+='<div onclick="window._settTab=\'salon\';go(\'settings\')" style="cursor:pointer;background:#1d1408;border:1.5px solid rgba(255,152,0,.6);box-shadow:0 4px 18px rgba(0,0,0,.5);border-radius:14px;padding:12px 14px;margin-bottom:12px;display:flex;gap:10px;align-items:center"><div style="font-size:26px">\ud83d\udcc4</div><div style="flex:1"><div style="font-weight:800;color:#ffb74d">Entreprise en cours d\u2019immatriculation</div><div style="font-size:12px;color:rgba(255,255,255,.85)">Ajoutez votre SIRET d\u00e8s r\u00e9ception : Param\u00e8tres \u2192 Infos \u00e9tablissement. Il est obligatoire pour activer votre abonnement.</div></div><div style="color:#ffb74d;font-size:18px">\u203a</div></div>';
   }
+  // 03/11/2026 : contrat d'abonnement à valider (propriétaire seulement, non bloquant, masquable pour la session)
+  try{ if(!_lxNbBandeaux && window._lxContratAsigner && !window._lxContratMasque && !window._lxVueAdmin && !window._lxDemo && _lxContratEstProprio() && window.LX_CONTRAT_VERSION){ _lxNbBandeaux++; h+=_lxContratBandeau(); } }catch(_eCt){}
   // 2026-10-27 : envoi au comptable en attente / bloqué (mois précédent non clôturé, écart, échec) — rien si tout va bien
   try{ if(!_lxNbBandeaux && typeof _lxEcCarteAccueil==="function"){ var _ecH=_lxEcCarteAccueil(); if(_ecH){ _lxNbBandeaux++; h+=_ecH; } } }catch(_eEc){}
   // 2026-10-10 : attestation de conformité de la caisse à signer (volet 2) — rappel sur l'accueil, masquable 7 jours
@@ -40429,6 +40431,134 @@ async function lxAttStatutCharger(){
 }
 setInterval(function(){ try { if (window._salonId && !window._lxAttStatutCharge) lxAttStatutCharger(); } catch(e) {} }, 6000);
 window.lxDownloadAttestationNF525 = lxDownloadAttestationNF525;
+
+// =====================================================================
+// 03/11/2026 — SIGNATURE DU CONTRAT DANS L'APPLI (maquette validée par Alexandre)
+// Bandeau NON bloquant sur l'accueil, pour le propriétaire seulement (opérateur « admin » ou aucun opérateur),
+// quand le contrat n'est pas signé, qu'une version plus récente existe, ou que les conditions particulières ont changé.
+// Texte = /contrat-luxyra.js (source unique, comme l'inscription). Enregistrement : RPC lx_contrat_signer (date et IP serveur).
+// Jamais en vue admin ni en démo ; jamais de blocage de la caisse, du planning ou du hors ligne.
+function _lxContratEstProprio(){
+  try{ if(typeof CURRENT_OPERATOR==="undefined" || !CURRENT_OPERATOR) return true; return CURRENT_OPERATOR.role==="admin"; }catch(_e){ return true; }
+}
+function _lxContratChargerJs(){
+  return new Promise(function(ok,ko){
+    if(window.lxContratHTML) return ok();
+    var sc=document.createElement("script"); sc.src="/contrat-luxyra.js?v=20261103-1";
+    sc.onload=function(){ window.lxContratHTML?ok():ko(new Error("contrat")); }; sc.onerror=function(){ ko(new Error("contrat")); };
+    document.head.appendChild(sc);
+  });
+}
+function _lxContratVersionInf(a,b){ var pa=String(a||"0").split("."), pb=String(b||"0").split("."); for(var i=0;i<2;i++){ var x=+pa[i]||0, y=+pb[i]||0; if(x!==y) return x<y; } return false; }
+function _lxContratSig(v){ var o=v; try{ if(typeof o==="string") o=JSON.parse(o); }catch(_e){ o=null; } return (o && typeof o==="object" && !Array.isArray(o)) ? o : null; }
+async function lxContratStatutCharger(){
+  if(window._lxContratCharge || !window._salonId || typeof _sb==="undefined" || !_sb || window._lxVueAdmin || window._lxDemo) return;
+  if(navigator.onLine===false) return;
+  window._lxContratCharge=true;
+  try{
+    var se=await _sb.auth.getSession(); var uid=se&&se.data&&se.data.session&&se.data.session.user&&se.data.session.user.id;
+    var r=await _sb.from("salons").select("id,user_id,nom,email,forme_juridique,gerant_nom,gerant_prenom,contrat_signature,conditions_particulieres,ferme_le").eq("id",window._salonId).maybeSingle();
+    if(r.error) throw r.error;
+    var s=r.data;
+    if(!s || !uid || s.user_id!==uid || s.ferme_le){ window._lxContratAsigner=false; return; }
+    await _lxContratChargerJs();
+    var sig=_lxContratSig(s.contrat_signature), cp=String(s.conditions_particulieres||"").trim();
+    window._lxContratInfo={s:s, sig:sig, cp:cp};
+    window._lxContratAsigner = !sig || !sig.contrat_version || _lxContratVersionInf(sig.contrat_version, window.LX_CONTRAT_VERSION) || String(sig.conditions_particulieres||"").trim()!==cp;
+    if(window._lxContratAsigner && !window._lxContratMasque && (window._currentPage||"home")==="home" && typeof go==="function" && !document.getElementById("lxContratModal") && !(document.getElementById("modal")||{}).innerHTML) go("home");
+  }catch(x){ window._lxContratCharge=false; }
+}
+setInterval(function(){ try{ if(window._salonId && !window._lxContratCharge) lxContratStatutCharger(); }catch(e){} }, 7000);
+function _lxContratBandeau(){
+  return '<div id="lxContratBandeau" style="display:flex;align-items:center;gap:10px;background:#17130a;border:1.5px solid rgba(200,168,78,.65);box-shadow:0 4px 18px rgba(0,0,0,.5);border-radius:14px;padding:12px 14px;margin-bottom:12px"><div style="font-size:24px">\ud83d\udcdd</div><div style="flex:1;cursor:pointer" onclick="lxContratOuvrir()"><div style="font-weight:800;color:var(--gold)">Votre contrat Luxyra (version '+_lxEsc(window.LX_CONTRAT_VERSION||"")+') est \u00e0 valider</div><div style="font-size:12px;color:rgba(255,255,255,.85)">Cela prend 1 minute. Caisse et planning restent utilisables normalement. <b style="color:var(--gold)">Lire et valider \u203a</b></div></div><button aria-label="Plus tard" onclick="event.stopPropagation();window._lxContratMasque=true;var b=document.getElementById(\'lxContratBandeau\');if(b)b.remove();" style="background:none;border:none;color:rgba(255,255,255,.6);font-size:20px;cursor:pointer;padding:4px 6px">\u00d7</button></div>';
+}
+function _lxContratFermer(){ var m=document.getElementById("lxContratModal"); if(m) m.remove(); }
+function _lxContratQualiteDefaut(s, sig){
+  if(sig && sig.qualite) return sig.qualite;
+  var f=String((s&&s.forme_juridique)||"").toLowerCase();
+  if(/sas|sa\b|soci\u00e9t\u00e9 par actions/.test(f)) return "Pr\u00e9sident(e)";
+  if(/sarl|eurl|snc|sci/.test(f)) return "G\u00e9rant(e)";
+  if(/micro|individuel|\bei\b|eirl|auto/.test(f)) return "Entrepreneur individuel";
+  return "";
+}
+async function lxContratOuvrir(){
+  if(navigator.onLine===false){ toast("Connexion internet n\u00e9cessaire pour signer le contrat","warning"); return; }
+  try{ if(!window._lxContratInfo){ window._lxContratCharge=false; await lxContratStatutCharger(); } await _lxContratChargerJs(); }catch(_e){ toast("Contrat indisponible, r\u00e9essayez dans un instant","warning"); return; }
+  var I=window._lxContratInfo; if(!I){ toast("Contrat indisponible, r\u00e9essayez dans un instant","warning"); return; }
+  var s=I.s, nom=((s.gerant_prenom||"")+" "+(s.gerant_nom||"")).trim();
+  var qual=(s.id==="e0cf27c7-d402-4d76-8e91-9ef5231b3582"&&!(I.sig&&I.sig.qualite))?"Pr\u00e9sidente":_lxContratQualiteDefaut(s, I.sig); // qualité indiquée par Alexandre pour cet établissement
+  _lxContratFermer();
+  var m=document.createElement("div"); m.id="lxContratModal";
+  m.style.cssText="position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.78);display:flex;align-items:flex-start;justify-content:center;padding:14px;overflow:auto";
+  var ip='width:100%;box-sizing:border-box;padding:11px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.15);background:#0f121a;color:#fff;font-size:16px';
+  m.innerHTML='<div style="background:#12141e;border:1px solid rgba(200,168,78,.4);border-radius:16px;padding:18px;max-width:640px;width:100%;margin:auto">'+
+    '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px"><div><div style="font-weight:800;font-size:17px;color:#fff">Contrat d\u2019abonnement Luxyra</div><div style="font-size:12px;color:rgba(255,255,255,.6);margin-top:2px">Version '+_lxEsc(window.LX_CONTRAT_VERSION)+' \u00b7 '+_lxEsc(s.nom||"")+'</div></div><button onclick="_lxContratFermer()" aria-label="Fermer" style="background:none;border:none;color:rgba(255,255,255,.6);font-size:22px;cursor:pointer">\u00d7</button></div>'+
+    '<div id="lxContratTexte" style="background:#fff;color:#222;border-radius:10px;padding:14px;margin:12px 0 6px;max-height:42vh;overflow:auto;font-size:12.5px;line-height:1.55">'+window.lxContratHTML({conditionsParticulieres:I.cp})+'</div>'+
+    '<div style="font-size:12px;margin-bottom:10px"><a href="#" onclick="lxContratImprimer(false);return false" style="color:var(--gold)">\ud83d\udcc4 T\u00e9l\u00e9charger / imprimer (PDF)</a> \u00b7 <a href="/cgv" target="_blank" style="color:var(--gold)">CGV</a> \u00b7 <a href="/dpa" target="_blank" style="color:var(--gold)">DPA</a></div>'+
+    '<label style="display:flex;gap:10px;align-items:flex-start;font-size:13px;line-height:1.45;color:#e8edf5;margin:6px 0 10px;cursor:pointer"><input type="checkbox" id="lxContratOk" style="width:20px;height:20px;flex:none;margin-top:1px"><span>J\u2019ai lu et j\u2019accepte le contrat d\u2019abonnement (version '+_lxEsc(window.LX_CONTRAT_VERSION)+')'+(I.cp?', y compris ses conditions particuli\u00e8res':'')+', les <a href="/cgv" target="_blank" style="color:var(--gold)">Conditions G\u00e9n\u00e9rales de Vente</a> et l\u2019<a href="/dpa" target="_blank" style="color:var(--gold)">accord de sous-traitance des donn\u00e9es (DPA)</a>.</span></label>'+
+    '<label style="display:block;font-size:11px;color:rgba(255,255,255,.6);margin-bottom:3px">Nom et pr\u00e9nom du signataire</label><input id="lxContratNom" maxlength="120" autocomplete="name" value="'+_lxEsc(nom)+'" style="'+ip+';margin-bottom:8px">'+
+    '<label style="display:block;font-size:11px;color:rgba(255,255,255,.6);margin-bottom:3px">Qualit\u00e9 (ex. g\u00e9rante, pr\u00e9sidente)</label><input id="lxContratQual" maxlength="80" value="'+_lxEsc(qual)+'" style="'+ip+'">'+
+    '<div id="lxContratErr" style="display:none;color:#ef9a9a;font-size:13px;margin-top:8px"></div>'+
+    '<button id="lxContratGo" onclick="lxContratSigner()" style="width:100%;padding:13px;border-radius:10px;border:none;background:linear-gradient(135deg,#e8c873,#a8862e);color:#111;font-weight:800;font-size:15px;margin-top:12px;cursor:pointer">Signer le contrat</button>'+
+    '<div style="text-align:center;margin-top:8px"><a href="#" onclick="window._lxContratMasque=true;_lxContratFermer();var b=document.getElementById(\'lxContratBandeau\');if(b)b.remove();return false" style="font-size:12px;color:rgba(255,255,255,.6)">Plus tard</a></div>'+
+    '<div style="font-size:11px;color:rgba(255,255,255,.45);line-height:1.5;margin-top:10px">Preuve enregistr\u00e9e : version, date et heure, empreinte num\u00e9rique (SHA-256) du texte, nom et qualit\u00e9 saisis, adresse IP. Une copie vous est envoy\u00e9e par e-mail.</div>'+
+    '</div>';
+  document.body.appendChild(m);
+}
+async function _lxContratSha256(t){ var b=await crypto.subtle.digest("SHA-256", new TextEncoder().encode(t)); return Array.from(new Uint8Array(b)).map(function(x){ return x.toString(16).padStart(2,"0"); }).join(""); }
+async function lxContratSigner(){
+  var err=function(t){ var e=document.getElementById("lxContratErr"); if(e){ e.style.display="block"; e.textContent=t; } };
+  var I=window._lxContratInfo; if(!I) return;
+  if(!(document.getElementById("lxContratOk")||{}).checked){ err("Cochez la case pour accepter le contrat."); return; }
+  var nom=String((document.getElementById("lxContratNom")||{}).value||"").replace(/[<>"\\]/g,"").trim();
+  var qual=String((document.getElementById("lxContratQual")||{}).value||"").replace(/[<>"\\]/g,"").trim();
+  if(nom.length<3){ err("Indiquez votre nom et pr\u00e9nom."); return; }
+  if(qual.length<2){ err("Indiquez votre qualit\u00e9 (ex. g\u00e9rante, pr\u00e9sidente)."); return; }
+  var btn=document.getElementById("lxContratGo"); if(btn){ btn.disabled=true; btn.textContent="\u23f3 Signature en cours\u2026"; }
+  try{
+    var dateTxt=new Date().toISOString();
+    var texte=window.lxContratTexte({conditionsParticulieres:I.cp, date:dateTxt});
+    var hash=await _lxContratSha256(texte);
+    var r=await _sb.rpc("lx_contrat_signer",{p_salon_id:window._salonId, p_version:window.LX_CONTRAT_VERSION, p_hash:hash, p_signataire:nom, p_qualite:qual, p_user_agent:(navigator.userAgent||"").slice(0,500)});
+    if(r.error) throw r.error;
+    var sig=r.data||{}; I.sig=sig; I.dateTxt=dateTxt; window._lxContratAsigner=false; window._lxContratDerniere=sig;
+    _lxContratEmail(sig, I, dateTxt);
+    var m=document.getElementById("lxContratModal");
+    if(m) m.firstChild.innerHTML='<div style="background:rgba(76,175,80,.1);border:1px solid rgba(76,175,80,.5);border-radius:12px;padding:14px;font-size:14px;line-height:1.55;color:#c8e6c9">\u2705 <b>Contrat sign\u00e9 le '+_lxEsc(new Date(sig.date||dateTxt).toLocaleString("fr-FR"))+'.</b><br>Une copie vous a \u00e9t\u00e9 envoy\u00e9e par e-mail ('+_lxEsc(sig.email||"")+').</div>'+
+      '<button onclick="lxContratImprimer(true)" style="width:100%;padding:12px;border-radius:10px;border:1px solid rgba(200,168,78,.5);background:none;color:var(--gold);font-weight:700;margin-top:12px;cursor:pointer">\ud83d\udcc4 T\u00e9l\u00e9charger le contrat sign\u00e9 (PDF)</button>'+
+      '<button onclick="_lxContratFermer();if(typeof go===\'function\')go(\'home\')" style="width:100%;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#e8c873,#a8862e);color:#111;font-weight:800;margin-top:8px;cursor:pointer">Fermer</button>';
+  }catch(x){
+    if(btn){ btn.disabled=false; btn.textContent="Signer le contrat"; }
+    err("Signature non enregistr\u00e9e : "+String((x&&x.message)||x).slice(0,160));
+  }
+}
+function lxContratImprimer(signe){
+  var I=window._lxContratInfo; if(!I || !window.lxContratHTML) return;
+  var sig=signe?(window._lxContratDerniere||I.sig):null;
+  var w=window.open("","_blank","width=800,height=600"); if(!w){ toast("Autorisez l\u2019ouverture de fen\u00eatres pour imprimer","warning"); return; }
+  var E=_lxEsc;
+  var h='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Contrat Luxyra'+(sig?' (sign\u00e9)':'')+'</title><style>body{font-family:Georgia,serif;color:#1a1a1a;padding:40px;max-width:700px;margin:0 auto;line-height:1.8;font-size:13px}h1{font-size:20px;text-align:center;border-bottom:2px solid #c8a84e;padding-bottom:10px}h3{font-size:14px;margin-top:20px}.sig{margin-top:30px;border:2px solid #c8a84e;border-radius:10px;padding:16px;background:#faf8f2;font-size:12px}.hash{font-family:monospace;font-size:9px;word-break:break-all;color:#888}</style></head><body>';
+  h+='<div style="text-align:center;font-size:28px;font-weight:900;color:#c8a84e;letter-spacing:3px">LUXYRA</div><h1>Contrat d\u2019abonnement'+(sig?' \u2014 SIGN\u00c9':'')+'</h1>';
+  h+=window.lxContratHTML({conditionsParticulieres:I.cp, date:(sig&&I.dateTxt)||undefined});
+  if(sig) h+='<div class="sig"><b>\u2705 Signature \u00e9lectronique</b><br>Signataire : '+E(sig.signataire)+' ('+E(sig.qualite||"")+')<br>\u00c9tablissement : '+E(sig.etablissement||"")+'<br>E-mail : '+E(sig.email||"")+'<br>Date : '+E(new Date(sig.date).toLocaleString("fr-FR"))+'<br>Version : '+E(sig.contrat_version)+' \u00b7 CGV, confidentialit\u00e9 et DPA accept\u00e9s<div class="hash">Empreinte SHA-256 du contrat : '+E(sig.contrat_hash)+'</div></div>';
+  h+='<div style="margin-top:30px;font-size:11px;color:#888;text-align:center">Luxyra \u2014 Alexandre Jensen \u2014 SIRET 910 928 464 00023 \u2014 contact@luxyra.fr</div></body></html>';
+  w.document.write(h); w.document.close(); setTimeout(function(){ try{ w.print(); }catch(_e){} },500);
+}
+async function _lxContratEmail(sig, I, dateTxt){
+  try{
+    var se=await _sb.auth.getSession(); var ses=se&&se.data&&se.data.session; if(!ses) return;
+    var to=(ses.user&&ses.user.email)||sig.email; if(!to) return;
+    var E=_lxEsc;
+    var html='<div style="font-family:Arial,sans-serif;background:#f6f3ea;padding:20px"><div style="max-width:640px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden"><div style="background:#111;padding:18px 24px;color:#c8a84e;font-size:22px;font-weight:900;letter-spacing:3px">LUXYRA</div><div style="padding:20px 24px;font-size:14px;color:#222;line-height:1.6">';
+    html+='<p>Bonjour,</p><p>Vous venez de signer votre contrat d\u2019abonnement Luxyra. Voici votre copie, \u00e0 conserver.</p>';
+    html+='<div style="background:#faf8f2;border:1px solid #e8dcb5;border-radius:8px;padding:12px;font-size:13px"><b>Signature :</b> le '+E(new Date(sig.date||dateTxt).toLocaleString("fr-FR"))+' par '+E(sig.signataire)+' ('+E(sig.qualite||"")+') pour '+E(sig.etablissement||"")+'<br><b>Contrat :</b> version '+E(sig.contrat_version)+' \u2014 empreinte SHA-256 '+E(String(sig.contrat_hash||"").slice(0,24))+'\u2026<br><b>CGV :</b> <a href="https://luxyra.fr/cgv" style="color:#b8922e">luxyra.fr/cgv</a> \u00b7 <b>DPA :</b> <a href="https://luxyra.fr/dpa" style="color:#b8922e">luxyra.fr/dpa</a> \u00b7 <b>Confidentialit\u00e9 :</b> <a href="https://luxyra.fr/politique-confidentialite" style="color:#b8922e">luxyra.fr/politique-confidentialite</a></div>';
+    html+='<div style="border-top:1px solid #eee;margin-top:18px;padding-top:14px;font-size:12.5px;color:#333">'+window.lxContratHTML({conditionsParticulieres:I.cp, date:dateTxt})+'</div>';
+    html+='</div><div style="padding:14px 24px;font-size:11px;color:#888;border-top:1px solid #eee">Luxyra \u2014 Alexandre JENSEN, entrepreneur individuel \u2014 SIRET 910 928 464 00023 \u2014 contact@luxyra.fr</div></div></div>';
+    await fetch("/api/email/custom",{ method:"POST", headers:{"Content-Type":"application/json","Authorization":"Bearer "+ses.access_token},
+      body:JSON.stringify({to:to, toName:sig.signataire||"", salonName:"Luxyra", salonEmail:"contact@luxyra.fr", subject:"Votre contrat Luxyra sign\u00e9 (version "+sig.contrat_version+")", htmlContent:html, salon_id:window._salonId}) });
+  }catch(e){ console.log("[contrat] e-mail de copie :", e); }
+}
+window.lxContratOuvrir=lxContratOuvrir; window.lxContratSigner=lxContratSigner; window.lxContratImprimer=lxContratImprimer;
 
 // Télécharge l'archive NF525 du salon (tickets + clôtures + chaîne hash)
 // =====================================================================
