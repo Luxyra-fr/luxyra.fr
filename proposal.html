@@ -603,10 +603,12 @@ function v2Barre(){
     h+='<div class="s">'+(paye?'Le créneau est revérifié au moment du paiement. Si vous ne payez pas, rien n\'est réservé.':(ac>0?'Acompte de '+v2Eur(ac)+' à régler au salon. ':'')+'Le créneau est revérifié au moment de la confirmation.')+'</div>';
     // 03/11/2026 (conformité, art. L221-25 C. conso) : RDV dans les 14 jours -> demande expresse d'exécution avant la fin
     // du délai de rétractation (même case et même texte que la réservation en ligne, site.html)
-    if(v2Dans14j(o.date)) h+='<label style="display:flex;align-items:flex-start;gap:8px;margin-top:10px;padding:10px 12px;border:1px solid rgba(212,168,67,.35);border-radius:10px;font-size:12px;color:var(--text2);line-height:1.5;cursor:pointer;text-align:left"><input type="checkbox" id="v2Retract"'+(V2.retract?' checked':'')+' onchange="V2.retract=this.checked" style="margin-top:2px;flex-shrink:0"><span>'+v2TexteRetractation()+'</span></label>'; }
+    }
   h+='</div>';
   if(d.paiement_en_cours&&!o) h+='<div class="s" style="color:#fbbf24">Un paiement est en cours sur cette proposition.</div>';
   if(o){ var ac2=Number(o.acompte_montant)||0, paye2=ac2>0&&STATE.salon&&STATE.salon.stripe_actif;
+    // 03/11 : case HORS de .txt (masqué sous 700 px) -> toujours visible, juste avant le bouton
+    if(v2Dans14j(o.date)) h+='<label class="v2retract" style="width:100%;box-sizing:border-box;display:flex;align-items:flex-start;gap:8px;margin:0;padding:10px 12px;border:1px solid rgba(212,168,67,.35);border-radius:10px;font-size:12px;color:var(--text2);line-height:1.5;cursor:pointer;text-align:left"><input type="checkbox" id="v2Retract"'+(V2.retract?' checked':'')+' onchange="V2.retract=this.checked" style="margin-top:2px;flex-shrink:0"><span>'+v2TexteRetractation()+'</span></label>';
     h+='<button class="btn btn-gold" id="v2go" onclick="v2Valider()">'+(paye2?'Payer '+v2Eur(ac2)+' et confirmer':'Confirmer ce rendez-vous')+'</button>'; }
   else h+='<button class="btn btn-gold" disabled>Choisissez une option</button>';
   h+='<div class="v2m" style="width:100%;text-align:center"><a href="#refuser" role="button" style="color:#f8a3a3;font-weight:800" onclick="openRefuseModal();return false;">Refuser les propositions</a><div style="font-size:12px;color:var(--text3)">Valable jusqu\'au '+escapeHtml(v2Echeance(d.expires_at))+'</div></div>';
@@ -614,8 +616,10 @@ function v2Barre(){
 }
 function v2Dans14j(d){
   if(!d||!/^\d{4}-\d{2}-\d{2}/.test(String(d))) return false;
-  var t=new Date(String(d).slice(0,10)+"T12:00:00"), lim=new Date(); lim.setDate(lim.getDate()+14);
-  return t.getTime()<=lim.getTime();
+  // 03/11 : jour calendaire (J+14 inclus), indépendant de l'heure de consultation
+  var n=new Date(); n.setHours(12,0,0,0); n.setDate(n.getDate()+14);
+  var lim=n.getFullYear()+"-"+String(n.getMonth()+1).padStart(2,"0")+"-"+String(n.getDate()).padStart(2,"0");
+  return String(d).slice(0,10)<=lim;
 }
 function v2TexteRetractation(){
   return 'Je demande que la prestation soit réalisée avant la fin du délai de rétractation de 14 jours. Si je me rétracte après son début, je paierai la part déjà réalisée ; une fois la prestation entièrement réalisée, je ne pourrai plus me rétracter. <a href="/cgu#retractation" target="_blank" rel="noopener" style="color:var(--gold)">Détails</a>';
