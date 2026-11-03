@@ -9869,6 +9869,35 @@ async function runRgpdFichiers(env) {
       } catch (_) { out.erreurs++; }
     }
   } catch (_) { out.erreurs++; }
+  // 03/11/2026 : Kbis supprimé 5 ans après la fin du contrat (prescription commerciale). Mêmes garde-fous que pour l'identité :
+  // chemin strictement « documents/<salon>/kbis_… », relecture du dossier, référence effacée en base seulement après suppression.
+  try {
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/lx_justificatifs_kbis_a_supprimer`, { method: "POST", headers: _sbHeaders(env), body: "{}" });
+    for (const x of (r.ok ? (await r.json()) || [] : [])) {
+      const sid = String((x && x.salon_id) || "");
+      if (!/^[0-9a-f-]{36}$/i.test(sid)) continue;
+      const chemins = [];
+      for (const u of ((x && x.chemins) || [])) {
+        const t = String(u || ""), i = t.indexOf("/salon-documents/");
+        const chemin = decodeURIComponent((i >= 0 ? t.slice(i + 17) : t).split("?")[0]);
+        if (chemin.startsWith(`documents/${sid}/`) && /\/kbis_[^/]+$/.test(chemin)) chemins.push(chemin);
+      }
+      if (chemins.length !== ((x && x.chemins) || []).length) { out.erreurs++; continue; }
+      try {
+        if (chemins.length) {
+          const d = await fetch(`${CONFIG.SUPABASE_URL}/storage/v1/object/salon-documents`, { method: "DELETE", headers: _sbHeaders(env), body: JSON.stringify({ prefixes: chemins }) });
+          if (!d.ok) { out.erreurs++; continue; }
+          const lv = await fetch(`${CONFIG.SUPABASE_URL}/storage/v1/object/list/salon-documents`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ prefix: `documents/${sid}`, limit: 1000 }) });
+          if (!lv.ok) { out.erreurs++; continue; }
+          const restants = ((await lv.json()) || []).map((it) => `documents/${sid}/${it.name}`);
+          if (chemins.some((c) => restants.includes(c))) { out.erreurs++; continue; }
+        }
+        const e = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/lx_justificatifs_kbis_efface`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_salon: sid }) });
+        if (!e.ok) { out.erreurs++; continue; }
+        out.kbis_salons = (out.kbis_salons || 0) + 1;
+      } catch (_) { out.erreurs++; }
+    }
+  } catch (_) { out.erreurs++; }
   if (out.erreurs) { try { await reportWorkerError(env, "cron:rgpd-fichiers", new Error(`${out.erreurs} erreur(s) de suppression de fichiers RGPD`), null, "warning"); } catch (_) {} }
   return out;
 }
