@@ -515,6 +515,17 @@ html{overflow-x:hidden;overflow-x:clip}
 </div>
 
 <script>
+// 03/11/2026 (audit D I2) : horloge de PARIS pour tous les calculs de réservation (créneaux, délais, jours, 14 jours).
+// Renvoie une Date dont les champs « locaux » valent l'heure murale de Paris : comparable à _lxLocalDT(date, heure),
+// quel que soit le fuseau de l'appareil du client (avant : heure de l'appareil -> créneaux proposés puis refusés hors de France).
+function _lxParisNow(){
+  try{
+    var p={}; new Intl.DateTimeFormat("en-GB",{timeZone:"Europe/Paris",hourCycle:"h23",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit"})
+      .formatToParts(new Date()).forEach(function(x){ p[x.type]=x.value; });
+    return new Date(+p.year, +p.month-1, +p.day, (+p.hour)%24, +p.minute, +p.second);
+  }catch(e){ return new Date(); }
+}
+function _lxParisYmd(){ var d=_lxParisNow(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
 // ============================================================
 // COIFFPRO — Site vitrine dynamique
 // Lit les données du salon depuis Supabase via l'URL
@@ -675,7 +686,7 @@ var booking={items:[],svcId:null,svc:null,collabId:null,collab:null,date:null,ti
 function lxPrixTxt(s){
   if(!s) return "";
   if(s.devis) return "Sur devis";
-  return (s.apartir?"\u00e0 partir de ":"")+(Number(s.p)||0).toFixed(2)+" \u20ac";
+  return (s.apartir?"\u00e0 partir de ":"")+(Number(s.p)||0).toFixed(2).replace(".",",")+" \u20ac";
 }
 function lxItemAPartir(it){ return !!(it&&(it.apartir||(it.svc&&it.svc.apartir))); }
 function lxAPartir(){ return !!(booking.items&&booking.items.some(lxItemAPartir)); }
@@ -828,7 +839,7 @@ async function validateClientAdresse(){
   };
   if(statusEl){
     statusEl.style.color='#4caf50';
-    statusEl.innerHTML='✓ Adresse validée — '+dist.toFixed(1)+' km · Frais : <strong>'+frais.toFixed(2)+' €</strong>';
+    statusEl.innerHTML='✓ Adresse validée — '+dist.toFixed(1)+' km · Frais : <strong>'+frais.toFixed(2).replace(".",",")+' €</strong>';
   }
   return true;
 }
@@ -849,7 +860,7 @@ function bookingItemsPayload(){
     return o;
   });
 }
-var calMonth=new Date().getMonth(),calYear=new Date().getFullYear();
+var calMonth=_lxParisNow().getMonth(),calYear=_lxParisNow().getFullYear();
 
 // Multi-métier : labels adaptés selon le type d'activité du salon
 var METIER_CONFIG={
@@ -1295,7 +1306,7 @@ async function loadSalon(){
     // (congés, arrêt, départ). Champ ajouté en mai 2026.
     // 2026-10-17 audit réglages (#15) : photos publiques seulement (lecture séparée), jamais celle d'un collaborateur masqué
     var _tcImg={}; try{ var _ti=await _P.tcImg; (_ti&&_ti.data||[]).forEach(function(x){ if(x&&x.img) _tcImg[x.id]=x.img; }); }catch(_eTi){}
-    if(tc.data)COLLABS=tc.data.filter(function(c){ /* 2026-10-07 : aussi date de depart passee */ var _aj=new Date().toISOString().slice(0,10); return c.inactif!==true && !(c.date_depart && String(c.date_depart).slice(0,10)<=_aj);}).map(function(c){return{id:c.id,dep:(c.date_depart?String(c.date_depart).slice(0,10):null),n:c.nom,i:c.initiales,c:c.couleur,img:(c.photo_visible!==false?(_tcImg[c.id]||""):""),hrs:c.horaires||{},pause:c.pause||null,hrsOver:c.horaires_overrides||{},actif:c.actif!==false,photoVisible:c.photo_visible!==false,competences:c.competences||{all:true}};});
+    if(tc.data)COLLABS=tc.data.filter(function(c){ /* 2026-10-07 : aussi date de depart passee */ var _aj=_lxParisYmd(); return c.inactif!==true && !(c.date_depart && String(c.date_depart).slice(0,10)<=_aj);}).map(function(c){return{id:c.id,dep:(c.date_depart?String(c.date_depart).slice(0,10):null),n:c.nom,i:c.initiales,c:c.couleur,img:(c.photo_visible!==false?(_tcImg[c.id]||""):""),hrs:c.horaires||{},pause:c.pause||null,hrsOver:c.horaires_overrides||{},actif:c.actif!==false,photoVisible:c.photo_visible!==false,competences:c.competences||{all:true}};});
     
     // 4. Services — on charge tous ceux actifs ET visibles site, peu importe book_online.
     // Les non-réservables (book_online=false) s'affichent avec un bouton "Demander ce RDV"
@@ -1327,10 +1338,10 @@ async function loadSalon(){
     }catch(e){console.log("Avis load error:",e);}
 
     // 6. Existing appointments (via Worker - bypasses RLS)
-    var today=new Date().toISOString().slice(0,10);
-    var maxDate=new Date();maxDate.setDate(maxDate.getDate()+lxDelaiMaxJ());
+    var today=_lxParisYmd();
+    var maxDate=_lxParisNow();maxDate.setDate(maxDate.getDate()+lxDelaiMaxJ());
     try{
-      var avRes=await fetch("/api/salon/availability",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({salon_id:salonId,date_from:today,date_to:maxDate.toISOString().slice(0,10)})});
+      var avRes=await fetch("/api/salon/availability",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({salon_id:salonId,date_from:today,date_to:_ymdLocal(maxDate)})});
       var avData=await avRes.json();
       if(avData.appointments){RDV_EXISTING=avData.appointments.filter(function(a){return a.status!=="canc"&&!a.cancelled;});}
       if(avData.rdv_online){
@@ -1338,7 +1349,7 @@ async function loadSalon(){
         // 2026-10-14 : 35 min (session Stripe = 31 min, même délai que la base et le worker)
         var _nowMs2=Date.now();var _staleMs2=35*60*1000;
         avData.rdv_online.filter(function(r){
-          if(r.status==="cancelled") return false;
+          if(r.status==="cancelled"||r.status==="cancelled_by_client"||r.status==="refused") return false; // 03/11/2026 : comme la base
           if(r.status==="pending_payment"){
             var _cMs=r.created_at?new Date(r.created_at).getTime():0;
             if(_cMs && (_nowMs2-_cMs) > _staleMs2) return false;
@@ -1408,19 +1419,19 @@ function showAuthModal(mode){
   h+='<div class="sub">'+(isLogin?"Connectez-vous pour r\u00e9server":"Inscrivez-vous pour prendre rendez-vous en ligne")+'</div>';
   h+='<div class="err" id="authErr"></div>';
   if(!isLogin){
-    h+='<div class="fg-row"><div class="fg"><label>Nom *</label><input id="aRegNom" required></div>';
-    h+='<div class="fg"><label>Pr\u00e9nom</label><input id="aRegPre"></div></div>';
-    h+='<div class="fg-row"><div class="fg"><label>T\u00e9l\u00e9phone *</label><input id="aRegTel" type="tel" required></div>';
-    h+='<div class="fg"><label>Date de naissance</label><input id="aRegDdn" type="date"></div></div>';
-    h+='<div class="fg-row"><div class="fg"><label>Genre *</label><select id="aRegGenre" style="width:100%;padding:12px 14px;border-radius:10px;background:rgba(255,255,255,.06);color:#fff;border:1px solid rgba(255,255,255,.15);font-size:14px"><option value="" selected disabled style="background:#1a1a2e;color:#fff">Sélectionnez…</option><option value="F" style="background:#1a1a2e;color:#fff">Femme</option><option value="H" style="background:#1a1a2e;color:#fff">Homme</option><option value="E" style="background:#1a1a2e;color:#fff">Enfant</option></select></div>';
-    h+='<div class="fg"><label>Adresse *</label><input id="aRegAdr" placeholder="N° et rue (RDV à domicile)" autocomplete="street-address"></div></div>';
-    h+='<div class="fg"><label>Pays *</label><select id="aRegPays" data-lx-pays="1" style="width:100%;padding:12px 14px;border-radius:10px;background:rgba(255,255,255,.06);color:#fff;border:1px solid rgba(255,255,255,.15);font-size:14px">'+['France','Allemagne','Luxembourg','Belgique','Suisse','Autre pays'].map(function(p){return '<option style="background:#1a1a2e;color:#fff"'+(p===("France")?' selected':'')+'>'+p+'</option>';}).join('')+'</select></div>';
-    h+='<div class="fg-row"><div class="fg"><label>Code postal *</label><input id="aRegCp" inputmode="numeric" placeholder="Code postal" autocomplete="postal-code"></div>';
-    h+='<div class="fg"><label>Ville *</label><input id="aRegVille" readonly data-lx-ville-liste="1" style="cursor:default" placeholder="Selon le code postal" autocomplete="address-level2"></div></div>';
+    h+='<div class="fg-row"><div class="fg"><label for="aRegNom">Nom *</label><input id="aRegNom" required></div>';
+    h+='<div class="fg"><label for="aRegPre">Pr\u00e9nom</label><input id="aRegPre"></div></div>';
+    h+='<div class="fg-row"><div class="fg"><label for="aRegTel">T\u00e9l\u00e9phone *</label><input id="aRegTel" type="tel" required></div>';
+    h+='<div class="fg"><label for="aRegDdn">Date de naissance</label><input id="aRegDdn" type="date"></div></div>';
+    h+='<div class="fg-row"><div class="fg"><label for="aRegGenre">Genre *</label><select id="aRegGenre" style="width:100%;padding:12px 14px;border-radius:10px;background:rgba(255,255,255,.06);color:#fff;border:1px solid rgba(255,255,255,.15);font-size:14px"><option value="" selected disabled style="background:#1a1a2e;color:#fff">Sélectionnez…</option><option value="F" style="background:#1a1a2e;color:#fff">Femme</option><option value="H" style="background:#1a1a2e;color:#fff">Homme</option><option value="E" style="background:#1a1a2e;color:#fff">Enfant</option></select></div>';
+    h+='<div class="fg"><label for="aRegAdr">Adresse <span style="font-weight:400;opacity:.7">(facultatif, utile pour les RDV à domicile)</span></label><input id="aRegAdr" placeholder="N° et rue" autocomplete="street-address"></div></div>';
+    h+='<div class="fg"><label for="aRegPays">Pays</label><select id="aRegPays" data-lx-pays="1" style="width:100%;padding:12px 14px;border-radius:10px;background:rgba(255,255,255,.06);color:#fff;border:1px solid rgba(255,255,255,.15);font-size:14px">'+['France','Allemagne','Luxembourg','Belgique','Suisse','Autre pays'].map(function(p){return '<option style="background:#1a1a2e;color:#fff"'+(p===("France")?' selected':'')+'>'+p+'</option>';}).join('')+'</select></div>';
+    h+='<div class="fg-row"><div class="fg"><label for="aRegCp">Code postal</label><input id="aRegCp" inputmode="numeric" placeholder="Code postal" autocomplete="postal-code"></div>';
+    h+='<div class="fg"><label for="aRegVille">Ville</label><input id="aRegVille" readonly data-lx-ville-liste="1" style="cursor:default" placeholder="Selon le code postal" autocomplete="address-level2"></div></div>';
   }
-  h+='<div class="fg"><label>Email *</label><input id="aEmail" type="email" required'+(isLogin?'':' data-lx-sugg="1"')+'></div>';
-  if(isLogin){h+='<div class="fg"><label>Mot de passe *</label><input id="aPass" type="password" required></div>';}
-  else{h+='<div class="fg-row"><div class="fg"><label>Mot de passe *</label><input id="aPass" type="password" required></div><div class="fg"><label>Confirmer *</label><input id="aPass2" type="password" required></div></div>';}
+  h+='<div class="fg"><label for="aEmail">Email *</label><input id="aEmail" type="email" required'+(isLogin?'':' data-lx-sugg="1"')+'></div>';
+  if(isLogin){h+='<div class="fg"><label for="aPass">Mot de passe *</label><input id="aPass" type="password" required></div>';}
+  else{h+='<div class="fg-row"><div class="fg"><label for="aPass">Mot de passe *</label><input id="aPass" type="password" required></div><div class="fg"><label for="aPass2">Confirmer *</label><input id="aPass2" type="password" required></div></div>';}
   if(!isLogin){
     h+='<div style="padding:2px 0;border-top:1px solid rgba(255,255,255,.1);margin-top:2px">';
     // 02/11/2026 (conformité RGPD / L34-5 CPCE) : consentement marketing NON précoché, distinct des rappels de RDV (toujours envoyés)
@@ -1443,7 +1454,7 @@ function showResetModal(){
   var h='<div class="auth-modal" onclick="closeAuth()"><div class="auth-box" onclick="event.stopPropagation()">';
   h+='<h2>Mot de passe oubli\u00e9</h2><div class="sub">Indiquez l\u2019email de votre compte : vous recevrez un lien pour choisir un nouveau mot de passe.</div>';
   h+='<div class="err" id="authErr"></div><div id="resetOk" style="display:none;color:#81c784;font-size:13px;margin:8px 0"></div>';
-  h+='<div class="fg"><label>Email *</label><input id="aResetEmail" type="email" required></div>';
+  h+='<div class="fg"><label for="aResetEmail">Email *</label><input id="aResetEmail" type="email" required></div>';
   h+='<button class="btn btn-gold" id="btnReset" style="width:100%;padding:10px;font-size:15px;margin-top:6px" onclick="doResetRequest()">Recevoir le lien</button>';
   h+='<div class="auth-switch"><a onclick="showAuthModal(\'login\')">Retour \u00e0 la connexion</a></div>';
   h+='</div></div>';
@@ -1476,13 +1487,16 @@ async function doClientRegister(){
   if(!(document.getElementById("aRegCgu")&&document.getElementById("aRegCgu").checked)){showAuthError("Vous devez accepter les CGU");return;} // 2026-10-14
   if(pass.length<8){showAuthError("Mot de passe : 8 caract\u00e8res minimum");return;} // 2026-10-14 audit
   if(pass!==pass2){showAuthError("Les mots de passe ne correspondent pas");return;}
-  // 2026-10-13 : adresse obligatoire (renseignements pour les prestations à domicile)
+  // 03/11/2026 (audit D I8, minimisation RGPD) : adresse FACULTATIVE à la création du compte ; elle n'est demandée
+  // qu'au moment d'une réservation à domicile. Si elle est commencée, elle doit être complète et valide.
   var _adr0=((document.getElementById("aRegAdr")||{}).value||"").trim(), _cp0=((document.getElementById("aRegCp")||{}).value||"").trim(), _vil0=((document.getElementById("aRegVille")||{}).value||"").trim();
-  if(_adr0.length<5){showAuthError("Indiquez votre adresse (numéro et rue) : elle sert aux prestations à domicile.");return;}
-  var _pays0=((document.getElementById("aRegPays")||{}).value)||"France";
-  var _re0=(_pays0==="France"||_pays0==="Allemagne")?/^\d{5}$/:(_pays0==="Autre pays"?/^[A-Za-z0-9-]{3,10}$/:/^\d{4}$/);
-  if(!_re0.test(_cp0.replace(/^[A-Z]{1,2}-/i,"").replace(/\s/g,""))){showAuthError("Code postal invalide pour ce pays");return;}
-  if(!_vil0){showAuthError("Indiquez votre ville");return;}
+  if(_adr0||_cp0||_vil0){
+    if(_adr0.length<5){showAuthError("Adresse incomplète (numéro et rue), ou laissez les champs d'adresse vides");return;}
+    var _pays0=((document.getElementById("aRegPays")||{}).value)||"France";
+    var _re0=(_pays0==="France"||_pays0==="Allemagne")?/^\d{5}$/:(_pays0==="Autre pays"?/^[A-Za-z0-9-]{3,10}$/:/^\d{4}$/);
+    if(!_re0.test(_cp0.replace(/^[A-Z]{1,2}-/i,"").replace(/\s/g,""))){showAuthError("Code postal invalide pour ce pays");return;}
+    if(!_vil0){showAuthError("Indiquez votre ville");return;}
+  }
   // Anti-spam : le salon a-t-il bloqu\u00e9 la cr\u00e9ation de nouveaux comptes ?
   if(SITE_CFG&&SITE_CFG.bloquerNouveauxComptes===true){
     showAuthError("La cr\u00e9ation de nouveaux comptes est temporairement d\u00e9sactiv\u00e9e. Si vous \u00eates d\u00e9j\u00e0 client(e), connectez-vous. Sinon, contactez le salon par t\u00e9l\u00e9phone pour r\u00e9server.");
@@ -1956,10 +1970,10 @@ function renderSite(){
   h+='<div class="pratique-info"'+(mode==="domicile"?' style="grid-column:1/-1"':'')+'>';
   h+='<div class="pratique-block"><div class="pratique-title">Horaires</div>';
   var jours=["Dimanche","Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi"];
-  var dow=new Date().getDay();
+  var dow=_lxParisNow().getDay();
   // FIX 2026-05-14 : prise en compte des fermetures exceptionnelles du salon entier
   var _absSal = (SITE_CFG && SITE_CFG.absences) ? SITE_CFG.absences : [];
-  var _n = new Date();
+  var _n = _lxParisNow();
   var _today = _n.getFullYear()+"-"+String(_n.getMonth()+1).padStart(2,"0")+"-"+String(_n.getDate()).padStart(2,"0");
   // FIX 2026-08-30 : l'exception n'etait appliquee qu'a AUJOURD'HUI. Resultat : une
   // ouverture exceptionnelle demain laissait la ligne du lundi afficher les horaires
@@ -2229,7 +2243,7 @@ function renderSite(){
       h+='<div style="text-align:center;padding:40px;color:var(--text3)">Aucun produit disponible pour le moment</div>';
     }else{
       // 2026-10-16 : sélection par famille (barre de familles + recherche + promos)
-      var _today=new Date().toISOString().slice(0,10);
+      var _today=_lxParisYmd();
       var _promoOk=function(p){return p.promoActif&&p.promoPrix&&(!p.promoDebut||p.promoDebut<=_today)&&(!p.promoFin||p.promoFin>=_today);};
       var prodCats={};shopProds.forEach(function(p){var c=(p.cat&&String(p.cat).trim())||'Autres';if(!prodCats[c])prodCats[c]=[];prodCats[c].push(p);});
       var _catKeys=Object.keys(prodCats).sort(function(a,b){if(a==='Autres')return 1;if(b==='Autres')return -1;return a.localeCompare(b,'fr',{sensitivity:'base'});});
@@ -2246,7 +2260,7 @@ function renderSite(){
         h+='<div class="shop-fam-t">'+escapeHtmlSimple(cat)+' <small>'+prodCats[cat].length+' produit'+(prodCats[cat].length>1?'s':'')+'</small></div>';
         h+='<div class="prod-grid">';
         prodCats[cat].forEach(function(p){
-          var _isPromo=p.promoActif&&p.promoPrix&&(!p.promoDebut||p.promoDebut<=new Date().toISOString().slice(0,10))&&(!p.promoFin||p.promoFin>=new Date().toISOString().slice(0,10));
+          var _isPromo=p.promoActif&&p.promoPrix&&(!p.promoDebut||p.promoDebut<=_lxParisYmd())&&(!p.promoFin||p.promoFin>=_lxParisYmd());
           h+='<div class="prod-card" style="position:relative" data-promo="'+(_isPromo?1:0)+'" data-q="'+escapeAttrSimple(((p.n||'')+' '+(p.cat||'')+' '+(p.description||'')+' '+(p.contenance||'')).toLowerCase())+'">';
           if(_isPromo)h+='<div style="position:absolute;top:8px;right:8px;background:#e91e63;color:#fff;font-size:11px;font-weight:800;padding:4px 8px;border-radius:8px;z-index:2;box-shadow:0 2px 8px rgba(0,0,0,.3)">\ud83c\udf89 '+(p.promoLabel?escapeHtmlSimple(String(p.promoLabel).slice(0,40))+' \u00b7 ':'')+'-'+Math.round((1-p.promoPrix/p.p)*100)+'%</div>'; // 2026-10-17 audit r\u00e9glages (#51) : libell\u00e9 promo affich\u00e9
           if(p.img)h+='<div class="prod-img"><img src="'+escapeAttrSimple(p.img)+'" loading="lazy" alt="'+escapeAttrSimple(p.n||"Produit")+'" draggable="false"></div>';
@@ -2256,9 +2270,9 @@ function renderSite(){
           h+='<div class="prod-cat">'+escapeHtmlSimple(p.cat)+'</div>';
           if(p.description)h+='<div style="font-size:12px;color:rgba(255,255,255,.65);margin-top:6px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">'+escapeHtmlSimple(p.description)+'</div>';
           if(_isPromo){
-            h+='<div class="prod-price"><span style="font-size:13px;text-decoration:line-through;color:var(--text3);font-weight:400;margin-right:6px">'+p.p.toFixed(2)+' \u20ac</span><span style="color:#e91e63">'+p.promoPrix.toFixed(2)+' \u20ac</span></div>';
+            h+='<div class="prod-price"><span style="font-size:13px;text-decoration:line-through;color:var(--text3);font-weight:400;margin-right:6px">'+p.p.toFixed(2).replace(".",",")+' \u20ac</span><span style="color:#e91e63">'+p.promoPrix.toFixed(2).replace(".",",")+' \u20ac</span></div>';
           } else {
-            h+='<div class="prod-price">'+p.p.toFixed(2)+' \u20ac</div>';
+            h+='<div class="prod-price">'+p.p.toFixed(2).replace(".",",")+' \u20ac</div>';
           }
           if(p.stk!=null&&Number(p.stk)<=0) h+='<button class="prod-btn" disabled style="opacity:.5;cursor:not-allowed">Rupture de stock</button>';
           else h+='<button class="prod-btn" onclick="addToCart('+p.id+')">Ajouter au panier</button>';
@@ -2876,7 +2890,7 @@ function renderBookingCartInner(){
   }
   var it=booking.items[0];
   var h='';
-  h+='<div class="bc-line"><span>'+escapeHtmlSimple(it.nom)+' <span style="color:var(--text3);font-size:11px">('+(Number(it.duree)||0)+' min)</span></span><span class="v">'+lxApPfx(it)+(Number(it.prix)||0).toFixed(2)+' \u20ac</span></div>';
+  h+='<div class="bc-line"><span>'+escapeHtmlSimple(it.nom)+' <span style="color:var(--text3);font-size:11px">('+(Number(it.duree)||0)+' min)</span></span><span class="v">'+lxApPfx(it)+(Number(it.prix)||0).toFixed(2).replace(".",",")+' \u20ac</span></div>';
   h+='<button class="btn btn-gold bc-cta" onclick="renderBookingStep2()">Continuer \u25b6</button>';
   return h;
 }
@@ -3021,7 +3035,7 @@ function findNextAvailableSlot(){
   var dur=booking.duration||30;
   var minDelay=lxDelaiMinH()*60; // 2026-10-14 audit : 0 h respecté
   var maxDays=lxDelaiMaxJ();      // 2026-10-14 audit : même fenêtre que le calendrier (avant : 30 j max)
-  var now=new Date();
+  var now=_lxParisNow(); // 03/11/2026 (audit D I2) : heure de Paris
   for(var dayOffset=0;dayOffset<=maxDays;dayOffset++){
     var dt=new Date(now); dt.setDate(dt.getDate()+dayOffset);
     var dateStr=_ymdLocal(dt);  // LOCAL \u2014 pas UTC \u2014 pour aligner avec dt.getDay()
@@ -3053,7 +3067,7 @@ function selectCollab(collabId){
   booking.collabId=collabId;
   booking.collab=null;
   if(collabId){for(var i=0;i<COLLABS.length;i++){if(COLLABS[i].id===collabId){booking.collab=COLLABS[i];break;}}}
-  calMonth=new Date().getMonth();calYear=new Date().getFullYear();
+  calMonth=_lxParisNow().getMonth();calYear=_lxParisNow().getFullYear();
   renderBookingStep3();
 }
 
@@ -3109,7 +3123,7 @@ function lxAlerteOuvrir(){
     h+='<div style="font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--gold);font-weight:700;margin:10px 0 4px">'+escapeHtmlSimple(c)+'</div>';
     _cats[c].forEach(function(x){
       var du=((x.phases||[]).reduce(function(t,p){return t+(Number(p&&p.d)||0);},0))||30;
-      h+='<label style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.06);cursor:pointer"><input type="radio" name="lxAlSvc" value="'+x.id+'"'+(String(x.id)===String(pre)?' checked':'')+' style="accent-color:#c8a84e"><span style="flex:1;font-size:14px;color:#fff">'+escapeHtmlSimple(x.n)+'</span><span style="font-size:12px;color:var(--text3)">'+du+' min \u00b7 '+(Number(x.p)||0).toFixed(2)+' \u20ac</span></label>';
+      h+='<label style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.06);cursor:pointer"><input type="radio" name="lxAlSvc" value="'+x.id+'"'+(String(x.id)===String(pre)?' checked':'')+' style="accent-color:#c8a84e"><span style="flex:1;font-size:14px;color:#fff">'+escapeHtmlSimple(x.n)+'</span><span style="font-size:12px;color:var(--text3)">'+du+' min \u00b7 '+(Number(x.p)||0).toFixed(2).replace(".",",")+' \u20ac</span></label>';
     });
   });
   h+='</div>';
@@ -3165,8 +3179,8 @@ function renderCalendar(){
   var first=new Date(calYear,calMonth,1);
   var startDow=(first.getDay()+6)%7;// Monday=0
   var daysInMonth=new Date(calYear,calMonth+1,0).getDate();
-  var today=new Date();today.setHours(0,0,0,0);
-  var maxDate=new Date();maxDate.setDate(maxDate.getDate()+lxDelaiMaxJ());
+  var today=_lxParisNow();today.setHours(0,0,0,0);
+  var maxDate=_lxParisNow();maxDate.setDate(maxDate.getDate()+lxDelaiMaxJ());
   for(var i=0;i<startDow;i++)h+='<div></div>';
   for(var d=1;d<=daysInMonth;d++){
     var dt=new Date(calYear,calMonth,d);
@@ -3262,16 +3276,18 @@ function isCollabBlocked(date,collabId,slotStart,slotEnd){
 function _lxOuvExcept(hrs, dateStr, collabId){
   try{
     var abs=(typeof SITE_CFG!=="undefined"&&SITE_CFG.absences)||[];
+    // 03/11/2026 (audit D) : TOUTES les ouvertures exceptionnelles du jour (min / max), comme la base (avant : la première seulement)
+    var res=(hrs&&hrs.o&&hrs.c)?{o:hrs.o,c:hrs.c}:null, vu=false;
     for(var i=0;i<abs.length;i++){
       var ab=abs[i];
       if(!ab||ab.type!=="ouverture_except"||ab.date!==dateStr||!ab.horaire_o||!ab.horaire_c) continue;
       if(collabId && ab.stId && ab.stId!==collabId) continue; // ouverture ciblee sur un autre collab
-      if(!hrs || !hrs.o || !hrs.c) return {o:ab.horaire_o, c:ab.horaire_c};
-      return {
-        o: (toMin(ab.horaire_o) < toMin(hrs.o)) ? ab.horaire_o : hrs.o,
-        c: (toMin(ab.horaire_c) > toMin(hrs.c)) ? ab.horaire_c : hrs.c
-      };
+      vu=true;
+      if(!res){ res={o:ab.horaire_o, c:ab.horaire_c}; continue; }
+      if(toMin(ab.horaire_o) < toMin(res.o)) res.o=ab.horaire_o;
+      if(toMin(ab.horaire_c) > toMin(res.c)) res.c=ab.horaire_c;
     }
+    if(vu) return res;
   }catch(_e){}
   return hrs;
 }
@@ -3610,7 +3626,7 @@ function renderTimeSlots(dateStr){
   var interval=lxPasCreneaux(); // 2026-10-13 : intervalle réglé dans l'application (15 / 30 / 60 min)
   var startM=toMin(hrs.o),endM=toMin(hrs.c);
   var dur=booking.duration||30;
-  var now=new Date();
+  var now=_lxParisNow(); // 03/11/2026 (audit D I2) : heure de Paris
   var minDelay=lxDelaiMinH()*60; // 2026-10-14 audit : 0 h respecté
   
   // Build available hours
@@ -3684,26 +3700,26 @@ function renderBookingStep4(){
   if(hasMulti){
     h+='<div class="summary-row" style="font-weight:800;color:var(--gold);border-bottom:1px solid rgba(200,168,78,.2)"><span>Prestations</span><span class="v">'+booking.items.length+' \u25be</span></div>';
     booking.items.forEach(function(it){
-      h+='<div class="summary-row" style="padding-left:8px;font-size:13px"><span>\u2022 '+escapeHtmlSimple(it.nom)+' <span style="color:var(--text3);font-size:11px">('+(Number(it.duree)||0)+' min)</span></span><span class="v">'+lxApPfx(it)+(Number(it.prix)||0).toFixed(2)+' \u20ac</span></div>';
+      h+='<div class="summary-row" style="padding-left:8px;font-size:13px"><span>\u2022 '+escapeHtmlSimple(it.nom)+' <span style="color:var(--text3);font-size:11px">('+(Number(it.duree)||0)+' min)</span></span><span class="v">'+lxApPfx(it)+(Number(it.prix)||0).toFixed(2).replace(".",",")+' \u20ac</span></div>';
     });
     h+='<div class="summary-row" style="font-weight:700"><span>Dur\u00e9e totale</span><span class="v">'+totalDur+' min</span></div>';
-    h+='<div class="summary-row"'+(hasCarte?' style="color:var(--text3)"':' style="font-weight:700"')+'><span>'+(hasCarte?"Sous-total":"Prix total")+'</span><span class="v">'+lxApPfx()+totalPrix.toFixed(2)+' \u20ac</span></div>';
+    h+='<div class="summary-row"'+(hasCarte?' style="color:var(--text3)"':' style="font-weight:700"')+'><span>'+(hasCarte?"Sous-total":"Prix total")+'</span><span class="v">'+lxApPfx()+totalPrix.toFixed(2).replace(".",",")+' \u20ac</span></div>';
   }else{
     var svc=(booking.items&&booking.items[0])||{nom:booking.svc?booking.svc.n:"",prix:booking.svc?booking.svc.p:0,duree:totalDur};
     h+='<div class="summary-row"><span>Prestation</span><span class="v">'+escapeHtmlSimple(svc.nom)+'</span></div>';
-    h+='<div class="summary-row"'+(hasCarte?' style="color:var(--text3)"':'')+'><span>'+(hasCarte?"Sous-total":"Prix")+'</span><span class="v">'+lxApPfx()+(Number(svc.prix)||0).toFixed(2)+' \u20ac</span></div>';
+    h+='<div class="summary-row"'+(hasCarte?' style="color:var(--text3)"':'')+'><span>'+(hasCarte?"Sous-total":"Prix")+'</span><span class="v">'+lxApPfx()+(Number(svc.prix)||0).toFixed(2).replace(".",",")+' \u20ac</span></div>';
   }
   h+=lxApNotice(); // 2026-10-15
   // Ligne remise carte d'abonnement
   if(hasCarte){
-    h+='<div class="summary-row" style="color:#4caf50;font-weight:700"><span>\ud83d\udcb3 Carte '+escapeHtmlSimple(CLIENT_CARTE_ABO.carteNom)/* 2026-10-17 audit réglages (#65) */+' (-'+CLIENT_CARTE_ABO.remiseServices+'%)</span><span class="v">-'+remiseCarte.toFixed(2)+' \u20ac</span></div>';
+    h+='<div class="summary-row" style="color:#4caf50;font-weight:700"><span>\ud83d\udcb3 Carte '+escapeHtmlSimple(CLIENT_CARTE_ABO.carteNom)/* 2026-10-17 audit réglages (#65) */+' (-'+CLIENT_CARTE_ABO.remiseServices+'%)</span><span class="v">-'+remiseCarte.toFixed(2).replace(".",",")+' \u20ac</span></div>';
   }
   // Ligne frais d\u00e9placement
   if(booking.lieu==='domicile' && t.fraisDepl>0){
-    h+='<div class="summary-row" style="color:#63b3ed"><span>\ud83c\udfe0 Frais de d\u00e9placement</span><span class="v">+'+t.fraisDepl.toFixed(2)+' \u20ac</span></div>';
+    h+='<div class="summary-row" style="color:#63b3ed"><span>\ud83c\udfe0 Frais de d\u00e9placement</span><span class="v">+'+t.fraisDepl.toFixed(2).replace(".",",")+' \u20ac</span></div>';
   }
   if(hasCarte || (booking.lieu==='domicile' && t.fraisDepl>0)){
-    h+='<div class="summary-row" style="font-weight:800;color:var(--gold);border-top:1px solid rgba(200,168,78,.2);padding-top:8px"><span>Total \u00e0 payer</span><span class="v">'+prixFinal.toFixed(2)+' \u20ac</span></div>';
+    h+='<div class="summary-row" style="font-weight:800;color:var(--gold);border-top:1px solid rgba(200,168,78,.2);padding-top:8px"><span>Total \u00e0 payer</span><span class="v">'+prixFinal.toFixed(2).replace(".",",")+' \u20ac</span></div>';
   }
   h+='<div class="summary-row"><span>'+getCollabLabel()+'</span><span class="v">'+(collab?escapeHtmlSimple(collab.n):"Pas de pr\u00e9f\u00e9rence")/* 2026-10-17 audit réglages (#65) */+'</span></div>';
   h+='<div class="summary-row"><span>Date</span><span class="v">'+formatDateFR(booking.date)+'</span></div>';
@@ -3711,7 +3727,7 @@ function renderBookingStep4(){
   if(SITE_CFG.acompte){
     // Acompte calcul\u00e9 sur le prix R\u00c9DUIT (apr\u00e8s remise carte)
     var acompte=lxCalcAcompte(prixFinal); // 2026-10-14 audit : calcul unique, plafonné au prix
-    if(acompte>0)h+='<div class="summary-row" style="border-top:2px solid var(--gold);padding-top:12px;margin-top:8px"><span style="font-weight:800">Acompte \u00e0 r\u00e9gler</span><span class="v" style="font-size:18px">'+acompte.toFixed(2)+' \u20ac</span></div>';
+    if(acompte>0)h+='<div class="summary-row" style="border-top:2px solid var(--gold);padding-top:12px;margin-top:8px"><span style="font-weight:800">Acompte \u00e0 r\u00e9gler</span><span class="v" style="font-size:18px">'+acompte.toFixed(2).replace(".",",")+' \u20ac</span></div>';
     if(SITE_CFG.acompteDesc)h+='<div style="font-size:12px;color:var(--text3);margin-top:4px;text-align:center">'+lxTexteProHtml(SITE_CFG.acompteDesc)+'</div>'; /* 2026-10-17 audit réglages (#65) : échappé */
     // 2026-10-14 audit : texte construit avec les MÊMES champs et la MÊME lecture que le worker (lxPolitiqueHeures)
     if(acompte>0){ var _pa=lxPolitiqueAnnulation(); h+='<div style="font-size:11px;color:'+((_pa.heures===-1||(!_pa.rembourse&&!_pa.pct))?'var(--red)':'var(--text3)')+';text-align:center">'+escapeHtmlSimple(lxTexteAnnulation(true))+'</div>';
@@ -3736,7 +3752,7 @@ function renderBookingStep4(){
     h+='<div style="flex:1;text-align:center;padding:10px;background:rgba(255,255,255,.04);border-radius:10px;border:1px solid rgba(255,255,255,.08)"><div style="font-size:20px;font-weight:900;color:var(--gold)">-'+bestCA.remiseForfaits+'%</div><div style="font-size:10px;color:var(--text3)">sur prix TTC forfaits</div></div>';
     h+='<div style="flex:1;text-align:center;padding:10px;background:rgba(76,175,80,.08);border-radius:10px;border:1px solid rgba(76,175,80,.15)"><div style="font-size:20px;font-weight:900;color:#4caf50">'+bestCA.duree+'</div><div style="font-size:10px;color:var(--text3)">mois</div></div>';
     h+='</div>';
-    if(potEco>0)h+='<div style="font-size:12px;color:var(--text3);text-align:center;margin-bottom:10px">\ud83d\udca1 Sur cette prestation, vous auriez \u00e9conomis\u00e9 <strong style="color:#4caf50">'+potEco.toFixed(2)+' \u20ac TTC</strong>.</div>';
+    if(potEco>0)h+='<div style="font-size:12px;color:var(--text3);text-align:center;margin-bottom:10px">\ud83d\udca1 Sur cette prestation, vous auriez \u00e9conomis\u00e9 <strong style="color:#4caf50">'+potEco.toFixed(2).replace(".",",")+' \u20ac TTC</strong>.</div>';
     // Bouton "Souscrire en ligne" si paiement Stripe Connect actif c\u00f4t\u00e9 salon ET client connect\u00e9e
     // FIX 2026-05-12 : payouts_pending = charges_enabled donc peut encaisser
     var canPayOnline = SALON.connectId && (SALON.connectStatus==="active" || SALON.connectStatus==="enabled" || SALON.connectStatus==="payouts_pending");
@@ -3757,7 +3773,7 @@ function renderBookingStep4(){
     h+='<div style="margin:12px 0;padding:12px;background:rgba(76,175,80,.08);border:1px solid rgba(76,175,80,.2);border-radius:10px;display:flex;align-items:center;gap:10px">';
     h+='<div style="font-size:20px">\ud83d\udcb3</div>';
     h+='<div style="flex:1"><div style="font-weight:700;font-size:13px;color:#4caf50">Carte '+escapeHtmlSimple(CLIENT_CARTE_ABO.carteNom)/* 2026-10-17 audit réglages (#65) */+' active</div>';
-    h+='<div style="font-size:11px;color:var(--text3)">-'+CLIENT_CARTE_ABO.remiseServices+'% sur le prix TTC services \u2022 \u00c9conomies totales : '+(CLIENT_CARTE_ABO.eco||0).toFixed(2)+' \u20ac</div></div></div>';
+    h+='<div style="font-size:11px;color:var(--text3)">-'+CLIENT_CARTE_ABO.remiseServices+'% sur le prix TTC services \u2022 \u00c9conomies totales : '+(CLIENT_CARTE_ABO.eco||0).toFixed(2).replace(".",",")+' \u20ac</div></div></div>';
   }
 
   // === Lieu du RDV (sur place / domicile) selon mode_activite du salon ===
@@ -3787,9 +3803,9 @@ function renderBookingStep4(){
     h+='<div style="margin-bottom:14px;padding:14px;background:rgba(99,179,237,.04);border:1px solid rgba(99,179,237,.2);border-radius:10px">';
     h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><span style="font-size:18px">\ud83c\udfe0</span><strong style="color:#63b3ed">Adresse du rendez-vous</strong></div>';
     h+='<div style="font-size:11px;color:var(--text3);margin-bottom:10px">Le pro se d\u00e9place dans un rayon de '+zoneInfo+' km. Renseignez votre adresse pour v\u00e9rifier la couverture et calculer les frais.</div>';
-    h+='<div class="fg" style="margin-bottom:6px"><label>Adresse *</label><input id="bkClientAdr" placeholder="12 rue de la R\u00e9publique" value="'+cAdr.replace(/"/g,"&quot;")+'"></div>';
-    h+='<div class="fg-row"><div class="fg"><label>Code postal *</label><input id="bkClientCp" placeholder="75001" value="'+cCp.replace(/"/g,"&quot;")+'"></div><div class="fg"><label>Ville *</label><input id="bkClientVille" placeholder="Paris" value="'+cVille.replace(/"/g,"&quot;")+'"></div></div>';
-    h+='<div class="fg" style="margin-bottom:6px"><label>Compl\u00e9ment (\u00e9tage, code, interphone)</label><input id="bkClientCompl" placeholder="3e \u00e9tage, code 1234B" value="'+cCompl.replace(/"/g,"&quot;")+'"></div>';
+    h+='<div class="fg" style="margin-bottom:6px"><label for="bkClientAdr">Adresse *</label><input id="bkClientAdr" placeholder="12 rue de la R\u00e9publique" value="'+cAdr.replace(/"/g,"&quot;")+'"></div>';
+    h+='<div class="fg-row"><div class="fg"><label for="bkClientCp">Code postal *</label><input id="bkClientCp" placeholder="75001" value="'+cCp.replace(/"/g,"&quot;")+'"></div><div class="fg"><label for="bkClientVille">Ville *</label><input id="bkClientVille" placeholder="Paris" value="'+cVille.replace(/"/g,"&quot;")+'"></div></div>';
+    h+='<div class="fg" style="margin-bottom:6px"><label for="bkClientCompl">Compl\u00e9ment (\u00e9tage, code, interphone)</label><input id="bkClientCompl" placeholder="3e \u00e9tage, code 1234B" value="'+cCompl.replace(/"/g,"&quot;")+'"></div>';
     h+='<button type="button" onclick="validateClientAdresse()" style="margin-top:8px;padding:8px 14px;border-radius:6px;border:1px solid rgba(99,179,237,.3);background:rgba(99,179,237,.08);color:#63b3ed;font-size:12px;font-weight:700;cursor:pointer">\ud83d\udccd V\u00e9rifier l\'adresse + calculer les frais</button>';
     h+='<div id="bkAdrStatus" style="margin-top:10px;font-size:12px;color:var(--text3)"></div>';
     h+='</div>';
@@ -3797,13 +3813,13 @@ function renderBookingStep4(){
 
   // Form
   var cNom=CLIENT?CLIENT.nom:"",cPre=CLIENT?(CLIENT.prenom||""):"",cTel=CLIENT?(CLIENT.telephone||""):"",cEm=CLIENT?CLIENT.email:"";
-  h+='<div class="fg-row"><div class="fg"><label>Nom *</label><input id="bkNom" required value="'+escapeAttrSimple(cNom)+'"></div><div class="fg"><label>Pr\u00e9nom</label><input id="bkPre" value="'+escapeAttrSimple(cPre)+'"></div></div>';
-  h+='<div class="fg-row"><div class="fg"><label>T\u00e9l\u00e9phone *</label><input id="bkTel" type="tel" required value="'+escapeAttrSimple(cTel)+'"></div><div class="fg"><label>Email</label><input id="bkEmail" type="email" data-lx-sugg="Votre confirmation de rendez-vous sera envoyée à : " value="'+escapeAttrSimple(cEm)+'"></div></div>';
+  h+='<div class="fg-row"><div class="fg"><label for="bkNom">Nom *</label><input id="bkNom" required value="'+escapeAttrSimple(cNom)+'"></div><div class="fg"><label for="bkPre">Pr\u00e9nom</label><input id="bkPre" value="'+escapeAttrSimple(cPre)+'"></div></div>';
+  h+='<div class="fg-row"><div class="fg"><label for="bkTel">T\u00e9l\u00e9phone *</label><input id="bkTel" type="tel" required value="'+escapeAttrSimple(cTel)+'"></div><div class="fg"><label for="bkEmail">Email</label><input id="bkEmail" type="email" data-lx-sugg="Votre confirmation de rendez-vous sera envoyée à : " value="'+escapeAttrSimple(cEm)+'"></div></div>';
   // 02/11/2026 (conformité) : en mode empreinte, conditions réelles affichées + acceptation obligatoire AVANT Stripe
   if((SITE_CFG.modeCaution||"aucun")==="empreinte" && booking.lieu!=='domicile'){
     var _mtE=Number(SITE_CFG.empreinteMontant)||30;
     h+='<div style="margin:12px 0 14px;padding:12px;background:rgba(33,150,243,.08);border:1px solid rgba(33,150,243,.25);border-radius:10px;font-size:12px;color:#bbdefb;line-height:1.5">';
-    h+='<strong style="color:#64b5f6">\ud83d\udd12 Empreinte bancaire : aucun d\u00e9bit imm\u00e9diat</strong><br>Une pr\u00e9-autorisation de <strong>'+_mtE.toFixed(2)+' \u20ac</strong> est r\u00e9alis\u00e9e sur votre carte. '+escapeHtmlSimple(lxTexteAnnulation(false));
+    h+='<strong style="color:#64b5f6">\ud83d\udd12 Empreinte bancaire : aucun d\u00e9bit imm\u00e9diat</strong><br>Une pr\u00e9-autorisation de <strong>'+_mtE.toFixed(2).replace(".",",")+' \u20ac</strong> est r\u00e9alis\u00e9e sur votre carte. '+escapeHtmlSimple(lxTexteAnnulation(false));
     h+='<label style="display:flex;align-items:flex-start;gap:8px;margin-top:10px;font-size:12px;color:var(--text2,#ddd);cursor:pointer"><input type="checkbox" id="empreinteAccept" style="margin-top:2px;flex-shrink:0"><span>'+lxTexteEmpreinteHtml(_mtE)+'</span></label></div>';
   }
   // 02/11/2026 (conformité B-1, art. L221-25 C. conso) : RDV dans les 14 jours (avec ou sans paiement en ligne)
@@ -3812,7 +3828,7 @@ function renderBookingStep4(){
   if(lxRdvDans14j(booking.date)){
     h+='<label style="display:flex;align-items:flex-start;gap:8px;margin:0 0 14px;padding:10px 12px;border:1px solid rgba(212,168,67,.35);border-radius:10px;font-size:12px;color:var(--text2,#ddd);line-height:1.5;cursor:pointer"><input type="checkbox" id="retractAccept" style="margin-top:2px;flex-shrink:0"><span>'+lxTexteRetractationHtml()+'</span></label>';
   }
-  h+='<div class="fg"><label>Message (optionnel)</label><textarea id="bkMsg" rows="2" placeholder="Pr\u00e9cisions, souhaits..."></textarea></div>';
+  h+='<div class="fg"><label for="bkMsg">Message (optionnel)</label><textarea id="bkMsg" rows="2" placeholder="Pr\u00e9cisions, souhaits..."></textarea></div>';
   
   h+='<div style="display:flex;gap:10px;margin-top:16px">';
   h+='<button class="btn btn-outline" onclick="renderBookingStep3()">\u25c0 Retour</button>';
@@ -3823,13 +3839,13 @@ function renderBookingStep4(){
   if(booking.lieu==='domicile'){
     h+='<button class="btn btn-gold" style="flex:1" onclick="submitBooking()">Envoyer ma demande</button>';
   } else if(_modeC==="empreinte"){
-    h+='<button class="btn btn-gold" style="flex:1" onclick="submitWithStripe()">Pre-autoriser '+(Number(SITE_CFG.empreinteMontant)||30).toFixed(2)+' € et confirmer</button>';
+    h+='<button class="btn btn-gold" style="flex:1" onclick="submitWithStripe()">Pre-autoriser '+(Number(SITE_CFG.empreinteMontant)||30).toFixed(2).replace(".",",")+' € et confirmer</button>';
   } else if(_modeC==="acompte"){
     // FIX 2026-05-12 (acompte) : check explicite sur _modeC pour ne pas dependre du legacy
     var _prixForAc = (typeof bookingTotals==="function") ? (bookingTotals().prixFinal || bookingTotals().prix || 0) : 0;
     var _acomCalc = lxCalcAcompte(_prixForAc); // 2026-10-14 audit : calcul unique, plafonné au prix
     if(_acomCalc > 0){
-      h+='<button class="btn btn-gold" style="flex:1" onclick="submitWithStripe()">💳 Payer acompte '+_acomCalc.toFixed(2)+' € et confirmer</button>';
+      h+='<button class="btn btn-gold" style="flex:1" onclick="submitWithStripe()">💳 Payer acompte '+_acomCalc.toFixed(2).replace(".",",")+' € et confirmer</button>';
     } else {
       h+='<button class="btn btn-gold" style="flex:1" onclick="submitBooking()">Confirmer le rendez-vous</button>';
     }
@@ -3845,9 +3861,9 @@ function renderBookingStep4(){
 // Refresh RDV_EXISTING from DB before critical checks (prevents stale data double-booking)
 async function refreshRDV(){
   try{
-    var today=new Date().toISOString().slice(0,10);
-    var maxD=new Date();maxD.setDate(maxD.getDate()+lxDelaiMaxJ());
-    var avRes=await fetch("/api/salon/availability",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({salon_id:salonId,date_from:today,date_to:maxD.toISOString().slice(0,10)})});
+    var today=_lxParisYmd();
+    var maxD=_lxParisNow();maxD.setDate(maxD.getDate()+lxDelaiMaxJ());
+    var avRes=await fetch("/api/salon/availability",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({salon_id:salonId,date_from:today,date_to:_ymdLocal(maxD).slice(0,10)})});
     var avData=await avRes.json();
     if(avData.appointments){RDV_EXISTING=avData.appointments.filter(function(a){return a.status!=="canc"&&!a.cancelled;});}
     else{RDV_EXISTING=[];}
@@ -3856,7 +3872,7 @@ async function refreshRDV(){
       var _nowMs=Date.now();
       var _staleMs=35*60*1000; // 2026-10-14 : 35 min (session Stripe = 31 min, même délai que la base et le worker)
       avData.rdv_online.filter(function(r){
-        if(r.status==="cancelled") return false;
+        if(r.status==="cancelled"||r.status==="cancelled_by_client"||r.status==="refused") return false; // 03/11/2026 : comme la base
         if(r.status==="pending_payment"){
           var _cMs = r.created_at ? new Date(r.created_at).getTime() : 0;
           if(_cMs && (_nowMs-_cMs) > _staleMs) return false; // stale → ignore
@@ -3969,15 +3985,15 @@ async function _lxSubmitBookingImpl(){
     if(booking.items&&booking.items.length>1){
       h+='<div class="summary-row" style="font-weight:800;color:var(--gold)"><span>Prestations</span><span class="v">'+booking.items.length+'</span></div>';
       booking.items.forEach(function(it){
-        h+='<div class="summary-row" style="padding-left:8px;font-size:13px"><span>\u2022 '+escapeHtmlSimple(it.nom)+'</span><span class="v">'+lxApPfx(it)+(Number(it.prix)||0).toFixed(2)+' \u20ac</span></div>';
+        h+='<div class="summary-row" style="padding-left:8px;font-size:13px"><span>\u2022 '+escapeHtmlSimple(it.nom)+'</span><span class="v">'+lxApPfx(it)+(Number(it.prix)||0).toFixed(2).replace(".",",")+' \u20ac</span></div>';
       });
-      h+='<div class="summary-row"'+(remiseCarte>0?' style="color:var(--text3)"':' style="font-weight:700"')+'><span>'+(remiseCarte>0?"Sous-total":"Total")+' ('+dur+' min)</span><span class="v">'+lxApPfx()+totalPrix.toFixed(2)+' \u20ac</span></div>';
+      h+='<div class="summary-row"'+(remiseCarte>0?' style="color:var(--text3)"':' style="font-weight:700"')+'><span>'+(remiseCarte>0?"Sous-total":"Total")+' ('+dur+' min)</span><span class="v">'+lxApPfx()+totalPrix.toFixed(2).replace(".",",")+' \u20ac</span></div>';
     }else{
       h+='<div class="summary-row"><span>Prestation</span><span class="v">'+escapeHtmlSimple(primaryNom)+'</span></div>';
     }
     if(remiseCarte>0){
-      h+='<div class="summary-row" style="color:#4caf50;font-weight:700"><span>\ud83d\udcb3 Carte '+escapeHtmlSimple(CLIENT_CARTE_ABO?CLIENT_CARTE_ABO.carteNom:"abonnement")+'</span><span class="v">-'+remiseCarte.toFixed(2)+' \u20ac</span></div>';
-      h+='<div class="summary-row" style="font-weight:800;color:var(--gold)"><span>Total \u00e0 payer</span><span class="v">'+lxApPfx()+prixFinal.toFixed(2)+' \u20ac</span></div>';
+      h+='<div class="summary-row" style="color:#4caf50;font-weight:700"><span>\ud83d\udcb3 Carte '+escapeHtmlSimple(CLIENT_CARTE_ABO?CLIENT_CARTE_ABO.carteNom:"abonnement")+'</span><span class="v">-'+remiseCarte.toFixed(2).replace(".",",")+' \u20ac</span></div>';
+      h+='<div class="summary-row" style="font-weight:800;color:var(--gold)"><span>Total \u00e0 payer</span><span class="v">'+lxApPfx()+prixFinal.toFixed(2).replace(".",",")+' \u20ac</span></div>';
     }
     h+=lxApNotice(); // 2026-10-15
     h+='<div class="summary-row"><span>Date</span><span class="v">'+formatDateFR(booking.date)+' \u00e0 '+booking.time+'</span></div>';
@@ -4108,7 +4124,7 @@ async function loadDashboardRdvs(){
       h+='<div style="padding:0 12px 6px;font-size:12px;color:#ef5350;font-weight:700">\u274c Modification refus\u00e9e</div>';
     }
     // Action buttons for future RDVs
-    if((r.status==="pending"||r.status==="confirmed")&&r.date_rdv>=_ymdLocal(new Date())){
+    if((r.status==="pending"||r.status==="confirmed")&&r.date_rdv>=_ymdLocal(_lxParisNow())){
       h+='<div style="display:flex;gap:8px;padding:0 12px 12px">';
       h+='<button class="btn-sm btn-outline" onclick="askModifyRdv(\''+r.id+'\')">\u270f\ufe0f Modifier</button>';
       h+='<button class="btn-sm btn-danger" onclick="askCancelRdv(\''+r.id+'\')">Annuler</button>';
@@ -4288,20 +4304,20 @@ async function _lxSubmitWithStripeImpl(){
   if(isEmpreinte){
     h+='<div style="margin-bottom:14px;padding:12px;background:rgba(33,150,243,.08);border:1px solid rgba(33,150,243,.25);border-radius:10px;font-size:12px;color:#bbdefb;line-height:1.5">';
     h+='<strong style="color:#64b5f6">\ud83d\udd12 Aucun débit immédiat</strong><br>';
-    h+='Une pré-autorisation de <strong>'+acompte.toFixed(2)+' \u20ac</strong> sera réalisée sur votre carte. Cette somme n\u0027est <strong>pas débitée</strong>. Elle sera <strong>libérée automatiquement</strong> après votre rendez-vous, ou <strong>encaissée uniquement en cas d\u0027absence</strong> non annulée dans les délais.';
+    h+='Une pré-autorisation de <strong>'+acompte.toFixed(2).replace(".",",")+' \u20ac</strong> sera réalisée sur votre carte. Cette somme n\u0027est <strong>pas débitée</strong>. Elle sera <strong>libérée automatiquement</strong> après votre rendez-vous, ou <strong>encaissée uniquement en cas d\u0027absence</strong> non annulée dans les délais.';
     h+='</div>';
   }
   h+='<div class="summary">';
   if(hasMulti){
     h+='<div class="summary-row" style="font-weight:800;color:var(--gold)"><span>Prestations</span><span class="v">'+booking.items.length+'</span></div>';
     booking.items.forEach(function(it){
-      h+='<div class="summary-row" style="padding-left:8px;font-size:13px"><span>\u2022 '+escapeHtmlSimple(it.nom)+'</span><span class="v">'+lxApPfx(it)+(Number(it.prix)||0).toFixed(2)+' \u20ac</span></div>';
+      h+='<div class="summary-row" style="padding-left:8px;font-size:13px"><span>\u2022 '+escapeHtmlSimple(it.nom)+'</span><span class="v">'+lxApPfx(it)+(Number(it.prix)||0).toFixed(2).replace(".",",")+' \u20ac</span></div>';
     });
   }else{
     h+='<div class="summary-row"><span>Prestation</span><span class="v">'+escapeHtmlSimple(primaryNom)+'</span></div>';
   }
   h+='<div class="summary-row"><span>Date</span><span class="v">'+formatDateFR(booking.date)+' \u00e0 '+booking.time+'</span></div>';
-  h+='<div class="summary-row" style="border-top:2px solid var(--gold);padding-top:10px;margin-top:8px"><span style="font-weight:800">'+(isEmpreinte?'Empreinte (non débitée)':'Acompte')+'</span><span class="v" style="font-size:20px;color:var(--gold)">'+acompte.toFixed(2)+' \u20ac</span></div>';
+  h+='<div class="summary-row" style="border-top:2px solid var(--gold);padding-top:10px;margin-top:8px"><span style="font-weight:800">'+(isEmpreinte?'Empreinte (non débitée)':'Acompte')+'</span><span class="v" style="font-size:20px;color:var(--gold)">'+acompte.toFixed(2).replace(".",",")+' \u20ac</span></div>';
   h+='</div>';
   h+='<div style="margin-top:16px">';
   h+='<div style="margin-bottom:10px"><label style="font-size:12px;font-weight:700;color:rgba(255,255,255,.6);display:block;margin-bottom:4px">Titulaire de la carte</label>';
@@ -4319,7 +4335,7 @@ async function _lxSubmitWithStripeImpl(){
   h+='</div>';
   h+='<div style="display:flex;gap:10px;margin-top:16px">';
   h+='<button class="btn btn-outline" onclick="renderBookingStep4()">\u25c0 Retour</button>';
-  h+='<button class="btn btn-gold" style="flex:1" id="stripePayBtn" onclick="processStripePayment()">'+(isEmpreinte?'\ud83d\udd12 Pré-autoriser '+acompte.toFixed(2)+' \u20ac':'\ud83d\udd12 Payer '+acompte.toFixed(2)+' \u20ac')+'</button>';
+  h+='<button class="btn btn-gold" style="flex:1" id="stripePayBtn" onclick="processStripePayment()">'+(isEmpreinte?'\ud83d\udd12 Pré-autoriser '+acompte.toFixed(2).replace(".",",")+' \u20ac':'\ud83d\udd12 Payer '+acompte.toFixed(2).replace(".",",")+' \u20ac')+'</button>';
   h+='</div>';
   h+='<div style="text-align:center;margin-top:12px;font-size:11px;color:var(--text3)">\ud83d\udd12 Paiement s\u00e9curis\u00e9 par Stripe</div>';
   h+='</div>';
@@ -4362,7 +4378,7 @@ async function processStripePayment(){
   await refreshRDV();
   if(isSlotTaken(booking.date,booking.time,dur,booking.collabId)){
     document.getElementById("stripeError").textContent="Ce créneau n'est plus disponible. Veuillez choisir un autre horaire.";
-    btn.disabled=false;btn.textContent="\ud83d\udd12 Payer "+acompte.toFixed(2)+" \u20ac";return;
+    btn.disabled=false;btn.textContent="\ud83d\udd12 Payer "+acompte.toFixed(2).replace(".",",")+" \u20ac";return;
   }
   
   // Create PaymentIntent via Supabase Edge Function or direct API
@@ -4375,13 +4391,13 @@ async function processStripePayment(){
   var ckRet = document.getElementById("retractAccept");
   if(ckRet && !ckRet.checked){
     document.getElementById("stripeError").textContent="Cochez la case concernant le d\u00e9lai de r\u00e9tractation pour un rendez-vous dans les 14 jours.";
-    btn.disabled=false; btn.textContent=isEmp?("\ud83d\udd12 Pr\u00e9-autoriser "+acompte.toFixed(2)+" \u20ac"):("\ud83d\udd12 Payer "+acompte.toFixed(2)+" \u20ac"); return;
+    btn.disabled=false; btn.textContent=isEmp?("\ud83d\udd12 Pr\u00e9-autoriser "+acompte.toFixed(2).replace(".",",")+" \u20ac"):("\ud83d\udd12 Payer "+acompte.toFixed(2).replace(".",",")+" \u20ac"); return;
   }
   if(isEmp){
     var ckEmp = document.getElementById("empreinteAccept");
     if(!ckEmp || !ckEmp.checked){
       document.getElementById("stripeError").textContent="Vous devez accepter les conditions de l\u0027empreinte bancaire.";
-      btn.disabled=false; btn.textContent="\ud83d\udd12 Pré-autoriser "+acompte.toFixed(2)+" \u20ac"; return;
+      btn.disabled=false; btn.textContent="\ud83d\udd12 Pré-autoriser "+acompte.toFixed(2).replace(".",",")+" \u20ac"; return;
     }
   }
 
@@ -4399,7 +4415,7 @@ async function processStripePayment(){
     if(result.error){
       document.getElementById("stripeError").textContent=result.error.message;
       btn.disabled=false;
-      btn.textContent=isEmp?"\ud83d\udd12 Pré-autoriser "+acompte.toFixed(2)+" \u20ac":"\ud83d\udd12 Payer "+acompte.toFixed(2)+" \u20ac";
+      btn.textContent=isEmp?"\ud83d\udd12 Pré-autoriser "+acompte.toFixed(2).replace(".",",")+" \u20ac":"\ud83d\udd12 Payer "+acompte.toFixed(2).replace(".",",")+" \u20ac";
       return;
     }
     
@@ -4446,14 +4462,14 @@ async function processStripePayment(){
       if(!r.ok){
         document.getElementById("stripeError").textContent=chargeResp.error||(isEmp?"\u00c9chec de la pré-autorisation":"\u00c9chec du paiement");
         btn.disabled=false;
-        btn.textContent=isEmp?"\ud83d\udd12 Pré-autoriser "+acompte.toFixed(2)+" \u20ac":"\ud83d\udd12 Payer "+acompte.toFixed(2)+" \u20ac";
+        btn.textContent=isEmp?"\ud83d\udd12 Pré-autoriser "+acompte.toFixed(2).replace(".",",")+" \u20ac":"\ud83d\udd12 Payer "+acompte.toFixed(2).replace(".",",")+" \u20ac";
         if(chargeResp.refunded||chargeResp.released){await refreshRDV();renderTimeSlots(booking.date);}
         return;
       }
     }catch(e){
       document.getElementById("stripeError").textContent="Erreur r\u00e9seau: "+e.message;
       btn.disabled=false;
-      btn.textContent=isEmp?"\ud83d\udd12 Pré-autoriser "+acompte.toFixed(2)+" \u20ac":"\ud83d\udd12 Payer "+acompte.toFixed(2)+" \u20ac";
+      btn.textContent=isEmp?"\ud83d\udd12 Pré-autoriser "+acompte.toFixed(2).replace(".",",")+" \u20ac":"\ud83d\udd12 Payer "+acompte.toFixed(2).replace(".",",")+" \u20ac";
       return;
     }
     
@@ -4464,21 +4480,21 @@ async function processStripePayment(){
     var h='<div class="success-page">';
     h+='<div class="ico">\u2705</div>';
     h+='<h2>'+(isEmp?'Pré-autorisation acceptée !':'Paiement accepté !')+'</h2>';
-    h+='<p>'+(isEmp?'Une empreinte de <strong>'+acompte.toFixed(2)+' \u20ac</strong> a été réalisée sur votre carte. Aucun débit immédiat — sera libérée après votre RDV.':'Votre acompte de <strong>'+acompte.toFixed(2)+' \u20ac</strong> a été encaissé.')+'</p>';
+    h+='<p>'+(isEmp?'Une empreinte de <strong>'+acompte.toFixed(2).replace(".",",")+' \u20ac</strong> a été réalisée sur votre carte. Aucun débit immédiat — sera libérée après votre RDV.':'Votre acompte de <strong>'+acompte.toFixed(2).replace(".",",")+' \u20ac</strong> a été encaissé.')+'</p>';
     h+=lxMsgConfirmHtml(''); // 2026-10-17 audit réglages (#26)
     h+='<div class="summary" style="max-width:400px;margin:20px auto">';
     if(hasMulti){
       h+='<div class="summary-row" style="font-weight:800;color:var(--gold)"><span>Prestations</span><span class="v">'+booking.items.length+'</span></div>';
       booking.items.forEach(function(it){
-        h+='<div class="summary-row" style="padding-left:8px;font-size:13px"><span>\u2022 '+escapeHtmlSimple(it.nom)+'</span><span class="v">'+lxApPfx(it)+(Number(it.prix)||0).toFixed(2)+' \u20ac</span></div>';
+        h+='<div class="summary-row" style="padding-left:8px;font-size:13px"><span>\u2022 '+escapeHtmlSimple(it.nom)+'</span><span class="v">'+lxApPfx(it)+(Number(it.prix)||0).toFixed(2).replace(".",",")+' \u20ac</span></div>';
       });
-      h+='<div class="summary-row" style="font-weight:700"><span>Total ('+dur+' min)</span><span class="v">'+lxApPfx()+totalPrix.toFixed(2)+' \u20ac</span></div>';
+      h+='<div class="summary-row" style="font-weight:700"><span>Total ('+dur+' min)</span><span class="v">'+lxApPfx()+totalPrix.toFixed(2).replace(".",",")+' \u20ac</span></div>';
     }else{
       h+='<div class="summary-row"><span>Prestation</span><span class="v">'+escapeHtmlSimple(primaryNom)+'</span></div>';
     }
     h+='<div class="summary-row"><span>Date</span><span class="v">'+formatDateFR(booking.date)+' \u00e0 '+booking.time+'</span></div>';
     if(booking.collab)h+='<div class="summary-row"><span>Avec</span><span class="v">'+escapeHtmlSimple(booking.collab.n)+'</span></div>';
-    h+='<div class="summary-row" style="border-top:2px solid var(--gold);padding-top:10px;margin-top:8px"><span>'+(isEmp?'Empreinte (non débitée)':'Acompte payé')+'</span><span class="v" style="color:#2d9a5e">'+acompte.toFixed(2)+' \u20ac \u2714</span></div>';
+    h+='<div class="summary-row" style="border-top:2px solid var(--gold);padding-top:10px;margin-top:8px"><span>'+(isEmp?'Empreinte (non débitée)':'Acompte payé')+'</span><span class="v" style="color:#2d9a5e">'+acompte.toFixed(2).replace(".",",")+' \u20ac \u2714</span></div>';
     h+='<div class="summary-row"><span>Carte</span><span class="v">'+brand.toUpperCase()+' **** '+last4+'</span></div>';
     h+='<div class="summary-row"><span>'+(isEmp?(booking.lieu==='domicile'?'À payer sur place':'À payer au salon'):(booking.lieu==='domicile'?'Reste à payer sur place':'Reste à payer au salon'))+'</span><span class="v">'+lxApPfx()+(isEmp?totalPrix.toFixed(2):(totalPrix-acompte).toFixed(2))+' \u20ac</span></div>';
     h+=lxApNotice(); // 2026-10-15
@@ -4501,7 +4517,7 @@ async function processStripePayment(){
   }catch(e){
     document.getElementById("stripeError").textContent="Erreur de paiement: "+e.message;
     btn.disabled=false;
-    btn.textContent="\ud83d\udd12 Payer "+acompte.toFixed(2)+" \u20ac";
+    btn.textContent="\ud83d\udd12 Payer "+acompte.toFixed(2).replace(".",",")+" \u20ac";
   }
 }
 
@@ -4518,7 +4534,7 @@ async function askModifyRdv(rdvId){
   h+='<h2 style="font-family:var(--f1);color:var(--gold);margin-bottom:4px">Demander une modification</h2>';
   h+='<div style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:16px">'+escapeHtmlSimple(rdv.service_nom)+' \u2022 '+(rdv.heure_rdv?rdv.heure_rdv.slice(0,5):'')+' le '+rdv.date_rdv+'</div>';
   h+='<div style="margin-bottom:12px"><label style="font-size:12px;font-weight:700;color:rgba(255,255,255,.6);display:block;margin-bottom:4px">Nouvelle date</label>';
-  h+='<input type="date" id="modifDate" value="'+rdv.date_rdv+'" min="'+_ymdLocal(new Date())+'" style="width:100%;padding:12px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:10px;color:#fff;font-size:14px"></div>';
+  h+='<input type="date" id="modifDate" value="'+rdv.date_rdv+'" min="'+_ymdLocal(_lxParisNow())+'" style="width:100%;padding:12px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:10px;color:#fff;font-size:14px"></div>';
   h+='<div style="margin-bottom:12px"><label style="font-size:12px;font-weight:700;color:rgba(255,255,255,.6);display:block;margin-bottom:4px">Nouvel horaire</label>';
   h+='<input type="time" id="modifTime" value="'+(rdv.heure_rdv?rdv.heure_rdv.slice(0,5):'09:00')+'" style="width:100%;padding:12px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:10px;color:#fff;font-size:14px"></div>';
   h+='<div style="margin-bottom:16px"><label style="font-size:12px;font-weight:700;color:rgba(255,255,255,.6);display:block;margin-bottom:4px">Message (optionnel)</label>';
@@ -4537,7 +4553,7 @@ async function doModifyRequest(rdvId){
   if(!newDate||!newTime){showAlert("Choisissez une date et un horaire","info");return;}
   var rdv=null;for(var i=0;i<CLIENT_RDVS.length;i++){if(CLIENT_RDVS[i].id===rdvId){rdv=CLIENT_RDVS[i];break;}}
   if(!rdv)return;
-  var dur=rdv.duree_minutes||60;
+  var dur=rdv.duree_minutes||30; // 03/11/2026 : 30 min par défaut, comme la base
   if(isSlotTaken(newDate,newTime,dur,rdv.collaborateur_id)){
     showAlert("Ce cr\u00e9neau n'est pas disponible. Choisissez un autre horaire.","warning");return;
   }
@@ -4617,7 +4633,7 @@ function lxTexteRetractationHtml(){
 function lxRdvDans14j(d){
   if(!d||!/^\d{4}-\d{2}-\d{2}/.test(String(d))) return false;
   // 03/11 : jour calendaire (J+14 inclus), indépendant de l'heure de consultation (même règle que proposal.html, acompte.html)
-  var n=new Date(); n.setHours(12,0,0,0); n.setDate(n.getDate()+14);
+  var n=_lxParisNow(); n.setHours(12,0,0,0); n.setDate(n.getDate()+14);
   var lim=n.getFullYear()+"-"+String(n.getMonth()+1).padStart(2,"0")+"-"+String(n.getDate()).padStart(2,"0");
   return String(d).slice(0,10)<=lim;
 }
@@ -4626,7 +4642,7 @@ function lxTexteEmpreinteHtml(montant){
   if(p.heures===-1) c="si je ne me pr\u00e9sente pas au rendez-vous ou si je l\u2019annule (annulation en ligne impossible : contactez l\u2019\u00e9tablissement)";
   else if(p.heures===0) c="si je ne me pr\u00e9sente pas au rendez-vous sans l\u2019avoir annul\u00e9 avant son heure";
   else c="si je ne me pr\u00e9sente pas au rendez-vous ou si je l\u2019annule moins de "+lxDureeTexte(p.heures)+" avant";
-  return 'J\u0027accepte qu\u0027au plus <strong>'+(Number(montant)||0).toFixed(2)+' \u20ac</strong> soient d\u00e9bit\u00e9s de ma carte '+c+'. Dans les autres cas, rien n\u0027est d\u00e9bit\u00e9 et l\u0027empreinte est lib\u00e9r\u00e9e. <a href="/cgu" target="_blank" rel="noopener" style="color:var(--gold)">Conditions</a>';
+  return 'J\u0027accepte qu\u0027au plus <strong>'+(Number(montant)||0).toFixed(2).replace(".",",")+' \u20ac</strong> soient d\u00e9bit\u00e9s de ma carte '+c+'. Dans les autres cas, rien n\u0027est d\u00e9bit\u00e9 et l\u0027empreinte est lib\u00e9r\u00e9e. <a href="/cgu" target="_blank" rel="noopener" style="color:var(--gold)">Conditions</a>';
 }
 function lxTexteAnnulation(avecAcompte){
   var p=lxPolitiqueAnnulation(), t;
@@ -4637,15 +4653,33 @@ function lxTexteAnnulation(avecAcompte){
   if(p.heures===-1 || !p.rembourse) return t+(p.pct>0?" Acompte rembours\u00e9 \u00e0 "+p.pct+" %.":" Acompte non remboursable.");
   return t+" Acompte rembours\u00e9 en cas d\u2019annulation dans ce d\u00e9lai.";
 }
+// 03/11/2026 (audit D I1) : droit de rétractation (CGU art. 8) — réservation faite il y a moins de 14 jours et RDV pas encore
+// commencé : l'annulation est toujours possible et l'acompte est remboursé en totalité (même règle que le serveur).
+function _lxEnRetractation(rdv){
+  try{
+    if(!rdv||!rdv.created_at) return false;
+    var ms=Date.now()-new Date(rdv.created_at).getTime();
+    if(!(ms>=0 && ms<14*24*3600*1000)) return false;
+    if(!rdv.date_rdv) return true;
+    return _lxLocalDT(rdv.date_rdv,(rdv.heure_rdv||"00:00")) > _lxParisNow();
+  }catch(e){ return false; }
+}
+function _lxRetractInfoHtml(rdv){
+  if(!_lxEnRetractation(rdv)) return "";
+  var fin=new Date(new Date(rdv.created_at).getTime()+14*24*3600*1000).toLocaleDateString("fr-FR",{day:"numeric",month:"long",timeZone:"Europe/Paris"});
+  var ac=rdv.acompte_paye===true && Number(rdv.acompte_montant)>0;
+  return '<div style="background:rgba(212,168,67,.08);border:1px solid rgba(212,168,67,.3);border-radius:10px;padding:12px;font-size:12px;color:rgba(255,255,255,.85);margin-bottom:12px;line-height:1.5">\u2696\ufe0f <strong>Droit de r\u00e9tractation</strong> : vous avez r\u00e9serv\u00e9 il y a moins de 14 jours (jusqu\u0027au '+fin+'). Vous pouvez annuler ce rendez-vous sans motif'+(ac?' : l\u0027acompte vous est rembours\u00e9 <strong>int\u00e9gralement</strong>, quelle que soit la politique d\u0027annulation de l\u0027\u00e9tablissement.':', sans frais.')+' <a href="/cgu#retractation" target="_blank" rel="noopener" style="color:var(--gold)">D\u00e9tails</a></div>';
+}
 async function askCancelRdv(rdvId){
   var rdv=null;for(var i=0;i<CLIENT_RDVS.length;i++){if(CLIENT_RDVS[i].id===rdvId){rdv=CLIENT_RDVS[i];break;}}
   if(!rdv)return;
   // Quick Win #3 (2026-05-06) : prise en charge des nouvelles valeurs "0h" / "6h" / "12h" / "jamais"
   var policyHours=lxPolitiqueAnnulation().heures; // 2026-10-14 audit : même lecture que le worker (« N j » = N×24 h)
   var rdvDate=_lxLocalDT(rdv.date_rdv,(rdv.heure_rdv||"09:00")); // FIX iOS : plus de parsing de chaine
-  var now=new Date();
+  var now=_lxParisNow(); // 03/11/2026 (audit D I2) : heure de Paris
   var hoursUntil=(rdvDate-now)/(1000*60*60);
-  var canCancel=(policyHours===0)?true:(policyHours===-1)?false:(hoursUntil>=policyHours);
+  var _retr=_lxEnRetractation(rdv); // 03/11/2026 (audit D I1)
+  var canCancel=_retr||((policyHours===0)?true:(policyHours===-1)?false:(hoursUntil>=policyHours));
   var h='<div class="modify-modal" onclick="this.remove()">';
   h+='<div class="modify-box" onclick="event.stopPropagation()">';
   h+='<h2 style="font-family:var(--f1);color:#ef5350;margin-bottom:4px">Annuler ce rendez-vous ?</h2>';
@@ -4658,8 +4692,9 @@ async function askCancelRdv(rdvId){
     if(rdv.acompte_paye){
       h+='<div style="background:rgba(212,168,67,.1);border:1px solid rgba(212,168,67,.2);border-radius:10px;padding:14px;margin-bottom:12px;font-size:13px;color:#d4a843">';
       var _paC=lxPolitiqueAnnulation();
-      h+='\ud83d\udcb3 Acompte de '+Number(rdv.acompte_montant).toFixed(2).replace(".",",")+' \u20ac vers\u00e9. '+(_paC.rembourse?'Il sera rembours\u00e9.':(_paC.pct>0?'Il sera rembours\u00e9 \u00e0 '+_paC.pct+' %.':'Non remboursable.'))+'</div>';
+      h+='\ud83d\udcb3 Acompte de '+Number(rdv.acompte_montant).toFixed(2).replace(".",",")+' \u20ac vers\u00e9. '+(_retr?'Il sera rembours\u00e9 int\u00e9gralement (r\u00e9tractation).':(_paC.rembourse?'Il sera rembours\u00e9.':(_paC.pct>0?'Il sera rembours\u00e9 \u00e0 '+_paC.pct+' %.':'Non remboursable.')))+'</div>';
     }
+    h+=_lxRetractInfoHtml(rdv);
     h+='<div style="margin-bottom:16px"><label style="font-size:12px;font-weight:700;color:rgba(255,255,255,.6);display:block;margin-bottom:4px">Motif (optionnel)</label>';
     h+='<textarea id="cancelMsg" rows="2" placeholder="Raison..." style="width:100%;padding:10px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:10px;color:#fff;font-size:13px;resize:none"></textarea></div>';
     h+='<div style="display:flex;gap:8px">';
@@ -4747,7 +4782,7 @@ function addToCart(prodId){
   var prod=null;for(var i=0;i<PRODUCTS.length;i++){if(PRODUCTS[i].id===prodId){prod=PRODUCTS[i];break;}}
   if(!prod)return;
   // Determine effective price (promo or normal)
-  var _today=new Date().toISOString().slice(0,10);
+  var _today=_lxParisYmd();
   var _isPromo=prod.promoActif&&prod.promoPrix&&(!prod.promoDebut||prod.promoDebut<=_today)&&(!prod.promoFin||prod.promoFin>=_today);
   var effPrice=_isPromo?prod.promoPrix:prod.p;
   var existing=null;for(var i=0;i<CART.length;i++){if(CART[i].id===prodId){existing=CART[i];break;}}
@@ -4785,10 +4820,10 @@ function showCart(){
     h+='<span style="font-weight:700;min-width:20px;text-align:center">'+c.qty+'</span>';
     h+='<button onclick="cartQty('+i+',1)" style="width:28px;height:28px;border-radius:8px;border:1px solid rgba(255,255,255,.1);background:none;color:var(--text);cursor:pointer;font-size:16px">+</button>';
     h+='</div>';
-    h+='<div style="font-family:var(--f1);font-weight:700;color:var(--gold);min-width:60px;text-align:right">'+(c.p*c.qty).toFixed(2)+' \u20ac</div>';
+    h+='<div style="font-family:var(--f1);font-weight:700;color:var(--gold);min-width:60px;text-align:right">'+(c.p*c.qty).toFixed(2).replace(".",",")+' \u20ac</div>';
     h+='</div>';
   }
-  h+='<div style="display:flex;justify-content:space-between;padding:14px 0;font-size:18px;font-weight:800;border-top:2px solid var(--gold);margin-top:8px"><span>Total</span><span style="color:var(--gold)">'+total.toFixed(2)+' \u20ac</span></div>';
+  h+='<div style="display:flex;justify-content:space-between;padding:14px 0;font-size:18px;font-weight:800;border-top:2px solid var(--gold);margin-top:8px"><span>Total</span><span style="color:var(--gold)">'+total.toFixed(2).replace(".",",")+' \u20ac</span></div>';
   h+='<button class="btn btn-gold" style="width:100%;padding:14px;font-size:15px;margin-top:12px" onclick="submitOrder()">Commander (retrait au salon)</button>';
   h+='<button class="btn btn-outline" style="width:100%;padding:10px;font-size:13px;margin-top:8px" onclick="closeCart()">Continuer mes achats</button>';
   h+='</div></div>';
@@ -4828,7 +4863,7 @@ function _ccAfficherConfirmation(numero,code,total,payee){
   var h='<div class="auth-modal" onclick="closeCart()"><div class="auth-box" onclick="event.stopPropagation()" style="text-align:center">';
   h+='<div style="font-size:48px;margin-bottom:12px">\u2705</div>';
   h+='<h2 style="color:var(--green)">Commande n\u00b0'+numero+' envoy\u00e9e !</h2>';
-  h+='<p style="color:var(--text2);margin-top:8px">'+(payee?'Paiement de '+Number(total).toFixed(2)+' \u20ac accept\u00e9.':'Montant de '+Number(total).toFixed(2)+' \u20ac \u00e0 r\u00e9gler au salon lors du retrait.')+' Vous recevrez un email d\u00e8s qu\u2019elle sera pr\u00eate.</p>';
+  h+='<p style="color:var(--text2);margin-top:8px">'+(payee?'Paiement de '+Number(total).toFixed(2).replace(".",",")+' \u20ac accept\u00e9.':'Montant de '+Number(total).toFixed(2).replace(".",",")+' \u20ac \u00e0 r\u00e9gler au salon lors du retrait.')+' Vous recevrez un email d\u00e8s qu\u2019elle sera pr\u00eate.</p>';
   if(code)h+='<div style="margin:16px auto;padding:14px;border:1px dashed var(--gold);border-radius:12px;max-width:260px"><div style="font-size:12px;color:var(--text3)">Code de retrait</div><div style="font-size:28px;font-weight:800;letter-spacing:4px;color:var(--gold)">'+code+'</div><div style="font-size:11px;color:var(--text3)">\u00c0 pr\u00e9senter au salon (aussi envoy\u00e9 par email)</div></div>';
   h+='<button class="btn btn-gold" style="margin-top:8px;padding:12px 32px" onclick="closeCart()">Fermer</button></div></div>';
   var m=document.getElementById("authModal"); if(m) m.innerHTML=h;
@@ -4891,7 +4926,7 @@ function _lxLocalDT(ymd,hm){                // "2026-07-15" + "09:00"/"09:00:00"
 // 02/11/2026 : étapes d'une réservation en ligne renvoyées par le serveur (forfait : pauses libres, même règle
 // que la base) ; sinon, ou si elles ne correspondent pas à la durée, toute la durée est occupée (comme avant).
 function lxPhasesResaEnLigne(r){
-  var ph=r&&r.a_phases, d=Number(r&&r.duree_minutes)||60;
+  var ph=r&&r.a_phases, d=Number(r&&r.duree_minutes)||30; // 03/11/2026 (audit D) : 30 min par défaut, comme la base
   var ok=Array.isArray(ph)&&ph.length>0&&ph.every(function(p){return p&&(p.t==="w"||p.t==="p")&&Number(p.d)>0;})
     &&ph.reduce(function(t,p){return t+Number(p.d);},0)===Number(r.duree_minutes);
   return ok?ph.map(function(p){return {t:p.t,d:Number(p.d),l:"RDV"};}):[{t:"w",d:d,l:"RDV"}];
@@ -4909,7 +4944,7 @@ async function checkClientCarteAbo(){
     var cartes = (res.ok && res.data && Array.isArray(res.data.cartes)) ? res.data.cartes : [];
     if(cartes.length){
       var c = cartes[0];
-      var today=new Date().toISOString().slice(0,10);
+      var today=_lxParisYmd();
       if(!c.date_expiration||c.date_expiration>=today){
         CLIENT_CARTE_ABO={id:c.id,carteNom:c.carte_nom,remiseServices:Number(c.remise_services),remiseForfaits:Number(c.remise_forfaits),dateExp:c.date_expiration,eco:Number(c.economies_totales)||0};
       }
@@ -4959,7 +4994,7 @@ async function submitSouscrireCarte(idx){
   try{
     // 1) Pr\u00e9-cr\u00e9ation de la carte en status "pending_payment"
     var dExp=new Date();dExp.setMonth(dExp.getMonth()+ca.duree);
-    var dateAchat=new Date().toISOString().slice(0,10);
+    var dateAchat=_lxParisYmd();
     var dateExp=dExp.toISOString().slice(0,10);
     var clientNom=((CLIENT.prenom||"")+" "+(CLIENT.nom||"")).trim()||CLIENT.email;
     var insertRes=await sb.from("cartes_abo_clients").insert({

@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Votre proposition de RDV — Luxyra</title>
 <link rel="stylesheet" href="https://luxyra.fr/fonts/luxyra-fonts.css">
 <script src="https://js.stripe.com/v3/"></script>
@@ -53,6 +53,7 @@ input[type=text],textarea{width:100%;padding:12px;background:rgba(255,255,255,.0
 </style>
 </head>
 <body>
+<h1 style="position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0">Votre proposition de rendez-vous</h1><!-- 03/11/2026 (audit D, accessibilité) -->
 <div class="wrap" id="root">
   <div class="spin"></div>
   <div style="text-align:center;color:var(--text3);font-size:13px">Chargement de votre proposition…</div>
@@ -112,7 +113,9 @@ async function fetchProposal(){
     if(data.demande.status==="confirmed"){ renderConfirmed(); return; }
     if(data.demande.status==="refused"){ renderRefused(); return; }
     if(data.demande.status==="expired"||data.demande.status==="cancelled_by_salon"){ renderError("Proposition cloturee", "Cette proposition n\u0027est plus active."); return; }
-    renderProposal();
+    // 03/11/2026 (audit D) : l'ancien parcours (v1, une seule option) est désactivé : il n'avait pas la case de rétractation.
+    // Aucune proposition v1 n'existe en base ; par sécurité, rien ne peut être confirmé ni payé par ce chemin.
+    renderError("Proposition à renouveler", "Cette proposition utilise un ancien format. Contactez l\u0027\u00e9tablissement pour qu\u0027il vous en envoie une nouvelle.");
   }catch(e){
     renderError("Erreur de connexion", e.message);
   }
@@ -172,16 +175,16 @@ function renderProposal(){
 
   h+='<div class="card"><h2>✨ Vos prestations</h2>';
   items.forEach(function(it){
-    h+='<div class="item"><span>• '+escapeHtml(it.nom)+' <span style="color:var(--text3);font-size:11px">('+(it.duree||0)+' min)</span></span><span class="v">'+(Number(it.prix)||0).toFixed(2)+' €</span></div>';
+    h+='<div class="item"><span>• '+escapeHtml(it.nom)+' <span style="color:var(--text3);font-size:11px">('+(it.duree||0)+' min)</span></span><span class="v">'+(Number(it.prix)||0).toFixed(2).replace(".",",")+' €</span></div>';
   });
-  h+='<div class="row tot"><span>Total</span><span class="v">'+prixTotal.toFixed(2)+' €</span></div>';
+  h+='<div class="row tot"><span>Total</span><span class="v">'+prixTotal.toFixed(2).replace(".",",")+' €</span></div>';
   if(pd.message_salon) h+='<div class="msg">"'+escapeHtml(pd.message_salon)+'"</div>';
   h+='</div>';
 
   if(acompte>0){
     h+='<div class="card"><h2>💳 Paiement de l\u0027acompte</h2>';
-    h+='<div class="row"><span>Acompte a regler maintenant</span><span class="v" style="font-size:18px">'+acompte.toFixed(2)+' €</span></div>';
-    h+='<div class="row"><span>Reste à payer le jour du rendez-vous</span><span class="v" style="color:var(--text2)">'+reste.toFixed(2)+' €</span></div>';
+    h+='<div class="row"><span>Acompte a regler maintenant</span><span class="v" style="font-size:18px">'+acompte.toFixed(2).replace(".",",")+' €</span></div>';
+    h+='<div class="row"><span>Reste à payer le jour du rendez-vous</span><span class="v" style="color:var(--text2)">'+reste.toFixed(2).replace(".",",")+' €</span></div>';
     h+='<div style="font-size:11px;color:var(--text3);margin-top:8px;text-align:center">🔒 Paiement securise par Stripe</div>';
     h+='</div>';
   }
@@ -193,12 +196,12 @@ function renderProposal(){
     // Sinon : Path B (Stripe Elements + Charges API → $$ chez Luxyra, à éviter)
     var connectActive = s.stripe_connect_id && (s.stripe_connect_status==="active" || s.stripe_connect_status==="enabled" || s.stripe_connect_status==="payouts_pending");
     if(connectActive){
-      h+='<button class="btn btn-gold" onclick="payViaCheckout()">💳 Payer '+acompte.toFixed(2)+' € et confirmer</button>';
+      h+='<button class="btn btn-gold" onclick="payViaCheckout()">💳 Payer '+acompte.toFixed(2).replace(".",",")+' € et confirmer</button>';
       h+='<div style="font-size:11px;color:var(--text3);text-align:center;margin:-4px 0 10px">🔒 Paiement sécurisé par Stripe — encaissé directement par le salon</div>';
     } else {
       // 2026-10-09 : plus jamais d'encaissement sur le compte Luxyra. Sans compte Stripe du salon,
       // l'acompte se règle au salon.
-      h+='<div style="font-size:12px;color:var(--text3);text-align:center;margin-bottom:8px">Acompte de '+acompte.toFixed(2)+' € à régler directement au salon.</div>';
+      h+='<div style="font-size:12px;color:var(--text3);text-align:center;margin-bottom:8px">Acompte de '+acompte.toFixed(2).replace(".",",")+' € à régler directement au salon.</div>';
       h+='<button class="btn btn-gold" onclick="confirmFree()">✅ Confirmer le rendez-vous</button>';
     }
   } else {
@@ -248,6 +251,7 @@ async function doRefuse(){
 var _lxEnvoi=false;
 function _lxBoutons(off){ try{ document.querySelectorAll("#root button.btn").forEach(function(b){ b.disabled=!!off; }); }catch(_){} }
 async function confirmFree(){
+  if(!STATE.v2){ return; } // 03/11/2026 (audit D) : ancien parcours v1 désactivé
   // Pas d'acompte → confirmation directe (sans paiement)
   if(_lxEnvoi) return;
   if(!confirm("Confirmer ce rendez-vous ?")) return;
@@ -270,6 +274,7 @@ async function confirmFree(){
 
 // FIX 2026-05-12 : Path A — redirige vers Stripe Checkout pour Connect direct au salon
 async function payViaCheckout(){
+  if(!STATE.v2){ return; } // 03/11/2026 (audit D) : ancien parcours v1 désactivé
   if(_lxEnvoi) return;
   _lxEnvoi=true; _lxBoutons(true);
   var errEl=document.getElementById("errBox");
@@ -407,7 +412,7 @@ function openPaymentModal(){
   var h='<div class="modal" id="payModal" onclick="if(event.target===this)closePaymentModal()">';
   h+='<div class="modal-box" style="max-width:440px">';
   h+='<h2 style="font-family:var(--f1);color:var(--gold);margin:0 0 6px">💳 Paiement</h2>';
-  h+='<div style="font-size:13px;color:var(--text2);margin-bottom:14px">Acompte de <strong style="color:var(--gold)">'+acompte.toFixed(2)+' €</strong></div>';
+  h+='<div style="font-size:13px;color:var(--text2);margin-bottom:14px">Acompte de <strong style="color:var(--gold)">'+acompte.toFixed(2).replace(".",",")+' €</strong></div>';
   h+='<div class="label">Titulaire de la carte</div>';
   h+='<input type="text" id="payName" value="'+escapeHtml(nom)+'" style="margin-bottom:10px">';
   h+='<div class="label">Numero de carte</div>';
@@ -415,7 +420,7 @@ function openPaymentModal(){
   h+='<div id="payErr" style="color:var(--red);font-size:12px;margin-top:6px;min-height:18px"></div>';
   h+='<div style="display:flex;gap:10px;margin-top:14px">';
   h+='<button class="btn btn-outline" style="margin:0" onclick="closePaymentModal()">Annuler</button>';
-  h+='<button class="btn btn-gold" id="payBtn" style="margin:0" onclick="doPayment()">🔒 Payer '+acompte.toFixed(2)+' €</button>';
+  h+='<button class="btn btn-gold" id="payBtn" style="margin:0" onclick="doPayment()">🔒 Payer '+acompte.toFixed(2).replace(".",",")+' €</button>';
   h+='</div>';
   h+='<div style="font-size:11px;color:var(--text3);margin-top:12px;text-align:center">🔒 Securise par Stripe</div>';
   h+='</div></div>';
@@ -429,6 +434,7 @@ function openPaymentModal(){
 function closePaymentModal(){ var m=document.getElementById("payModal"); if(m) m.remove(); window._proposalCard=null; }
 
 async function doPayment(){
+  if(!STATE.v2){ return; } // 03/11/2026 (audit D) : ancien parcours v1 désactivé
   var btn=document.getElementById("payBtn");
   var errEl=document.getElementById("payErr");
   var pd=STATE.demande.proposed_data||{};
@@ -446,7 +452,7 @@ async function doPayment(){
   btn.disabled=true; btn.textContent="Paiement en cours...";
   try{
     var result=await stripe.createToken(window._proposalCard,{name:name});
-    if(result.error){ errEl.textContent=result.error.message; btn.disabled=false; btn.textContent="🔒 Payer "+acompte.toFixed(2)+" €"; return; }
+    if(result.error){ errEl.textContent=result.error.message; btn.disabled=false; btn.textContent="🔒 Payer "+acompte.toFixed(2).replace(".",",")+" €"; return; }
     var token=result.token;
     var brand=token.card.brand, last4=token.card.last4;
 
@@ -485,13 +491,13 @@ async function doPayment(){
       })
     });
     var data=await r.json();
-    if(!r.ok){ errEl.textContent=data.error||"Erreur lors de la confirmation"; btn.disabled=false; btn.textContent="🔒 Payer "+acompte.toFixed(2)+" €"; return; }
+    if(!r.ok){ errEl.textContent=data.error||"Erreur lors de la confirmation"; btn.disabled=false; btn.textContent="🔒 Payer "+acompte.toFixed(2).replace(".",",")+" €"; return; }
     closePaymentModal();
     STATE.demande.status="confirmed";
     renderConfirmed();
   }catch(e){
     errEl.textContent="Erreur: "+e.message;
-    btn.disabled=false; btn.textContent="🔒 Payer "+acompte.toFixed(2)+" €";
+    btn.disabled=false; btn.textContent="🔒 Payer "+acompte.toFixed(2).replace(".",",")+" €";
   }
 }
 
@@ -617,7 +623,7 @@ function v2Barre(){
 function v2Dans14j(d){
   if(!d||!/^\d{4}-\d{2}-\d{2}/.test(String(d))) return false;
   // 03/11 : jour calendaire (J+14 inclus), indépendant de l'heure de consultation
-  var n=new Date(); n.setHours(12,0,0,0); n.setDate(n.getDate()+14);
+  var n=(function(){ try{ var q={}; new Intl.DateTimeFormat("en-GB",{timeZone:"Europe/Paris",year:"numeric",month:"2-digit",day:"2-digit"}).formatToParts(new Date()).forEach(function(x){q[x.type]=x.value;}); return new Date(+q.year,+q.month-1,+q.day); }catch(e){ return new Date(); } })(); n.setHours(12,0,0,0); n.setDate(n.getDate()+14); /* 03/11/2026 : jour de Paris */
   var lim=n.getFullYear()+"-"+String(n.getMonth()+1).padStart(2,"0")+"-"+String(n.getDate()).padStart(2,"0");
   return String(d).slice(0,10)<=lim;
 }
@@ -712,6 +718,6 @@ function renderV2Rembourse(msg){
 })();
 </script>
 <!-- lx-legal-footer -->
-<div class="lx-legal-footer" style="clear:both;text-align:center;font-size:12px;line-height:2;padding:18px 16px 28px;opacity:.75">© 2026 Luxyra — Alexandre Jensen EI<br><a href="/mentions-legales" style="color:inherit;text-decoration:underline">Mentions légales</a> · <a href="/cgv" style="color:inherit;text-decoration:underline">CGV</a> · <a href="/cgu.html" style="color:inherit;text-decoration:underline">CGU</a> · <a href="/confidentialite" style="color:inherit;text-decoration:underline">Confidentialité</a> · <a href="/dpa" style="color:inherit;text-decoration:underline">DPA</a> · <a href="/suppression-donnees" style="color:inherit;text-decoration:underline">Suppression des données</a> · <a href="/securite-rgpd" style="color:inherit;text-decoration:underline">Sécurité &amp; RGPD</a></div>
+<div class="lx-legal-footer" style="clear:both;text-align:center;font-size:12px;line-height:2;padding:18px 16px 28px;opacity:.75">© 2026 Luxyra — Alexandre Jensen EI<br><a href="/mentions-legales" style="color:inherit;text-decoration:underline">Mentions légales</a> · <a href="/cgv" style="color:inherit;text-decoration:underline">CGV</a> · <a href="/cgu" style="color:inherit;text-decoration:underline">CGU</a> · <a href="/confidentialite" style="color:inherit;text-decoration:underline">Confidentialité</a> · <a href="/dpa" style="color:inherit;text-decoration:underline">DPA</a> · <a href="/suppression-donnees" style="color:inherit;text-decoration:underline">Suppression des données</a> · <a href="/securite-rgpd" style="color:inherit;text-decoration:underline">Sécurité &amp; RGPD</a></div>
 </body>
 </html>

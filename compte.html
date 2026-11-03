@@ -115,6 +115,27 @@ a{color:var(--gold);text-decoration:none}
   <p class="lxgp-ios">Sur iPhone : ouvrez cette page dans Safari, touchez Partager puis « Sur l’écran d’accueil ».</p>
 </aside>
 <script>
+// 03/11/2026 (audit D I2) : horloge de PARIS (champs locaux = heure murale de Paris) pour les délais et dates de RDV,
+// quel que soit le fuseau de l'appareil du client.
+function _lxParisNow(){
+  try{
+    var p={}; new Intl.DateTimeFormat("en-GB",{timeZone:"Europe/Paris",hourCycle:"h23",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit"})
+      .formatToParts(new Date()).forEach(function(x){ p[x.type]=x.value; });
+    return new Date(+p.year, +p.month-1, +p.day, (+p.hour)%24, +p.minute, +p.second);
+  }catch(e){ return new Date(); }
+}
+function _lxParisYmd(){ var d=_lxParisNow(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
+function _lxDateHeure(ymd,hm){ var p=String(ymd||"").split("-"), t=String(hm||"0:0").split(":"); return new Date(parseInt(p[0],10), parseInt(p[1],10)-1, parseInt(p[2],10), parseInt(t[0],10)||0, parseInt(t[1],10)||0, 0); }
+// 03/11/2026 (audit D I1) : rétractation = réservé il y a moins de 14 jours et RDV pas encore commencé (même règle que le serveur)
+function _lxEnRetractation(rdv){
+  try{
+    if(!rdv||!rdv.created_at) return false;
+    var ms=Date.now()-new Date(rdv.created_at).getTime();
+    if(!(ms>=0 && ms<14*24*3600*1000)) return false;
+    if(!rdv.date_rdv) return true;
+    return _lxDateHeure(rdv.date_rdv, rdv.heure_rdv||"00:00") > _lxParisNow();
+  }catch(e){ return false; }
+}
 var SB_URL="https://kxdgjtvrkwugbifgppai.supabase.co";
 var SB_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt4ZGdqdHZya3d1Z2JpZmdwcGFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwNDE2NTgsImV4cCI6MjA4ODYxNzY1OH0.J3jVuoHSWA0wXyaWxiRzILEWVNr8hbbgVYg73UEDTuI";
 var HDR={"apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY,"Content-Type":"application/json"};
@@ -255,7 +276,7 @@ function renderVerif(){
   h+='<h1>Confirmer votre adresse</h1>';
   h+='<div class="sub">Pour votre s\u00e9curit\u00e9, saisissez le mot de passe de votre compte Luxyra pour confirmer cette adresse e-mail.</div>';
   h+='<div class="err" id="verifErr"></div>';
-  h+='<div class="fg"><label>Mot de passe</label><input id="vPass" type="password" autocomplete="current-password" onkeydown="if(event.key===\'Enter\')doVerifMdp()"></div>';
+  h+='<div class="fg"><label for="vPass">Mot de passe</label><input id="vPass" type="password" autocomplete="current-password" onkeydown="if(event.key===\'Enter\')doVerifMdp()"></div>';
   h+='<button class="btn btn-gold" id="btnVerifMdp" onclick="doVerifMdp()">Confirmer mon adresse</button>';
   h+='<div style="margin-top:18px;padding:12px 14px;border-radius:12px;border:1px solid rgba(248,113,113,.45);background:rgba(248,113,113,.06);font-size:13px;line-height:1.55;color:var(--text2)">';
   h+='<b style="color:#ff8a80">Vous n\u2019avez pas cr\u00e9\u00e9 de compte Luxyra ?</b> Ne faites rien : rien ne sera reli\u00e9 \u00e0 votre adresse.<br>';
@@ -383,8 +404,8 @@ function renderLogin(){
   h+='<div class="sub">Connectez-vous \u00e0 votre compte Luxyra</div>';
   h+='<div class="err" id="loginErr"></div>';
   if(window._lxVerifMsg) h+='<div style="margin:0 0 12px;font-size:13px;line-height:1.5;color:'+(window._lxVerifMsg.ok?'#81c784':'#f87171')+'">'+escAttr(window._lxVerifMsg.t)+'</div>';
-  h+='<div class="fg"><label>Email</label><input id="lEmail" type="email" placeholder="votre@email.fr"></div>';
-  h+='<div class="fg"><label>Mot de passe</label><input id="lPass" type="password" placeholder="\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" onkeydown="if(event.key===\'Enter\')doLogin()"></div>';
+  h+='<div class="fg"><label for="lEmail">Email</label><input id="lEmail" type="email" placeholder="votre@email.fr"></div>';
+  h+='<div class="fg"><label for="lPass">Mot de passe</label><input id="lPass" type="password" placeholder="\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" onkeydown="if(event.key===\'Enter\')doLogin()"></div>';
   h+='<button class="btn btn-gold" onclick="doLogin()">Se connecter</button>';
   h+='<div style="text-align:center;margin-top:12px;font-size:14px"><a href="#" onclick="event.preventDefault();PAGE=\'forgot\';render()">Mot de passe oubli\u00e9 ?</a></div>';
   h+='<div style="text-align:center;margin-top:16px;font-size:14px">Pas encore de compte ? <a href="#" onclick="event.preventDefault();PAGE=\'register\';render()">Cr\u00e9er un compte</a></div>';
@@ -398,7 +419,7 @@ function renderForgot(){
   h+='<h1>Mot de passe oubli\u00e9</h1>';
   h+='<div class="sub">Indiquez l\u2019email de votre compte : vous recevrez un lien pour choisir un nouveau mot de passe.</div>';
   h+='<div class="err" id="forgotErr"></div><div id="forgotOk" style="display:none;color:#81c784;font-size:14px;margin:10px 0"></div>';
-  h+='<div class="fg"><label>Email</label><input id="fEmail" type="email" placeholder="votre@email.fr"></div>';
+  h+='<div class="fg"><label for="fEmail">Email</label><input id="fEmail" type="email" placeholder="votre@email.fr"></div>';
   h+='<button class="btn btn-gold" id="btnForgot" onclick="doForgot()">Recevoir le lien</button>';
   h+='<div style="text-align:center;margin-top:16px;font-size:14px"><a href="#" onclick="event.preventDefault();PAGE=\'login\';render()">Retour \u00e0 la connexion</a></div>';
   h+='</div></div>';
@@ -418,8 +439,8 @@ function renderReset(){
   h+='<h1>Nouveau mot de passe</h1>';
   h+='<div class="sub">Choisissez un nouveau mot de passe (8 caract\u00e8res minimum).</div>';
   h+='<div class="err" id="resetErr"></div>';
-  h+='<div class="fg"><label>Nouveau mot de passe</label><input id="rPass" type="password"></div>';
-  h+='<div class="fg"><label>Confirmer</label><input id="rPass2" type="password" onkeydown="if(event.key===\'Enter\')doReset()"></div>';
+  h+='<div class="fg"><label for="rPass">Nouveau mot de passe</label><input id="rPass" type="password"></div>';
+  h+='<div class="fg"><label for="rPass2">Confirmer</label><input id="rPass2" type="password" onkeydown="if(event.key===\'Enter\')doReset()"></div>';
   h+='<button class="btn btn-gold" id="btnResetC" onclick="doReset()">Enregistrer et me connecter</button>';
   h+='</div></div>';
   return h;
@@ -448,18 +469,18 @@ function renderRegister(){
   h+='<h1>Cr\u00e9er un compte</h1>';
   h+='<div class="sub">Un seul compte pour r\u00e9server dans tous les salons Luxyra</div>';
   h+='<div class="err" id="regErr"></div>';
-  h+='<div class="fg-row"><div class="fg"><label>Nom *</label><input id="rNom" placeholder="DUPONT" style="text-transform:uppercase"></div>';
-  h+='<div class="fg"><label>Pr\u00e9nom *</label><input id="rPre" placeholder="Marie"></div></div>';
-  h+='<div class="fg-row"><div class="fg"><label>T\u00e9l\u00e9phone *</label><input id="rTel" type="tel" placeholder="06 12 34 56 78"></div>';
-  h+='<div class="fg"><label>Date de naissance</label><input id="rDdn" type="date"></div></div>';
-  h+='<div class="fg"><label>Genre *</label><select id="rGenre"><option value="" selected disabled>S\u00e9lectionnez\u2026</option><option value="F">Femme</option><option value="H">Homme</option><option value="E">Enfant</option></select></div>';
-  h+='<div class="fg"><label>Adresse *</label><input id="rAdr" placeholder="Num\u00e9ro et rue (pour les RDV \u00e0 domicile)" autocomplete="street-address"></div>';
-  h+='<div class="fg"><label>Pays *</label><select id="rPays" data-lx-pays="1">'+['France','Allemagne','Luxembourg','Belgique','Suisse','Autre pays'].map(function(p){return '<option'+(p===("France")?' selected':'')+'>'+p+'</option>';}).join('')+'</select></div>';
-  h+='<div class="fg-row"><div class="fg"><label>Code postal *</label><input id="rCp" inputmode="numeric" placeholder="Code postal" autocomplete="postal-code"></div>';
-  h+='<div class="fg"><label>Ville *</label><input id="rVille" readonly data-lx-ville-liste="1" style="cursor:default" placeholder="Choisie d\u2019apr\u00e8s le code postal" autocomplete="address-level2"></div></div>';
-  h+='<div class="fg"><label>Email *</label><input id="rEmail" type="email" placeholder="votre@email.fr" data-lx-sugg="1" autocomplete="email"></div>';
-  h+='<div class="fg"><label>Mot de passe *</label><input id="rPass" type="password" placeholder="Minimum 8 caract\u00e8res"></div>';
-  h+='<div class="fg"><label>Confirmer le mot de passe *</label><input id="rPass2" type="password" placeholder="Confirmez" onkeydown="if(event.key===\'Enter\')doRegister()"></div>';
+  h+='<div class="fg-row"><div class="fg"><label for="rNom">Nom *</label><input id="rNom" placeholder="DUPONT" style="text-transform:uppercase"></div>';
+  h+='<div class="fg"><label for="rPre">Pr\u00e9nom *</label><input id="rPre" placeholder="Marie"></div></div>';
+  h+='<div class="fg-row"><div class="fg"><label for="rTel">T\u00e9l\u00e9phone *</label><input id="rTel" type="tel" placeholder="06 12 34 56 78"></div>';
+  h+='<div class="fg"><label for="rDdn">Date de naissance</label><input id="rDdn" type="date"></div></div>';
+  h+='<div class="fg"><label for="rGenre">Genre *</label><select id="rGenre"><option value="" selected disabled>S\u00e9lectionnez\u2026</option><option value="F">Femme</option><option value="H">Homme</option><option value="E">Enfant</option></select></div>';
+  h+='<div class="fg"><label for="rAdr">Adresse <span style="font-weight:400;opacity:.7">(facultatif, utile pour les RDV \u00e0 domicile)</span></label><input id="rAdr" placeholder="Num\u00e9ro et rue" autocomplete="street-address"></div>';
+  h+='<div class="fg"><label for="rPays">Pays</label><select id="rPays" data-lx-pays="1">'+['France','Allemagne','Luxembourg','Belgique','Suisse','Autre pays'].map(function(p){return '<option'+(p===("France")?' selected':'')+'>'+p+'</option>';}).join('')+'</select></div>';
+  h+='<div class="fg-row"><div class="fg"><label for="rCp">Code postal</label><input id="rCp" inputmode="numeric" placeholder="Code postal" autocomplete="postal-code"></div>';
+  h+='<div class="fg"><label for="rVille">Ville</label><input id="rVille" readonly data-lx-ville-liste="1" style="cursor:default" placeholder="Choisie d\u2019apr\u00e8s le code postal" autocomplete="address-level2"></div></div>';
+  h+='<div class="fg"><label for="rEmail">Email *</label><input id="rEmail" type="email" placeholder="votre@email.fr" data-lx-sugg="1" autocomplete="email"></div>';
+  h+='<div class="fg"><label for="rPass">Mot de passe *</label><input id="rPass" type="password" placeholder="Minimum 8 caract\u00e8res"></div>';
+  h+='<div class="fg"><label for="rPass2">Confirmer le mot de passe *</label><input id="rPass2" type="password" placeholder="Confirmez" onkeydown="if(event.key===\'Enter\')doRegister()"></div>';
   h+='<div class="consent">';
   // 02/11/2026 (conformité RGPD / L34-5 CPCE) : consentement aux offres NON précoché, distinct des rappels de RDV
   h+='<label style="align-items:flex-start"><input type="checkbox" id="rSms" style="margin-top:3px"> <span>J\u0027accepte de recevoir par SMS les offres et actualit\u00e9s des \u00e9tablissements o\u00f9 je r\u00e9serve (facultatif)</span></label>';
@@ -482,8 +503,8 @@ function renderInvite(){
   h+='<h1 style="text-align:center">Activez votre compte</h1>';
   h+='<p style="text-align:center;font-size:13px;color:var(--text2);margin:8px 0 22px;line-height:1.5">Un salon a cr\u00e9\u00e9 votre fiche. D\u00e9finissez votre mot de passe ci-dessous pour acc\u00e9der \u00e0 votre historique de RDV, vos factures et votre fid\u00e9lit\u00e9.</p>';
   h+='<div id="invErr" class="err"></div>';
-  h+='<div class="fg"><label>Nouveau mot de passe *</label><input id="iPass" type="password" placeholder="Minimum 8 caract\u00e8res"></div>';
-  h+='<div class="fg"><label>Confirmer le mot de passe *</label><input id="iPass2" type="password" placeholder="Confirmez" onkeydown="if(event.key===\'Enter\')doActivateInvite()"></div>';
+  h+='<div class="fg"><label for="iPass">Nouveau mot de passe *</label><input id="iPass" type="password" placeholder="Minimum 8 caract\u00e8res"></div>';
+  h+='<div class="fg"><label for="iPass2">Confirmer le mot de passe *</label><input id="iPass2" type="password" placeholder="Confirmez" onkeydown="if(event.key===\'Enter\')doActivateInvite()"></div>';
   h+='<button id="btnActivateInvite" style="width:100%;margin-top:10px;padding:16px 20px;background:linear-gradient(135deg,#d4a843 0%,#b8960f 100%);color:#0a0a0a;font-weight:800;font-size:14px;border:none;border-radius:12px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:10px;letter-spacing:.5px;text-transform:uppercase;box-shadow:0 4px 16px rgba(212,168,67,.35);transition:all .2s" onmouseover="this.style.transform=\'translateY(-1px)\';this.style.boxShadow=\'0 6px 20px rgba(212,168,67,.45)\'" onmouseout="this.style.transform=\'translateY(0)\';this.style.boxShadow=\'0 4px 16px rgba(212,168,67,.35)\'" onclick="doActivateInvite()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="10"/></svg>Activer mon compte</button>';
   h+='<div style="text-align:center;margin-top:14px;font-size:11px;color:var(--text3);line-height:1.5">Lien valide 14 jours \u00b7 usage unique<br>En activant votre compte, vous acceptez nos <a href="/cgu" target="_blank" style="color:var(--gold)">conditions d\u0027utilisation</a> et notre <a href="/confidentialite" target="_blank" style="color:var(--gold)">Politique de confidentialit\u00e9</a>.</div>';
   h+='</div></div>';
@@ -661,7 +682,7 @@ function renderCommandesTab(){
     var d=function(x){try{return new Date(x).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"});}catch(e){return"";}};
     h+='<div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-left:4px solid '+st[1]+';border-radius:12px;padding:14px;margin-bottom:10px">';
     h+='<div style="display:flex;justify-content:space-between;gap:8px"><div style="font-weight:800">'+escAttr(c.salon_nom)+' \u2014 n\u00b0'+escAttr(c.numero==null?"":String(c.numero))+'</div><div style="color:'+st[1]+';font-weight:800;font-size:12px">'+st[0]+'</div></div>';
-    h+='<div style="font-size:12px;color:#999;margin:4px 0 8px">Pass\u00e9e le '+d(c.created_at)+' \u2022 '+Number(c.total).toFixed(2)+' \u20ac '+(c.paye?'(pay\u00e9e en ligne)':'(\u00e0 r\u00e9gler au salon)')+'</div>';
+    h+='<div style="font-size:12px;color:#999;margin:4px 0 8px">Pass\u00e9e le '+d(c.created_at)+' \u2022 '+Number(c.total).toFixed(2).replace(".",",")+' \u20ac '+(c.paye?'(pay\u00e9e en ligne)':'(\u00e0 r\u00e9gler au salon)')+'</div>';
     (c.items||[]).forEach(function(it){ h+='<div style="font-size:13px">'+escAttr(it.nom)+' \u00d7 '+(it.qty||1)+'</div>'; });
     if(c.code_retrait) h+='<div style="margin-top:10px;padding:10px;border:1px dashed #c8a84e;border-radius:10px;text-align:center"><div style="font-size:11px;color:#999">Code de retrait \u00e0 pr\u00e9senter</div><div style="font-size:24px;font-weight:800;letter-spacing:4px;color:#c8a84e">'+escAttr(c.code_retrait)+'</div></div>';
     if(c.status==="retiree") h+='<div style="margin-top:8px;font-size:12px;color:#81c784">Retir\u00e9e le '+d(c.collected_at)+'</div>';
@@ -894,7 +915,7 @@ function renderRdvTab(){
   var stClasses={pending:"st-pending",confirmed:"st-confirmed",done:"st-done",cancelled:"st-cancelled",refused:"st-cancelled"};
   
   // 2026-10-11 : date du jour LOCALE (toISOString = UTC : décalage après minuit) + RDV à venir triés chronologiquement
-  var _dj=new Date(); var today=_dj.getFullYear()+"-"+String(_dj.getMonth()+1).padStart(2,"0")+"-"+String(_dj.getDate()).padStart(2,"0");
+  var _dj=_lxParisNow(); var today=_dj.getFullYear()+"-"+String(_dj.getMonth()+1).padStart(2,"0")+"-"+String(_dj.getDate()).padStart(2,"0");
   var upcoming=CLIENT_RDVS.filter(function(r){return r.date_rdv>=today&&r.status!=="cancelled"&&r.status!=="refused"&&r.status!=="done";});
   upcoming.sort(function(x,y){ var a=(x.date_rdv||"")+" "+String(x.heure_rdv||""), b=(y.date_rdv||"")+" "+String(y.heure_rdv||""); return a<b?-1:a>b?1:0; });
   var past=CLIENT_RDVS.filter(function(r){return (r.date_rdv<today&&r.status!=="cancelled"&&r.status!=="refused"&&r.status!=="pending_payment")||r.status==="done";}); // 2026-10-14 : paiement abandonné ≠ « Terminé »
@@ -1254,7 +1275,7 @@ function renderCartesTab(){
     return h;
   }
   
-  var today=new Date().toISOString().slice(0,10);
+  var today=_lxParisYmd();
   // Sélecteur d'établissement (groupé par salon_id)
   var cartesSalons = {};
   CARTES_ABO_DATA.forEach(function(c){
@@ -1280,7 +1301,7 @@ function renderCartesTab(){
   
   h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">';
   h+='<div class="card" style="text-align:center"><div style="font-size:28px;font-weight:900;color:var(--gold)">'+actives.length+'</div><div style="font-size:12px;color:var(--text3)">Carte'+(actives.length>1?'s':'')+' active'+(actives.length>1?'s':'')+'</div></div>';
-  h+='<div class="card" style="text-align:center"><div style="font-size:28px;font-weight:900;color:var(--green)">'+totalEco.toFixed(2)+' \u20ac</div><div style="font-size:12px;color:var(--text3)">\u00c9conomies totales</div></div>';
+  h+='<div class="card" style="text-align:center"><div style="font-size:28px;font-weight:900;color:var(--green)">'+totalEco.toFixed(2).replace(".",",")+' \u20ac</div><div style="font-size:12px;color:var(--text3)">\u00c9conomies totales</div></div>';
   h+='</div>';
   
   // Active cards
@@ -1297,7 +1318,7 @@ function renderCartesTab(){
       h+='<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px">';
       h+='<div style="text-align:center;padding:8px;background:rgba(255,255,255,.03);border-radius:8px"><div style="font-size:18px;font-weight:900">-'+(c.remise_services||0)+'%</div><div style="font-size:10px;color:var(--text3)">Services TTC</div></div>';
       h+='<div style="text-align:center;padding:8px;background:rgba(255,255,255,.03);border-radius:8px"><div style="font-size:18px;font-weight:900">-'+(c.remise_forfaits||0)+'%</div><div style="font-size:10px;color:var(--text3)">Forfaits TTC</div></div>';
-      h+='<div style="text-align:center;padding:8px;background:rgba(74,222,128,.1);border-radius:8px"><div style="font-size:18px;font-weight:900;color:var(--green)">'+eco.toFixed(2)+'\u20ac</div><div style="font-size:10px;color:var(--text3)">\u00c9conomies</div></div>';
+      h+='<div style="text-align:center;padding:8px;background:rgba(74,222,128,.1);border-radius:8px"><div style="font-size:18px;font-weight:900;color:var(--green)">'+eco.toFixed(2).replace(".",",")+'\u20ac</div><div style="font-size:10px;color:var(--text3)">\u00c9conomies</div></div>';
       h+='</div>';
       h+='<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text3)">';
       h+='<span>Expire le '+fmtDate(c.date_expiration)+'</span>';
@@ -1316,7 +1337,7 @@ function renderCartesTab(){
       h+='<div style="display:flex;justify-content:space-between;align-items:center">';
       h+='<div><div style="font-weight:700;font-size:13px">\ud83d\udcb3 '+escAttr(c.carte_nom)+'</div>';
       h+='<div style="font-size:11px;color:var(--text3)">'+escAttr(c.salon_nom||"Salon")+' \u2022 '+fmtDate(c.date_achat)+' \u2192 '+fmtDate(c.date_expiration)+'</div></div>';
-      h+='<div style="text-align:right"><div style="font-size:14px;font-weight:800;color:var(--text3)">'+eco.toFixed(2)+'\u20ac \u00e9co.</div></div></div>';
+      h+='<div style="text-align:right"><div style="font-size:14px;font-weight:800;color:var(--text3)">'+eco.toFixed(2).replace(".",",")+'\u20ac \u00e9co.</div></div></div>';
       h+='</div>';
     });
   }
@@ -1332,7 +1353,7 @@ function setMyTicketsFilter(v){ window._myTicketsFilter = v; render(); }
 function renderTicketsTab(){
   var h='';
   var mois=["Jan","F\u00e9v","Mar","Avr","Mai","Jun","Jul","Ao\u00fb","Sep","Oct","Nov","D\u00e9c"];
-  var today=new Date().toISOString().slice(0,10);
+  var today=_lxParisYmd();
   // 2026-10-14 audit : uniquement de VRAIS tickets — ticket de caisse (_fromPOS) ou reçu d'acompte réellement
   // émis (acompte_tk_num). Avant : un RDV en ligne passé affichait un « ticket » TVA fabriqué dans le navigateur.
   var doneAll=CLIENT_RDVS.filter(function(r){
@@ -1381,7 +1402,7 @@ function renderTicketsTab(){
     h+='<div style="font-size:12px;color:var(--text3)">'+dateFR+(r.heure_rdv?" \u00e0 "+r.heure_rdv.slice(0,5):"")+'</div>';
     h+='<div style="font-size:12px;color:var(--text2);margin-top:2px">\ud83c\udfe0 '+escAttr(r.salon_nom||"Salon")+'</div>';
     h+='</div>';
-    h+='<div style="text-align:right"><div style="font-size:20px;font-weight:900;color:#fff">'+ttc.toFixed(2)+' \u20ac</div><div style="font-size:10px;color:var(--text3)">TTC</div></div>';
+    h+='<div style="text-align:right"><div style="font-size:20px;font-weight:900;color:#fff">'+ttc.toFixed(2).replace(".",",")+' \u20ac</div><div style="font-size:10px;color:var(--text3)">TTC</div></div>';
     h+='</div>';
     // Items detail - always show all
     if(_estPOS&&r.items&&r.items.length){
@@ -1394,7 +1415,7 @@ function renderTicketsTab(){
         var price=(it.price||0)*(it.qty||1)-(it.remise||0);
         h+='<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0;'+(ic>1?"border-top:1px solid var(--border);":"")+'">';
         h+='<span style="color:var(--text2)">'+icon+' '+escAttr(it.name||"")+(it.qty>1?" \u00d7"+it.qty:"")+'</span>';
-        h+='<span style="font-weight:700;color:var(--text)">'+price.toFixed(2)+' \u20ac</span></div>';
+        h+='<span style="font-weight:700;color:var(--text)">'+price.toFixed(2).replace(".",",")+' \u20ac</span></div>';
       });
       h+='</div>';
     }else{
@@ -1527,7 +1548,7 @@ function renderBonsCadeauxTab(){
     h+='<div style="padding:18px 16px;text-align:center">';
     h+='<div style="font-family:\'Playfair Display\',Georgia,serif;font-size:42px;font-weight:700;color:var(--gold2);line-height:1">'+restant.toFixed(0)+'<span style="font-size:22px;color:var(--gold)">€</span></div>';
     if(utilise > 0){
-      h+='<div style="font-size:11px;color:var(--text3);margin-top:4px">Restant — Total acheté '+totalValue.toFixed(2)+' € · Utilisé '+utilise.toFixed(2)+' €</div>';
+      h+='<div style="font-size:11px;color:var(--text3);margin-top:4px">Restant — Total acheté '+totalValue.toFixed(2).replace(".",",")+' € · Utilisé '+utilise.toFixed(2).replace(".",",")+' €</div>';
     }
     h+='<div style="display:inline-block;margin:10px 0 4px;padding:8px 18px;background:rgba(232,200,115,.12);border:1px solid rgba(232,200,115,.3);border-radius:20px;font-family:monospace;font-size:18px;letter-spacing:3px;color:#fed480;font-weight:700">'+_esc(b.code)+'</div>';
     h+='<div style="font-size:11px;color:var(--text3);margin-top:8px">Valable jusqu\'au '+dateExp+'</div>';
@@ -1597,16 +1618,16 @@ function printBonCadeau(bcId){
 
 function renderProfileTab(){
   var h='<div class="section"><div class="section-title">\ud83d\udc64 Informations personnelles</div><div class="card">';
-  h+='<div class="fg-row"><div class="fg"><label>Nom</label><input id="pNom" value="'+escAttr(CLIENT.nom||"")+'"></div>';
-  h+='<div class="fg"><label>Pr\u00e9nom</label><input id="pPre" value="'+escAttr(CLIENT.prenom||"")+'"></div></div>';
-  h+='<div class="fg-row"><div class="fg"><label>T\u00e9l\u00e9phone</label><input id="pTel" value="'+escAttr(CLIENT.telephone||"")+'"></div>';
-  h+='<div class="fg"><label>Genre</label><select id="pGenre"><option value="F"'+(CLIENT.genre==="F"?" selected":"")+'>Femme</option><option value="H"'+((CLIENT.genre==="H"||CLIENT.genre==="M")?" selected":"")+'>Homme</option><option value="E"'+(CLIENT.genre==="E"?" selected":"")+'>Enfant</option><option value=""'+(!CLIENT.genre||CLIENT.genre===""?" selected":"")+'>Non pr\u00e9cis\u00e9</option></select></div></div>';
-  h+='<div class="fg"><label>Date de naissance</label><input id="pDdn" type="date" value="'+escAttr(CLIENT.date_naissance||"")+'"></div>';
-  h+='<div class="fg"><label>Adresse *</label><input id="pAdr" value="'+escAttr(CLIENT.adresse||"")+'" placeholder="Num\u00e9ro et rue"></div>';
-  h+='<div class="fg"><label>Pays *</label><select id="pPays" data-lx-pays="1">'+['France','Allemagne','Luxembourg','Belgique','Suisse','Autre pays'].map(function(p){return '<option'+(p===(CLIENT.pays||"France")?' selected':'')+'>'+p+'</option>';}).join('')+'</select></div>';
-  h+='<div class="fg-row"><div class="fg"><label>Code postal *</label><input id="pCp" inputmode="numeric" value="'+escAttr(CLIENT.cp||"")+'" placeholder="Code postal" autocomplete="postal-code"></div>';
-  h+='<div class="fg"><label>Ville *</label><input id="pVille"'+((CLIENT.pays||"France")==="France"?' readonly':'')+' data-lx-ville-liste="1" style="cursor:default" value="'+escAttr(CLIENT.ville||"")+'" placeholder="Choisie d\u2019apr\u00e8s le code postal" autocomplete="address-level2"></div></div>';
-  h+='<div class="fg"><label>Email</label><input id="pEmail" value="'+escAttr(CLIENT.email)+'" disabled style="opacity:.5"></div>';
+  h+='<div class="fg-row"><div class="fg"><label for="pNom">Nom</label><input id="pNom" value="'+escAttr(CLIENT.nom||"")+'"></div>';
+  h+='<div class="fg"><label for="pPre">Pr\u00e9nom</label><input id="pPre" value="'+escAttr(CLIENT.prenom||"")+'"></div></div>';
+  h+='<div class="fg-row"><div class="fg"><label for="pTel">T\u00e9l\u00e9phone</label><input id="pTel" value="'+escAttr(CLIENT.telephone||"")+'"></div>';
+  h+='<div class="fg"><label for="pGenre">Genre</label><select id="pGenre"><option value="F"'+(CLIENT.genre==="F"?" selected":"")+'>Femme</option><option value="H"'+((CLIENT.genre==="H"||CLIENT.genre==="M")?" selected":"")+'>Homme</option><option value="E"'+(CLIENT.genre==="E"?" selected":"")+'>Enfant</option><option value=""'+(!CLIENT.genre||CLIENT.genre===""?" selected":"")+'>Non pr\u00e9cis\u00e9</option></select></div></div>';
+  h+='<div class="fg"><label for="pDdn">Date de naissance</label><input id="pDdn" type="date" value="'+escAttr(CLIENT.date_naissance||"")+'"></div>';
+  h+='<div class="fg"><label for="pAdr">Adresse <span style="font-weight:400;opacity:.7">(facultatif)</span></label><input id="pAdr" value="'+escAttr(CLIENT.adresse||"")+'" placeholder="Num\u00e9ro et rue"></div>';
+  h+='<div class="fg"><label for="pPays">Pays</label><select id="pPays" data-lx-pays="1">'+['France','Allemagne','Luxembourg','Belgique','Suisse','Autre pays'].map(function(p){return '<option'+(p===(CLIENT.pays||"France")?' selected':'')+'>'+p+'</option>';}).join('')+'</select></div>';
+  h+='<div class="fg-row"><div class="fg"><label for="pCp">Code postal</label><input id="pCp" inputmode="numeric" value="'+escAttr(CLIENT.cp||"")+'" placeholder="Code postal" autocomplete="postal-code"></div>';
+  h+='<div class="fg"><label for="pVille">Ville</label><input id="pVille"'+((CLIENT.pays||"France")==="France"?' readonly':'')+' data-lx-ville-liste="1" style="cursor:default" value="'+escAttr(CLIENT.ville||"")+'" placeholder="Choisie d\u2019apr\u00e8s le code postal" autocomplete="address-level2"></div></div>';
+  h+='<div class="fg"><label for="pEmail">Email</label><input id="pEmail" value="'+escAttr(CLIENT.email)+'" disabled style="opacity:.5"></div>';
   h+='<div style="font-size:11px;color:var(--text3);margin-bottom:12px">Pour changer d\u0027email, contactez le support.</div>';
   h+='<button class="btn btn-gold" onclick="saveProfile()">Enregistrer les modifications</button>';
   h+='<div id="profileMsg" style="display:none;text-align:center;margin-top:8px;font-size:13px"></div>';
@@ -1614,9 +1635,9 @@ function renderProfileTab(){
   
   // Change password
   h+='<div class="section"><div class="section-title">\ud83d\udd12 Changer le mot de passe</div><div class="card">';
-  h+='<div class="fg"><label>Mot de passe actuel</label><input id="pOldPass" type="password"></div>';
-  h+='<div class="fg"><label>Nouveau mot de passe</label><input id="pNewPass" type="password"></div>';
-  h+='<div class="fg"><label>Confirmer</label><input id="pNewPass2" type="password"></div>';
+  h+='<div class="fg"><label for="pOldPass">Mot de passe actuel</label><input id="pOldPass" type="password"></div>';
+  h+='<div class="fg"><label for="pNewPass">Nouveau mot de passe</label><input id="pNewPass" type="password"></div>';
+  h+='<div class="fg"><label for="pNewPass2">Confirmer</label><input id="pNewPass2" type="password"></div>';
   h+='<button class="btn btn-outline" onclick="changePassword()">Modifier le mot de passe</button>';
   h+='<div id="passMsg" style="display:none;text-align:center;margin-top:8px;font-size:13px"></div>';
   h+='</div></div>';
@@ -1676,9 +1697,11 @@ async function doLogin(){
   saveSession();loadMyRdvs();render();
 }
 
-// 2026-10-13 : adresse obligatoire (renseignements pour les prestations \u00e0 domicile)
+// 03/11/2026 (audit D I8, minimisation RGPD) : adresse FACULTATIVE (demandée seulement pour une réservation à domicile) ;
+// si elle est commencée, elle doit être complète et valide.
 function lxAdresseErreur(adr,cp,ville,pays){
-  if(!adr||adr.length<5) return "Indiquez votre adresse (num\u00e9ro et rue) : elle sert aux prestations \u00e0 domicile.";
+  if(!adr && !cp && !ville) return "";
+  if(!adr||adr.length<5) return "Adresse incompl\u00e8te (num\u00e9ro et rue), ou laissez les champs d\u0027adresse vides.";
   var _c=String(cp||"").replace(/^[A-Z]{1,2}-/i,"").replace(/\s/g,""), _p=pays||"France";
   var _re=(_p==="France"||_p==="Allemagne")?/^\d{5}$/:(_p==="Autre pays"?/^[A-Za-z0-9-]{3,10}$/:/^\d{4}$/);
   if(!_re.test(_c)) return "Code postal invalide pour ce pays";
@@ -1943,9 +1966,9 @@ function showModifyRdv(rdvId,salonId){
   h+='<h2 style="margin-bottom:12px">\u270f\ufe0f Modifier le rendez-vous</h2>';
   h+='<div style="font-size:14px;font-weight:700;margin-bottom:4px">'+escAttr(rdv.service_nom)+'</div>';
   h+='<div style="font-size:13px;color:var(--text3);margin-bottom:16px">'+escAttr(rdv.salon_nom||"Salon")+' \u2022 '+escAttr(rdv.collaborateur_nom||"")+'</div>';
-  h+='<div class="fg"><label>Nouvelle date</label><input type="date" id="modDate" value="'+escAttr(rdv.date_rdv)+'" min="'+(function(){var _d=new Date();return _d.getFullYear()+"-"+String(_d.getMonth()+1).padStart(2,"0")+"-"+String(_d.getDate()).padStart(2,"0");})()+'"></div>';
+  h+='<div class="fg"><label>Nouvelle date</label><input type="date" id="modDate" value="'+escAttr(rdv.date_rdv)+'" min="'+(function(){var _d=_lxParisNow();return _d.getFullYear()+"-"+String(_d.getMonth()+1).padStart(2,"0")+"-"+String(_d.getDate()).padStart(2,"0");})()+'"></div>';
   h+='<div class="fg"><label>Nouvelle heure</label><input type="time" id="modTime" value="'+(rdv.heure_rdv?rdv.heure_rdv.slice(0,5):"09:00")+'"></div>';
-  h+='<div class="fg"><label>Message au salon (optionnel)</label><textarea id="modMsg" rows="2" style="width:100%;padding:10px;background:rgba(255,255,255,.04);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-size:13px;resize:vertical" placeholder="Ex: Je souhaite d\u00e9caler d\u0027une heure..."></textarea></div>';
+  h+='<div class="fg"><label for="modMsg">Message au salon (optionnel)</label><textarea id="modMsg" rows="2" style="width:100%;padding:10px;background:rgba(255,255,255,.04);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-size:13px;resize:vertical" placeholder="Ex: Je souhaite d\u00e9caler d\u0027une heure..."></textarea></div>';
   h+='<div style="font-size:12px;color:var(--orange);margin-bottom:14px">\u26a0\ufe0f La modification sera soumise au salon pour validation.</div>';
   h+='<div style="display:flex;gap:8px">';
   h+='<button onclick="closePopup(\'modifyModal\')" class="btn btn-outline" style="flex:1">Annuler</button>';
@@ -1984,11 +2007,9 @@ async function submitModifyRdv(rdvId,salonId){
 function _lxRetractInfoHtml(rdv){
   try{
     var paye = rdv.acompte_paye===true && Number(rdv.acompte_montant)>0;
-    if(!paye || !rdv.created_at) return "";
-    var ms = Date.now() - new Date(rdv.created_at).getTime();
-    if(!(ms>=0 && ms < 14*24*3600*1000)) return "";
+    if(!paye || !_lxEnRetractation(rdv)) return "";
     var fin = new Date(new Date(rdv.created_at).getTime()+14*24*3600*1000).toLocaleDateString("fr-FR",{day:"numeric",month:"long"});
-    return '<div style="background:rgba(212,168,67,.08);border:1px solid rgba(212,168,67,.3);border-radius:8px;padding:10px 12px;font-size:12px;color:rgba(255,255,255,.8);margin-bottom:12px;text-align:left;line-height:1.5">\u2696\ufe0f <strong>Droit de r\u00e9tractation</strong> : vous avez r\u00e9serv\u00e9 il y a moins de 14 jours. Jusqu\u0027au '+fin+', vous pouvez vous r\u00e9tracter sans motif aupr\u00e8s de l\u0027\u00e9tablissement : l\u0027acompte vous est alors rembours\u00e9 int\u00e9gralement, quelle que soit sa politique d\u0027annulation (sauf prestation d\u00e9j\u00e0 commenc\u00e9e). Pr\u00e9venez-le en indiquant \u00ab r\u00e9tractation \u00bb, ou utilisez le <a href="/cgu#formulaire-retractation" target="_blank" rel="noopener" style="color:var(--gold)">formulaire</a> (copie possible \u00e0 contact@luxyra.fr).</div>';
+    return '<div style="background:rgba(212,168,67,.08);border:1px solid rgba(212,168,67,.3);border-radius:8px;padding:10px 12px;font-size:12px;color:rgba(255,255,255,.8);margin-bottom:12px;text-align:left;line-height:1.5">\u2696\ufe0f <strong>Droit de r\u00e9tractation</strong> : vous avez r\u00e9serv\u00e9 il y a moins de 14 jours. Jusqu\u0027au '+fin+', vous pouvez vous r\u00e9tracter sans motif : en annulant ici, l\u0027acompte vous est rembours\u00e9 int\u00e9gralement et automatiquement, quelle que soit la politique d\u0027annulation de l\u0027\u00e9tablissement (sauf prestation d\u00e9j\u00e0 commenc\u00e9e). Vous pouvez aussi utiliser le <a href="/cgu#formulaire-retractation" target="_blank" rel="noopener" style="color:var(--gold)">formulaire</a> (copie possible \u00e0 contact@luxyra.fr).</div>';
   }catch(e){ return ""; }
 }
 async function showCancelRdv(rdvId,salonId){
@@ -1997,9 +2018,10 @@ async function showCancelRdv(rdvId,salonId){
   // Le worker enrichit chaque RDV avec politique_annulation_h (-1=jamais, 0=aucun d\u00e9lai, N=heures).
   var policyH = (typeof rdv.politique_annulation_h === "number") ? rdv.politique_annulation_h : 48;
   var rembourse = rdv.remboursement_annulation !== false;
-  var rdvDate = new Date(rdv.date_rdv + "T" + (rdv.heure_rdv || "09:00"));
-  var hoursUntil = (rdvDate - new Date()) / (1000 * 60 * 60);
-  var canCancel = (policyH === 0) ? true : (policyH === -1) ? false : (hoursUntil >= policyH);
+  var rdvDate = _lxDateHeure(rdv.date_rdv, (rdv.heure_rdv || "09:00")); // 03/11/2026 (audit D I2) : heure de Paris
+  var hoursUntil = (rdvDate - _lxParisNow()) / (1000 * 60 * 60);
+  var _retr = _lxEnRetractation(rdv); // 03/11/2026 (audit D I1) : rétractation -> annulation toujours possible
+  var canCancel = _retr || ((policyH === 0) ? true : (policyH === -1) ? false : (hoursUntil >= policyH));
   var h='<div style="position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:200;display:flex;align-items:center;justify-content:center;padding:16px" onclick="closePopup(\'cancelModal\')">';
   h+='<div onclick="event.stopPropagation()" style="background:var(--bg2);border:1px solid rgba(248,113,113,.15);border-radius:20px;padding:24px;max-width:420px;width:100%;text-align:center">';
   h+='<div style="font-size:36px;margin-bottom:8px">\u274c</div>';
@@ -2026,9 +2048,9 @@ async function showCancelRdv(rdvId,salonId){
   }
   h+=_lxRetractInfoHtml(rdv); // 02/11/2026 (conformité I-3)
   if(rdv.acompte_montant>0){
-    h+='<div style="padding:10px;background:rgba(251,146,60,.1);border-radius:8px;font-size:12px;color:var(--orange);margin-bottom:12px">\u26a0\ufe0f Un acompte de '+rdv.acompte_montant+'\u20ac a \u00e9t\u00e9 vers\u00e9. '+(rembourse?'Il sera rembours\u00e9 si vous \u00eates dans le d\u00e9lai.':(_lxRetractInfoHtml(rdv)?'Hors r\u00e9tractation, il n\u0027est pas remboursable selon la politique du salon.':'Non remboursable selon la politique du salon.'))+'</div>';
+    h+='<div style="padding:10px;background:rgba(251,146,60,.1);border-radius:8px;font-size:12px;color:var(--orange);margin-bottom:12px">\u26a0\ufe0f Un acompte de '+rdv.acompte_montant+'\u20ac a \u00e9t\u00e9 vers\u00e9. '+(_retr?'Il vous sera rembours\u00e9 int\u00e9gralement (r\u00e9tractation).':(rembourse?'Il sera rembours\u00e9 si vous \u00eates dans le d\u00e9lai.':'Non remboursable selon la politique de l\u0027\u00e9tablissement.'))+'</div>';
   }
-  h+='<div class="fg" style="text-align:left"><label>Motif d\u0027annulation</label><select id="cancelReason" style="width:100%;padding:10px;background:rgba(255,255,255,.04);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-size:13px">';
+  h+='<div class="fg" style="text-align:left"><label for="cancelReason">Motif d\u0027annulation</label><select id="cancelReason" style="width:100%;padding:10px;background:rgba(255,255,255,.04);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-size:13px">';
   h+='<option value="">Choisir...</option><option value="Emp\u00each\u00e9(e)">Emp\u00each\u00e9(e)</option><option value="Changement de date">Changement de date</option><option value="Raison personnelle">Raison personnelle</option><option value="Autre">Autre</option></select></div>';
   h+='<div style="display:flex;gap:8px">';
   h+='<button onclick="closePopup(\'cancelModal\')" class="btn btn-outline" style="flex:1">Retour</button>';

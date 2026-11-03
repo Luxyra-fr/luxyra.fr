@@ -7327,7 +7327,14 @@ async function handleRdvAcompteInfo(request, env) {
     if (!rdv) return jsonResponse({ error: "Lien invalide ou expiré" }, 404);
     const salon = await supabaseGet(env, rdv.salon_id);
     const connectOk = !!(salon && salon.stripe_connect_id && ["active", "enabled", "payouts_pending"].includes(String(salon.stripe_connect_status || "")));
-    return jsonResponse({ ok: true, rdv_id: rdv.id, salon_id: rdv.salon_id, salon_nom: salon ? salon.nom : "", salon_logo: salon ? (salon.logo || "") : "",
+    // 03/11/2026 (audit D) : politique d'annulation rappelée AVANT le paiement (CGU art. 5.1)
+    let politique = null;
+    try {
+      const pr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/site_config?select=politique_annulation,remboursement_annulation,remboursement_partiel_pct&salon_id=eq.${encodeURIComponent(rdv.salon_id)}&limit=1`, { headers: _sbHeaders(env) });
+      const prs = pr.ok ? await pr.json() : [];
+      if (Array.isArray(prs) && prs[0]) politique = { heures: lxPolitiqueHeures(prs[0].politique_annulation), rembourse: prs[0].remboursement_annulation !== false, pct: Math.max(0, Math.min(100, parseInt(prs[0].remboursement_partiel_pct, 10) || 0)) };
+    } catch (_) {}
+    return jsonResponse({ ok: true, politique, rdv_id: rdv.id, salon_id: rdv.salon_id, salon_nom: salon ? salon.nom : "", salon_logo: salon ? (salon.logo || "") : "",
       prestation: rdv.service_nom || "", date: rdv.date_rdv, heure: rdv.heure_rdv ? String(rdv.heure_rdv).slice(0, 5) : "",
       montant: Number(rdv.acompte_montant) || 0, paye: rdv.acompte_paye === true, annule: rdv.status === "cancelled" || rdv.status === "refused" || rdv.status === "done",
       email: rdv.client_email || "", prenom: rdv.client_prenom || "", domicile: rdv.lieu === "domicile", paiement_en_ligne: connectOk });
@@ -7526,7 +7533,21 @@ function lxParisAujourdhui(d) {
 }
 // 2026-10-14 : contrôle serveur du délai d'annulation par le client (miroir de compte.html canCancel).
 // Retourne null si l'annulation est permise, sinon le message d'erreur (409).
+// 03/11/2026 (audit D I1) : droit de rétractation (art. L221-18 et s., CGU art. 8) — réservation faite il y a moins de
+// 14 jours (calendaires) et prestation pas encore commencée -> annulation toujours possible et acompte remboursé en totalité.
+function lxDansRetractation(rdv, quand) {
+  try {
+    if (!rdv || !rdv.created_at) return false;
+    const t = quand ? new Date(quand).getTime() : Date.now();
+    const cree = new Date(rdv.created_at).getTime();
+    if (!isFinite(cree) || !(t - cree >= 0 && t - cree < 14 * 24 * 3600 * 1000)) return false;
+    if (!rdv.date_rdv) return true;
+    const debut = lxParisVersDate(rdv.date_rdv, rdv.heure_rdv || "00:00").getTime();
+    return isFinite(debut) && t < debut;
+  } catch (_) { return false; }
+}
 async function lxControleAnnulationClient(env, rdv) {
+  if (lxDansRetractation(rdv)) return null; // 03/11/2026 (audit D I1) : rétractation -> annulation toujours permise
   let policyHours = 48;
   try {
     const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/site_config?select=politique_annulation&salon_id=eq.${encodeURIComponent(rdv.salon_id)}&limit=1`, { headers: _sbHeaders(env) });
@@ -7559,7 +7580,9 @@ async function attemptAcompteRefund(env, rdv) {
     // 2026-10-10 : annulation PAR LE SALON (à partir de cette version) -> acompte TOUJOURS remboursé ; la politique
     // d'annulation et son délai ne s'appliquent qu'aux annulations du client (et aux annulations antérieures).
     const _parSalon = _refuse || (rdv.cancelled_by === "salon" && rdv.cancelled_at && String(rdv.cancelled_at) >= "2026-10-10T21:30:00");
-    if (!_parSalon) {
+    // 03/11/2026 (audit D I1) : annulation par le client pendant son délai de rétractation -> remboursement intégral
+    const _retract = !_parSalon && rdv.cancelled_by === "client" && lxDansRetractation(rdv, rdv.cancelled_at || null);
+    if (!_parSalon && !_retract) {
       // 1) Politique d'annulation du salon (site_config — SINGULIER)
       let policyHours = 48, remboursementOn = true, pctPartiel = 0;
       try {
@@ -7794,6 +7817,8 @@ async function findAcompteChargePI(env, rdv, montant) {
 // « Capturer » ou « Libérer » dans le planning), sinon Stripe la libère seul après 7 jours.
 async function releaseEmpreinteOnCancel(env, rdv) {
   if (!rdv || rdv.empreinte_status !== "held" || !rdv.payment_intent_id) return { skipped: "pas d'empreinte active" };
+  // 03/11/2026 (audit D I1) : rétractation du client -> l'empreinte est toujours libérée
+  const _retractE = rdv.cancelled_by === "client" && lxDansRetractation(rdv, rdv.cancelled_at || null);
   let policyHours = 48;
   try {
     const cfgRes = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/site_config?select=politique_annulation&salon_id=eq.${encodeURIComponent(rdv.salon_id)}&limit=1`, { headers: _sbHeaders(env) });
@@ -7801,10 +7826,10 @@ async function releaseEmpreinteOnCancel(env, rdv) {
     policyHours = lxPolitiqueHeures(rows && rows[0] ? rows[0].politique_annulation : null); // 2026-10-14 : helper unique
   } catch (_) {}
   // 2026-10-14 : « jamais » -> pas de libération automatique, l'établissement décide
-  if (policyHours === -1) return { skipped: "annulation en ligne désactivée : décision du salon" };
+  if (policyHours === -1 && !_retractE) return { skipped: "annulation en ligne désactivée : décision du salon" };
   const rdvStart = lxParisVersDate(rdv.date_rdv, rdv.heure_rdv); // 2026-10-14 : heure de Paris
   const hoursBefore = (rdvStart.getTime() - Date.now()) / 3600000;
-  if (isFinite(hoursBefore) && hoursBefore < policyHours) return { skipped: `hors délai (${Math.round(hoursBefore)}h < ${policyHours}h) : décision du salon` };
+  if (!_retractE && isFinite(hoursBefore) && hoursBefore < policyHours) return { skipped: `hors délai (${Math.round(hoursBefore)}h < ${policyHours}h) : décision du salon` };
   const _hE = { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`, "Content-Type": "application/x-www-form-urlencoded" };
   if (rdv.stripe_account) _hE["Stripe-Account"] = rdv.stripe_account;  // charge directe sur le compte du salon
   const res = await fetch(`https://api.stripe.com/v1/payment_intents/${encodeURIComponent(rdv.payment_intent_id)}/cancel`, {
@@ -7840,7 +7865,7 @@ async function refundAndRecord(env, rdv) {
     if (!rdv.retenue_at) patch.retenue_at = nowIso;
     if (r.payment_intent && !rdv.payment_intent_id) patch.payment_intent_id = r.payment_intent;
   } else if (r.refunded) {
-    patch.remboursements = _hist.concat([{ at: nowIso, montant: Math.round(((Number(rdv.acompte_montant) || 0) - _deja) * 100) / 100, refund_id: r.refund_id, par: "automatique" }]);
+    patch.remboursements = _hist.concat([{ at: nowIso, montant: Math.round(((Number(rdv.acompte_montant) || 0) - _deja) * 100) / 100, refund_id: r.refund_id, par: (rdv.cancelled_by === "client" && lxDansRetractation(rdv, rdv.cancelled_at || null)) ? "retractation" : "automatique" }]);
     patch.acompte_rembourse = true;
     patch.acompte_rembourse_montant = Number(rdv.acompte_montant) || 0;
     patch.refund_id = r.refund_id;
@@ -8118,7 +8143,8 @@ async function handleRdvCancel(request, env) {
       const _refus = await lxControleAnnulationClient(env, own[0]);
       if (_refus) return jsonResponse({ error: _refus }, 409);
     }
-    const patch = { status: "cancelled", cancel_reason: String(reason || "").slice(0, 500), cancelled_at: new Date().toISOString(), cancelled_by: "client" };
+    const _retractation = lxDansRetractation(own[0]); // 03/11/2026 (audit D I1)
+    const patch = { status: "cancelled", cancel_reason: ((_retractation ? "[Rétractation] " : "") + String(reason || "")).slice(0, 500), cancelled_at: new Date().toISOString(), cancelled_by: "client" };
     // 2026-10-13 SECURITE : seulement un rendez-vous encore actif (voir handleClientRdvUpdate)
     const res = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?id=eq.${encodeURIComponent(rdv_id)}&status=in.(pending,confirmed)`, {
       method: "PATCH",
@@ -8132,7 +8158,7 @@ async function handleRdvCancel(request, env) {
     try { refund = await refundAndRecord(env, Object.assign({}, own[0], patch)); } catch (e) { console.error("refund on cancel:", e); }
     let empreinte = null;
     try { empreinte = await releaseEmpreinteOnCancel(env, Object.assign({}, own[0], patch)); } catch (e) { console.error("empreinte on cancel:", e); }
-    return jsonResponse({ success: true, refund, empreinte });
+    return jsonResponse({ success: true, refund, empreinte, retractation: _retractation });
   } catch (err) { return jsonResponse({ error: "Erreur serveur" }, 500); }
 }
 
@@ -8519,7 +8545,7 @@ async function handleSalonAvailability(request, env) {
     // FIX 2026-05-12 : on récupère aussi created_at pour permettre au client de
     // filtrer les pending_payment stales (paiement abandonné depuis > 35 min — 2026-10-14, avant 15 min).
     const roRes = await fetch(
-      `${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=date_rdv,heure_rdv,collaborateur_id,duree_minutes,status,created_at,service_id,items,salon_edit,lieu&salon_id=eq.${salon_id}&date_rdv=gte.${from}&date_rdv=lte.${to}&status=neq.cancelled`,
+      `${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=date_rdv,heure_rdv,collaborateur_id,duree_minutes,status,created_at,service_id,items,salon_edit,lieu&salon_id=eq.${salon_id}&date_rdv=gte.${from}&date_rdv=lte.${to}&status=not.in.(cancelled,cancelled_by_client,refused)`, // 03/11/2026 (audit D) : mêmes statuts exclus que la base
       { headers }
     );
     const rdvOnlineLu = await roRes.json();
@@ -9252,7 +9278,7 @@ Sitemap: https://luxyra.fr/sitemap.xml
     if (url.pathname !== "/" && url.pathname !== "/index.html" && url.pathname !== "/site.html") {
       return Response.redirect(`https://luxyra.fr${url.pathname}${url.search}`, 302);
     }
-    const res = await fetch(`https://luxyra-fr.github.io/luxyra.fr/site.html`, { cf: { cacheTtl: 0 } });
+    const res = await fetch(`https://luxyra-fr.github.io/luxyra.fr/site.html`, { cf: { cacheTtlByStatus: { "200-299": 120, "404": 0, "500-599": 0 }, cacheEverything: true } }) /* 03/11/2026 (audit D) : cache court 2 min */;
     let html = await res.text();
     html = html.replace("</head>", `<script>window.__SALON_SUBDOMAIN="${subdomain}";</script></head>`);
     return new Response(html, { headers: { "Content-Type": "text/html;charset=UTF-8", "Cache-Control": "no-cache, no-store, must-revalidate" } });
@@ -9359,7 +9385,7 @@ Sitemap: https://luxyra.fr/sitemap.xml
         const isSuccess = subPath === "bons-cadeaux/success";
         const fname = isSuccess ? "bons-cadeaux-success.html" : "bons-cadeaux.html";
         const ghUrl = `https://luxyra-fr.github.io/luxyra.fr/${fname}`;
-        const res = await fetch(ghUrl, { cf: { cacheTtl: 0 } });
+        const res = await fetch(ghUrl, { cf: { cacheTtlByStatus: { "200-299": 120, "404": 0, "500-599": 0 }, cacheEverything: true } }); // 03/11/2026 : cache court
         if (res.ok) {
           let html = await res.text();
           const safeSlug = maybeSlug.replace(/[^a-z0-9-]/g, "");
@@ -9389,7 +9415,7 @@ Sitemap: https://luxyra.fr/sitemap.xml
 
     if (looksLikeSlugFinal) {
       // Sert site.html avec __SALON_SLUG injecte (URL visible inchangee)
-      const res = await fetch(`https://luxyra-fr.github.io/luxyra.fr/site.html`, { cf: { cacheTtl: 0 } });
+      const res = await fetch(`https://luxyra-fr.github.io/luxyra.fr/site.html`, { cf: { cacheTtlByStatus: { "200-299": 120, "404": 0, "500-599": 0 }, cacheEverything: true } }) /* 03/11/2026 (audit D) : cache court 2 min */;
       let html = await res.text();
       const safeSlug = segmentForSlug.replace(/[^a-z0-9-]/g, "");
       // FIX 2026-05-15 : si on arrive via /<slug>/reserver, injecte un flag JS

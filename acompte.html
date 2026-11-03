@@ -19,6 +19,7 @@
 </style>
 </head>
 <body>
+<h1 style="position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0">Paiement de l’acompte de votre rendez-vous</h1><!-- 03/11/2026 (audit D, accessibilité) -->
 <div class="card" id="app"><div class="sub">Chargement…</div></div>
 <script>
 // 2026-10-10 : paiement de l'acompte d'un rendez-vous confirmé par le professionnel (lien reçu par SMS ou email).
@@ -27,7 +28,7 @@
   function esc(x){return String(x==null?"":x).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];});}
   function dFr(d){try{return new Date(d+"T12:00:00").toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long"});}catch(e){return d;}}
   function eur(n){return (Number(n)||0).toFixed(2).replace(".",",")+" €";}
-  function via(){return '<div class="via"><img src="/luxyra-logo.png" alt="">Paiement sécurisé via Luxyra · Stripe</div>';}
+  function via(){return '<div class="via"><img src="/luxyra-logo-128.png" alt="">Paiement sécurisé via Luxyra · Stripe</div>';}
   function entete(){return (INFO.salon_logo?'<img class="logo" src="'+esc(INFO.salon_logo)+'" alt="">':'')+'<div class="nom">'+esc(INFO.salon_nom)+'</div>';}
   function recap(){return '<div class="row"><span>Prestation</span><span>'+esc(INFO.prestation)+'</span></div><div class="row"><span>Date</span><span>'+esc(dFr(INFO.date))+' à '+esc(INFO.heure)+'</span></div>'+(INFO.domicile?'<div class="row"><span>Lieu</span><span>À votre domicile</span></div>':'');}
   function erreur(m){el.innerHTML='<div class="ok">⚠️</div><div class="err" style="margin-top:8px">'+esc(m)+'</div>'+via();}
@@ -38,7 +39,18 @@
   }
   function succes(){ el.innerHTML=entete()+'<div class="ok" style="margin-top:6px">✅</div><h2 style="margin:6px 0">Acompte réglé</h2><div class="sub">Votre rendez-vous est confirmé. À bientôt !</div>'+recap()+via(); }
   // 02/11/2026 (conformité B-1) : RDV dans les 14 jours -> demande expresse d'exécution avant la fin du délai de rétractation
-  function dans14j(d){ try{ if(!/^\d{4}-\d{2}-\d{2}/.test(String(d||""))) return false; var n=new Date(); n.setHours(12,0,0,0); n.setDate(n.getDate()+14); var lim=n.getFullYear()+"-"+String(n.getMonth()+1).padStart(2,"0")+"-"+String(n.getDate()).padStart(2,"0"); return String(d).slice(0,10)<=lim; }catch(e){ return false; } } /* 03/11 : jour calendaire, J+14 inclus */
+  function dans14j(d){ try{ if(!/^\d{4}-\d{2}-\d{2}/.test(String(d||""))) return false; var n=(function(){ try{ var q={}; new Intl.DateTimeFormat("en-GB",{timeZone:"Europe/Paris",year:"numeric",month:"2-digit",day:"2-digit"}).formatToParts(new Date()).forEach(function(x){q[x.type]=x.value;}); return new Date(+q.year,+q.month-1,+q.day); }catch(e){ return new Date(); } })(); n.setHours(12,0,0,0); n.setDate(n.getDate()+14); /* 03/11/2026 : jour de Paris */ var lim=n.getFullYear()+"-"+String(n.getMonth()+1).padStart(2,"0")+"-"+String(n.getDate()).padStart(2,"0"); return String(d).slice(0,10)<=lim; }catch(e){ return false; } } /* 03/11 : jour calendaire, J+14 inclus */
+  // 03/11/2026 (audit D) : politique d'annulation rappelée avant le paiement (CGU art. 5.1)
+  function politiqueTxt(){
+    var pl=INFO&&INFO.politique; if(!pl) return '';
+    var h=Number(pl.heures), t;
+    if(h===-1) t="Annulation en ligne impossible : contactez l’établissement.";
+    else if(h===0) t="Annulation possible jusqu’à l’heure du rendez-vous.";
+    else t="Annulation possible jusqu’à "+(h%24===0&&h>=24?(h/24)+" jour"+(h/24>1?"s":""):h+" h")+" avant le rendez-vous.";
+    t+= (h!==-1&&pl.rembourse) ? " Acompte remboursé en cas d’annulation dans ce délai." : (pl.pct>0?" Acompte remboursé à "+pl.pct+" % en cas d’annulation.":" Acompte non remboursable en cas d’annulation.");
+    t+=" Dans les 14 jours qui suivent la réservation, avant la prestation, vous pouvez vous rétracter : l’acompte est alors remboursé intégralement.";
+    return '<div class="note" style="text-align:left;margin-top:10px">📋 <strong>Politique d’annulation</strong> : '+esc(t)+' <a href="/cgu" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline">CGU</a></div>';
+  }
   function caseRetract(){ return dans14j(INFO.date) ? '<label style="display:flex;gap:8px;align-items:flex-start;text-align:left;font-size:12px;line-height:1.5;margin:12px 0 4px;cursor:pointer"><input type="checkbox" id="retractAccept" style="margin-top:2px;flex-shrink:0"><span>Je demande que la prestation soit réalisée avant la fin du délai de rétractation de 14 jours. Si je me rétracte après son début, je paierai la part déjà réalisée ; une fois la prestation entièrement réalisée, je ne pourrai plus me rétracter. <a href="/cgu#retractation" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline">Détails</a></span></label>' : ''; }
   async function payer(){
     var _ck=document.getElementById("retractAccept");
@@ -68,12 +80,12 @@
     if(d.annule){ erreur("Ce rendez-vous a été annulé."); return; }
     if(d.paye){ succes(); return; }
     if(!d.paiement_en_ligne||!(d.montant>0)){ el.innerHTML=entete()+'<div class="sub">Rendez-vous confirmé</div>'+recap()+'<div class="note">L’acompte éventuel se règle directement auprès du professionnel.</div>'+via(); return; }
-    el.innerHTML=entete()+'<div class="sub">Votre rendez-vous est confirmé : il reste à régler l’acompte</div>'+recap()+'<div class="mt">'+eur(d.montant)+'</div><div class="sub" style="margin:0">Acompte, déduit du prix le jour du rendez-vous</div>'+caseRetract()+'<button class="btn" id="pay" onclick="_lxPayer()">Payer '+eur(d.montant)+'</button><div class="note">Paiement sécurisé par carte bancaire (Stripe). Le montant est versé directement au professionnel.</div>'+via();
+    el.innerHTML=entete()+'<div class="sub">Votre rendez-vous est confirmé : il reste à régler l’acompte</div>'+recap()+'<div class="mt">'+eur(d.montant)+'</div><div class="sub" style="margin:0">Acompte, déduit du prix le jour du rendez-vous</div>'+politiqueTxt()+caseRetract()+'<button class="btn" id="pay" onclick="_lxPayer()">Payer '+eur(d.montant)+'</button><div class="note">Paiement sécurisé par carte bancaire (Stripe). Le montant est versé directement au professionnel.</div>'+via();
   })();
 })();
 </script>
 <!-- lx-legal-footer -->
 <style>body{flex-wrap:wrap;align-content:center}</style>
-<div class="lx-legal-footer" style="flex-basis:100%;clear:both;text-align:center;font-size:12px;line-height:2;padding:18px 16px 28px;opacity:.75">© 2026 Luxyra — Alexandre Jensen EI<br><a href="/mentions-legales" style="color:inherit;text-decoration:underline">Mentions légales</a> · <a href="/cgv" style="color:inherit;text-decoration:underline">CGV</a> · <a href="/cgu.html" style="color:inherit;text-decoration:underline">CGU</a> · <a href="/confidentialite" style="color:inherit;text-decoration:underline">Confidentialité</a> · <a href="/dpa" style="color:inherit;text-decoration:underline">DPA</a> · <a href="/suppression-donnees" style="color:inherit;text-decoration:underline">Suppression des données</a> · <a href="/securite-rgpd" style="color:inherit;text-decoration:underline">Sécurité &amp; RGPD</a></div>
+<div class="lx-legal-footer" style="flex-basis:100%;clear:both;text-align:center;font-size:12px;line-height:2;padding:18px 16px 28px;opacity:.75">© 2026 Luxyra — Alexandre Jensen EI<br><a href="/mentions-legales" style="color:inherit;text-decoration:underline">Mentions légales</a> · <a href="/cgv" style="color:inherit;text-decoration:underline">CGV</a> · <a href="/cgu" style="color:inherit;text-decoration:underline">CGU</a> · <a href="/confidentialite" style="color:inherit;text-decoration:underline">Confidentialité</a> · <a href="/dpa" style="color:inherit;text-decoration:underline">DPA</a> · <a href="/suppression-donnees" style="color:inherit;text-decoration:underline">Suppression des données</a> · <a href="/securite-rgpd" style="color:inherit;text-decoration:underline">Sécurité &amp; RGPD</a></div>
 </body>
 </html>
