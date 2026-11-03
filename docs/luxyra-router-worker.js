@@ -4523,7 +4523,7 @@ function lxConfAutoMessage(r, salon, msgSalon) {
     + (msg ? `<div style="border-left:3px solid #c8a84e;padding:4px 12px;margin:14px 0;color:#444;font-style:italic;font-size:14px">${ccEsc(msg).replace(/\n/g, "<br>")}</div>` : "")
     + (maps ? lxMailBouton("Itinéraire", "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(maps)) : "")
     + (retract ? `<p style="font-size:13px;color:#555">${ccEsc(retract)}</p>` : "")
-    + `<p style="font-size:13px;color:#777">Un empêchement ? Prévenez l’établissement au plus tôt. Vous retrouvez ce rendez-vous dans votre espace Luxyra.</p>` + lxSmPiedSalon(salon);
+    + `<p style="font-size:13px;color:#777">Un empêchement ? Prévenez l’établissement au plus tôt.${(r.client_luxyra_id || r.client_online_id) ? " Vous retrouvez ce rendez-vous dans votre espace Luxyra." : ""}</p>` + lxSmPiedSalon(salon);
   return {
     sujet: `Rendez-vous confirmé — ${nomSalon}`,
     html: lxMailLayout(corps, { salon: nomSalon }),
@@ -4532,7 +4532,7 @@ function lxConfAutoMessage(r, salon, msgSalon) {
 }
 async function lxConfAutoEnvoyer(env, rdvId, opts) {
   opts = opts || {};
-  const sel = "id,salon_id,status,client_email,client_prenom,client_nom,date_rdv,heure_rdv,duree_minutes,service_nom,service_prix,items,collaborateur_nom,acompte_montant,acompte_paye,empreinte_status,empreinte_amount,lieu,client_adresse,client_adresse_cp,client_adresse_ville,exec_avant_retractation,payment_intent_id,message";
+  const sel = "id,salon_id,status,client_email,client_prenom,client_nom,date_rdv,heure_rdv,duree_minutes,service_nom,service_prix,items,collaborateur_nom,acompte_montant,acompte_paye,empreinte_status,empreinte_amount,lieu,client_adresse,client_adresse_cp,client_adresse_ville,exec_avant_retractation,payment_intent_id,message,client_luxyra_id,client_online_id";
   const lire = async () => {
     const rr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?id=eq.${encodeURIComponent(rdvId)}&select=${sel}&limit=1`, { headers: _sbHeaders(env) });
     const a = rr.ok ? await rr.json() : [];
@@ -4543,6 +4543,9 @@ async function lxConfAutoEnvoyer(env, rdvId, opts) {
   // paiement Stripe : laisse le temps à un ancien parcours « sur mesure » (v1) de rattacher sa demande avant de décider
   if (r.payment_intent_id && !opts.sansAttente) { await new Promise((ok) => setTimeout(ok, 3000)); r = (await lire()) || r; }
   if (r.status !== "confirmed") return { ok: true, ignore: "statut " + r.status };
+  // 03/11/2026 : domicile = toujours validé par le pro (qui envoie son propre message) ; seul l'acompte payé APRÈS
+  // acceptation (acompte.html) déclenche cette confirmation. Un domicile « confirmé » sans paiement est ignoré.
+  if (String(r.lieu || "salon") === "domicile" && r.acompte_paye !== true) return { ok: true, ignore: "domicile sans paiement" };
   if (String(r.date_rdv || "") < lxParisAujourdhui()) return { ok: true, ignore: "rdv passé" };
   const email = String(r.client_email || "").trim();
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { ok: true, ignore: "sans e-mail" };
