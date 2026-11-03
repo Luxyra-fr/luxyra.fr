@@ -9806,6 +9806,67 @@ async function runRgpdPurgeJ60(env) {
   return out;
 }
 
+// 03/11/2026 (audit RGPD panel I3 + I7) : fichiers à supprimer chaque nuit.
+//  - support-pieces/<salon>/… : 1 an après la fin du service (messages supprimés en base par lx_prive.rgpd_conservation_quotidienne) ;
+//  - pièces d'identité du gérant (salon-documents) : dès que l'identité est vérifiée (ou à la fin du service). Le Kbis est conservé.
+//    Les chemins ne sont effacés en base (lx_justificatifs_id_effaces, tracé au journal admin) qu'après suppression réussie des fichiers.
+async function _lxStorageLister(env, bucket, prefixe) {
+  const chemins = [];
+  const lst = await fetch(`${CONFIG.SUPABASE_URL}/storage/v1/object/list/${bucket}`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ prefix: prefixe, limit: 1000 }) });
+  for (const it of (lst.ok ? await lst.json() : [])) {
+    if (it.id) chemins.push(`${prefixe}/${it.name}`);
+    else {
+      const l2 = await fetch(`${CONFIG.SUPABASE_URL}/storage/v1/object/list/${bucket}`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ prefix: `${prefixe}/${it.name}`, limit: 1000 }) });
+      for (const x of (l2.ok ? await l2.json() : [])) if (x.id) chemins.push(`${prefixe}/${it.name}/${x.name}`);
+    }
+  }
+  return chemins;
+}
+async function runRgpdFichiers(env) {
+  const out = { support_salons: 0, support_fichiers: 0, identite_salons: 0, identite_fichiers: 0, erreurs: 0 };
+  try {
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/lx_rgpd_support_fichiers_a_purger`, { method: "POST", headers: _sbHeaders(env), body: "{}" });
+    for (const id of (r.ok ? (await r.json()) || [] : [])) {
+      if (!/^[0-9a-f-]{36}$/i.test(String(id))) continue;
+      try {
+        const chemins = await _lxStorageLister(env, "support-pieces", String(id));
+        if (chemins.length) {
+          const d = await fetch(`${CONFIG.SUPABASE_URL}/storage/v1/object/support-pieces`, { method: "DELETE", headers: _sbHeaders(env), body: JSON.stringify({ prefixes: chemins }) });
+          if (!d.ok) { out.erreurs++; continue; }
+          out.support_salons++; out.support_fichiers += chemins.length;
+        }
+      } catch (_) { out.erreurs++; }
+    }
+  } catch (_) { out.erreurs++; }
+  try {
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/lx_justificatifs_id_a_supprimer`, { method: "POST", headers: _sbHeaders(env), body: "{}" });
+    for (const x of (r.ok ? (await r.json()) || [] : [])) {
+      const sid = String((x && x.salon_id) || "");
+      if (!/^[0-9a-f-]{36}$/i.test(sid)) continue;
+      const chemins = [];
+      for (const u of ((x && x.chemins) || [])) {
+        const t = String(u || ""), i = t.indexOf("/salon-documents/");
+        const chemin = decodeURIComponent((i >= 0 ? t.slice(i + 17) : t).split("?")[0]);
+        // sécurité : uniquement un fichier d'identité de CET établissement (jamais le Kbis)
+        if (chemin.startsWith(`documents/${sid}/`) && /\/id(_verso)?_[^/]+$/.test(chemin)) chemins.push(chemin);
+      }
+      // chemin inattendu : on ne touche à rien (le fichier ne doit jamais devenir orphelin)
+      if (chemins.length !== ((x && x.chemins) || []).length) { out.erreurs++; continue; }
+      try {
+        if (chemins.length) {
+          const d = await fetch(`${CONFIG.SUPABASE_URL}/storage/v1/object/salon-documents`, { method: "DELETE", headers: _sbHeaders(env), body: JSON.stringify({ prefixes: chemins }) });
+          if (!d.ok) { out.erreurs++; continue; }
+        }
+        const e = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/lx_justificatifs_id_effaces`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_salon: sid }) });
+        if (!e.ok) { out.erreurs++; continue; }
+        out.identite_salons++; out.identite_fichiers += chemins.length;
+      } catch (_) { out.erreurs++; }
+    }
+  } catch (_) { out.erreurs++; }
+  if (out.erreurs) { try { await reportWorkerError(env, "cron:rgpd-fichiers", new Error(`${out.erreurs} erreur(s) de suppression de fichiers RGPD`), null, "warning"); } catch (_) {} }
+  return out;
+}
+
 async function runRetentionPurgeJob(env) {
   const sbKey = env.SUPABASE_SERVICE_KEY;
   if (!sbKey) {
@@ -9814,6 +9875,7 @@ async function runRetentionPurgeJob(env) {
   }
   try { console.log("[rgpd J+60]", JSON.stringify(await runRgpdPurgeJ60(env))); } catch (e) { console.error("[rgpd J+60]", e?.message || e); }
   try { console.log("[comptes inactifs 3 ans]", JSON.stringify(await runComptesClientsInactifs(env))); } catch (e) { console.error("[comptes inactifs]", e?.message || e); }
+  try { console.log("[rgpd fichiers]", JSON.stringify(await runRgpdFichiers(env))); } catch (e) { console.error("[rgpd fichiers]", e?.message || e); }
   const now = new Date();
   // Bornes : on calcule "now - X années" en ms. ATTENTION aux années bissextiles
   // → on utilise setFullYear sur un Date pour rester précis.
@@ -9854,7 +9916,8 @@ async function runRetentionPurgeJob(env) {
         const r = rp.ok ? await rp.json() : null;
         if (!r || !r.ok) { stats.errors++; console.error(`[retention] purge ${salon.id} refusée:`, r && r.err); continue; }
         // Fichiers : justificatifs + photos clients du salon
-        for (const [bucket, prefixe] of [["salon-documents", `documents/${salon.id}`], ["client-photos", salon.id]]) {
+        // 03/11 (audit RGPD panel I3) : pièces jointes du support supprimées aussi
+        for (const [bucket, prefixe] of [["salon-documents", `documents/${salon.id}`], ["client-photos", salon.id], ["support-pieces", salon.id]]) {
           try {
             const chemins = [];
             const lst = await fetch(`${CONFIG.SUPABASE_URL}/storage/v1/object/list/${bucket}`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ prefix: prefixe, limit: 1000 }) });

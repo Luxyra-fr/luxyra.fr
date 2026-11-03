@@ -226,6 +226,8 @@ async function lxOuvrirDoc(u){
   try{
     var s=String(u||""), i=s.indexOf("/salon-documents/"), path=i>=0?decodeURIComponent(s.slice(i+17).split("?")[0]):s;
     var w=window.open("about:blank","_blank");
+    // 03/11 (audit RGPD panel I7) : chaque ouverture d'un justificatif est notée au journal admin
+    try{ var _sid=(path.split("/")[1]||""); await _sb.rpc("admin_journal",{p_action:"OUVERTURE_JUSTIFICATIF",p_salon:(/^[0-9a-f-]{36}$/i.test(_sid)?_sid:null),p_cible:"salon-documents",p_details:"Justificatif consulté : "+(path.split("/").pop()||"")}); }catch(eJ){}
     var r=await _sb.storage.from("salon-documents").createSignedUrl(path,300);
     if(r.error||!r.data||!r.data.signedUrl){ if(w) w.close(); (await lxAlert("Document inaccessible : "+((r.error&&r.error.message)||"erreur"))); return; }
     if(w) w.location.href=r.data.signedUrl; else window.location.href=r.data.signedUrl;
@@ -542,7 +544,7 @@ async function loadData(){
           gerantNom:s.gerant_nom||"",gerantPrenom:s.gerant_prenom||"",
           adresse:s.adresse||"",cp:s.cp||"",formeJur:s.forme_juridique||"",
           verif:s.verification_status||"pending",
-          docKbis:s.documents_kbis||"",docId:s.documents_id||"",docIdVerso:s.documents_id_verso||"",
+          docKbis:s.documents_kbis||"",docId:s.documents_id||"",docIdVerso:s.documents_id_verso||"",docIdSupprimeLe:s.documents_id_supprime_le||"",
           documents_locked:!!s.documents_locked,
           verifiedAt:s.verified_at,notesAdmin:s.notes_admin||"",
           userId:s.user_id||"",
@@ -573,9 +575,9 @@ async function loadData(){
     if(typeof lxMenuRendu==="function") lxMenuRendu();
     // Load cartes abo global stats
     try{
-      var cac=await _sb.from("cartes_abo_clients").select("id,tarif,economies_totales,status",{count:"exact"}).eq("status","active");
-      window.ADMIN_CARTES_STATS={total:cac.count||0,eco:0,ca:0};
-      if(cac.data)cac.data.forEach(function(c){window.ADMIN_CARTES_STATS.eco+=(Number(c.economies_totales)||0);window.ADMIN_CARTES_STATS.ca+=(Number(c.tarif)||0);});
+      // 03/11 (audit RGPD panel I1) : statistiques agrégées par la base, sans lecture directe des cartes des clients
+      var cac=await _sb.rpc("admin_cartes_abo_stats",{p_salon:null}); var cd=(cac&&cac.data)||{};
+      window.ADMIN_CARTES_STATS={total:Number(cd.total)||0,eco:Number(cd.eco)||0,ca:Number(cd.ca)||0};
     }catch(e){window.ADMIN_CARTES_STATS={total:0,eco:0,ca:0};}
   }catch(e){console.error(e);}
 }
@@ -3456,6 +3458,8 @@ function asExport(selection){
     rows.push([s.nom,s.ville,s.cp,s.adresse,s.email,s.tel,s.siret,s.formeJur,(s.gerantPrenom+" "+s.gerantNom).trim(),s.plan,s.isFree?"oui":"",s.status,s.trialEnd?String(s.trialEnd).slice(0,10):"",ETAPES[su.etape]||su.etape,(su.etiquettes||[]).join(", "),su.rappel_le||"",s.clients,s.collabs,hh.tickets_30d||0,String(hh.ca_30d||0).replace(".",","),hh.last_ticket||"",s.smsCredits,String(s.created||"").slice(0,10)].map(q).join(";")); });
   var blob=new Blob(["﻿"+rows.join("\r\n")],{type:"text/csv;charset=utf-8"});
   var a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="luxyra-salons-"+lxJourParis()+".csv"; a.click();
+  // 03/11 (audit RGPD panel, mineur) : export des coordonnées des établissements noté au journal admin
+  try{ _sb.rpc("admin_journal",{p_action:"EXPORT_CSV_ETABLISSEMENTS",p_cible:"salons",p_details:L.length+" établissement(s) exporté(s)"+(selection?" (sélection)":"")}); }catch(eJ){}
 }
 async function asGroupe(action){
   var L=asSelection(); if(!L.length) return;
@@ -3636,7 +3640,7 @@ function openD(id){
   // DOCUMENTS
   h+='<div class="dp-section"><div class="dp-label">\ud83d\udcc4 Documents</div>';
   h+='<div class="dp-field"><span class="k">Kbis / INSEE</span><span class="v">'+(s.docKbis?'<a href="#" data-lx-click="lxOuvrirDoc(\''+saJs(s.docKbis)+'\');return false" style="color:var(--green);font-weight:700">\u2705 Re\u00e7u \u2014 Voir / T\u00e9l\u00e9charger \u2197</a>':'<span style="color:var(--orange)">\u23f3 En attente</span>')+'</span></div>';
-  h+='<div class="dp-field"><span class="k">Pi\u00e8ce d\u2019identit\u00e9 (recto)</span><span class="v">'+(s.docId?'<a href="#" data-lx-click="lxOuvrirDoc(\''+saJs(s.docId)+'\');return false" style="color:var(--green);font-weight:700">\u2705 Re\u00e7u \u2014 Voir \u2197</a>':'<span style="color:var(--orange)">\u23f3 En attente</span>')+'</span></div>';
+  h+='<div class="dp-field"><span class="k">Pi\u00e8ce d\u2019identit\u00e9 (recto)</span><span class="v">'+(s.docId?'<a href="#" data-lx-click="lxOuvrirDoc(\''+saJs(s.docId)+'\');return false" style="color:var(--green);font-weight:700">\u2705 Re\u00e7u \u2014 Voir \u2197</a>':(s.docIdSupprimeLe?'<span style="color:var(--text2)">\ud83d\uddd1 Supprim\u00e9e apr\u00e8s v\u00e9rification ('+saEsc(fmtD(s.docIdSupprimeLe))+')</span>':'<span style="color:var(--orange)">\u23f3 En attente</span>'))+'</span></div>';
   h+='<div class="dp-field"><span class="k">Pi\u00e8ce d\u2019identit\u00e9 (verso)</span><span class="v">'+(s.docIdVerso?'<a href="#" data-lx-click="lxOuvrirDoc(\''+saJs(s.docIdVerso)+'\');return false" style="color:var(--green);font-weight:700">\u2705 Re\u00e7u \u2014 Voir \u2197</a>':'<span style="color:var(--text3);font-style:italic">Non fourni</span>')+'</span></div>';
   h+='<div class="dp-field"><span class="k">V\u00e9rification</span><span class="v" style="color:'+(s.verif==="verified"?"var(--green)":s.verif==="pending_review"?"var(--gold)":"var(--orange)")+'"><strong>'+(s.verif==="verified"?"\u2705 V\u00e9rifi\u00e9":s.verif==="pending_review"?"\ud83d\udd0d \u00c0 v\u00e9rifier":"\u23f3 En attente des documents")+'</strong></span></div>';
   // Verrouillage des documents
@@ -3727,7 +3731,8 @@ function openD(id){
   // Async load cartes for this salon
   (async function(sId){
     try{
-      var cr=await _sb.from("cartes_abo_clients").select("id,carte_nom,client_nom,tarif,economies_totales,date_expiration,status").eq("salon_id",sId);
+      // 03/11 (audit RGPD panel I1) : liste sans nom de client (données de l'établissement, dont Luxyra n'est que sous-traitant)
+      var cr0=await _sb.rpc("admin_cartes_abo_stats",{p_salon:sId}); var cr={data:(cr0&&cr0.data&&cr0.data.liste)||[]};
       var el=document.getElementById("dpCartes_"+sId);if(!el)return;
       if(!cr.data||!cr.data.length){el.innerHTML='<div style="color:var(--text3);font-size:12px">Aucune carte vendue</div>';return;}
       var actives=cr.data.filter(function(c){return c.status==="active";});
@@ -3739,7 +3744,7 @@ function openD(id){
       h2+='</div>';
       actives.forEach(function(c){
         h2+='<div style="display:flex;justify-content:space-between;font-size:11px;padding:4px 0;border-bottom:1px solid var(--border)">';
-        h2+='<span>\ud83d\udcb3 <strong>'+saEsc(c.carte_nom)+'</strong> \u2014 '+saEsc(c.client_nom||"?")+'</span>';
+        h2+='<span>\ud83d\udcb3 <strong>'+saEsc(c.carte_nom)+'</strong></span>';
         h2+='<span style="color:var(--text3)">Exp. '+saEsc(c.date_expiration||"\u2014")+'</span></div>';
       });
       el.innerHTML=h2;
@@ -5703,10 +5708,13 @@ function saModeLib(s){ var m=s.modeActivite||"salon", z=(s.zoneKm!==null&&s.zone
 async function asVoirApp(id){
   var s=gSalon(id); if(!s) return;
   if(!(await lxConfirm("Ouvrir l'application de « "+s.nom+" » en LECTURE SEULE ?\n\nVous voyez ce que voit l’établissement, pendant 15 minutes, sur une adresse séparée (vue.luxyra.fr). Rien ne peut y être modifié. La consultation est notée dans le registre interne des accès Luxyra."))) return;
-  try{ await _sb.from("admin_consultations").insert({salon_id:id}); }catch(e){}
+  // 03/11 (audit RGPD panel I2) : motif obligatoire, enregistré par la base avec la consultation (après création du jeton)
+  var motif=await lxSaisie("Motif de la consultation (obligatoire) : demande de l’établissement, n° ou sujet de la conversation support…","");
+  if(motif===null) return; motif=String(motif||"").trim();
+  if(motif.length<5){ (await lxAlert("Indiquez un motif d’au moins 5 caractères (ex. « demande support du 03/11 : planning »).")); return; }
   // 31/10 (lot C) : la vue s'ouvre sur son ORIGINE SÉPARÉE vue.luxyra.fr, avec un jeton de lecture de 15 min pour CET
   // établissement (créé et tracé par la base) ; la session admin ne quitte jamais admin.luxyra.fr.
-  var r=await _sb.rpc("admin_vue_jeton_creer",{p_salon:id});
+  var r=await _sb.rpc("admin_vue_jeton_creer",{p_salon:id,p_motif:motif});
   if(r.error||!r.data||!/^[0-9a-f]{64}$/.test(String(r.data.jeton||""))){ (await lxAlert("❌ Vue impossible : "+((r.error&&r.error.message)||"jeton non reçu"))); return; }
   var exp=Date.parse(r.data.expire_le)||(Date.now()+15*60000);
   window.open("https://vue.luxyra.fr/app.html?vue_admin="+encodeURIComponent(id)+"#t="+r.data.jeton+"&e="+exp,"_blank","noopener");
@@ -5741,7 +5749,7 @@ function lxRechercheOuvrir(){
   if(document.getElementById("lxRech")) return;
   var d=document.createElement("div"); d.id="lxRech";
   d.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99999;display:flex;justify-content:center;align-items:flex-start;padding:10vh 12px 12px";
-  d.innerHTML='<div style="width:100%;max-width:640px;background:var(--bg2);border:1px solid var(--gold);border-radius:14px;overflow:hidden"><input id="lxRechQ" placeholder="Rechercher une page, un établissement, un client (nom, téléphone, e-mail), un ticket (n°)…" style="width:100%;padding:16px;font-size:16px;background:var(--bg3);color:var(--text);border:none;border-bottom:1px solid var(--border)"><div id="lxRechR" style="max-height:60vh;overflow-y:auto;padding:6px 0;font-size:13px;color:var(--text2)"><div style="padding:10px 16px">Tape au moins 2 caractères · Échap pour fermer</div></div></div>';
+  d.innerHTML='<div style="width:100%;max-width:640px;background:var(--bg2);border:1px solid var(--gold);border-radius:14px;overflow:hidden"><input id="lxRechQ" placeholder="Rechercher une page ou un établissement…" style="width:100%;padding:16px;font-size:16px;background:var(--bg3);color:var(--text);border:none;border-bottom:1px solid var(--border)"><div id="lxRechR" style="max-height:60vh;overflow-y:auto;padding:6px 0;font-size:13px;color:var(--text2)"><div style="padding:10px 16px">Tape au moins 2 caractères · Échap pour fermer</div></div></div>';
   d.addEventListener("click",function(e){ if(e.target===d) d.remove(); });
   document.body.appendChild(d);
   var i=document.getElementById("lxRechQ"); i.focus();
@@ -5758,10 +5766,9 @@ async function lxRechercher(q){
   var qa=sansAcc(q), pg=lxPagesIndex().filter(function(x){ return sansAcc(x.chemin+" "+x.mots).indexOf(qa)>=0; }).slice(0,6);
   if(pg.length) h+='<div style="padding:6px 16px;font-size:11px;color:var(--text3);text-transform:uppercase">Pages</div>'+pg.map(function(x){ return '<div style="padding:8px 16px;cursor:pointer" class="lxHov" data-lx-click="lxRechAller(\''+saJs(x.tab)+'\',\''+saJs(x.sub||'')+'\')">📄 <b>'+saEsc(x.chemin)+'</b></div>'; }).join("");
   if(sal.length) h+='<div style="padding:6px 16px;font-size:11px;color:var(--text3);text-transform:uppercase">Salons</div>'+sal.map(function(s){ return '<div style="padding:8px 16px;cursor:pointer" class="lxHov" data-lx-click="lxRechSalon(\''+saJs(s.id)+'\')">🏠 <b>'+saEsc(s.nom)+'</b> <span style="color:var(--text3)">'+saEsc(s.ville)+' · '+saEsc(s.email)+'</span></div>'; }).join("");
-  el.innerHTML=h+'<div style="padding:10px 16px;color:var(--text3)">Recherche des clients et tickets…</div>';
-  var r=await _sb.rpc("admin_recherche",{p_q:q});
-  if(r.error){ el.innerHTML=h+'<div style="padding:10px 16px;color:var(--red)">'+saEsc(r.error.message)+'</div>'; return; }
-  var d=r.data||{}, cl=d.clients||[], tk=d.tickets||[];
+  // 03/11 (audit RGPD panel B1) : plus de recherche dans les clients et tickets des établissements (sous-traitance) ;
+  // pour aider un établissement : ouvrir sa vue en lecture seule, avec un motif (tracé).
+  var cl=[], tk=[];
   if(cl.length) h+='<div style="padding:6px 16px;font-size:11px;color:var(--text3);text-transform:uppercase">Clients</div>'+cl.map(function(c){ var s=gSalon(c.salon_id); return '<div style="padding:8px 16px;cursor:pointer" class="lxHov" data-lx-click="lxRechSalon(\''+saJs(c.salon_id)+'\')">👤 <b>'+saEsc((c.prenom||"")+" "+(c.nom||""))+'</b> <span style="color:var(--text3)">'+saEsc(c.telephone||"")+' '+saEsc(c.email||"")+' · chez '+saEsc(s?s.nom:"?")+'</span></div>'; }).join("");
   if(tk.length) h+='<div style="padding:6px 16px;font-size:11px;color:var(--text3);text-transform:uppercase">Tickets</div>'+tk.map(function(t){ var s=gSalon(t.salon_id); return '<div style="padding:8px 16px;cursor:pointer" class="lxHov" data-lx-click="lxRechSalon(\''+saJs(t.salon_id)+'\')">🧾 Ticket n°<b>'+saEsc(t.num)+'</b> <span style="color:var(--text3)">'+saEsc(t.date_ticket)+' · '+(Number(t.total_ttc)||0).toFixed(2)+' € · '+saEsc(t.client_nom||"")+' · '+saEsc(s?s.nom:"?")+(t.status==="cancelled"?' · annulé':'')+'</span></div>'; }).join("");
   el.innerHTML=h||'<div style="padding:10px 16px">Aucun résultat</div>';
