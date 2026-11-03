@@ -538,7 +538,7 @@ async function loadData(){
     var r=await saToutLire(function(a,b){ return _sb.from("salons").select("*").order("created_at",{ascending:true}).order("id").range(a,b); });
     if(r.data){
       SALONS=r.data.map(function(s,i){
-        var cfg={};try{cfg=JSON.parse(s.config_json||"{}");}catch(e){}
+        var cfg={};try{cfg=(s.config_json&&typeof s.config_json==="object")?s.config_json:JSON.parse(s.config_json||"{}");}catch(e){}
         return{id:s.id,nom:s.nom||"Sans nom",ville:s.ville||"",email:s.email||"",tel:s.tel||"",
           siret:s.siret||"",siren:s.siren||"",tva:s.tva_intra||"",
           gerantNom:s.gerant_nom||"",gerantPrenom:s.gerant_prenom||"",
@@ -560,6 +560,7 @@ async function loadData(){
           isFree:s.is_free||false,freeUntil:s.free_until,customPrice:s.custom_price_amount,
           created_at:s.created_at,is_free:s.is_free||false,isFounder:s.is_founder===true,cancelledAt:s.cancelled_at,pastDueSince:s.past_due_since||null,fermeLe:s.ferme_le||null,fermeMotif:s.ferme_motif||"",fermePar:s.ferme_par||"",
           contratSignature:s.contrat_signature||"",contratAcceptedAt:s.contrat_accepted_at||"",
+          mediateur:String(cfg.mediateur||"").trim(), // 03/11/2026 (audit D I6) : médiateur de la consommation (obligatoire pour vendre aux particuliers)
           conditionsParticulieres:s.conditions_particulieres||"",contratHistorique:Array.isArray(s.contrat_historique)?s.contrat_historique:[]}; // 03/11/2026 : signature du contrat dans l'appli
       });
       // 2026-10-31 (lot A, F5) : catégorie (payant / offert / essai / test / résilié / fermé) calculée PAR LE SERVEUR ; repli local si indisponible
@@ -1394,7 +1395,7 @@ function chatHeadHtml(c){
   if(c.bot_active===false) h+='<button class="tb-btn" title="Le bot répondra de nouveau aux prochains messages du pro" data-lx-click="chatReactiverBot()">🤖 Réactiver le bot</button>';
   else h+='<span style="font-size:11px;color:var(--blue)">🤖 bot actif</span>';
   if(c.status!=='resolved') h+='<button class="tb-btn" title="Résoudre (e)" data-lx-click="resolveChatConv()">✓ Résolu</button>';
-  h+='<button class="tb-btn chatCtxBtn" style="display:none" data-lx-click="lxChatCtx(2)">ℹ️ Salon</button>';
+  h+='<button class="tb-btn chatCtxBtn" style="display:none" data-lx-click="lxChatCtx(2)">ℹ️ Établissement</button>';
   h+='</div>';
   if(c.escalade_bot&&c.status!=='resolved') h+='<div style="margin-top:6px;font-size:11px;color:var(--red)">🙋 Passé à un humain '+saEsc(c.escalade_le?('le '+new Date(c.escalade_le).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})):'')+' — '+saEsc({bot:'le bot n’avait pas la réponse',demande_pro:'demandé par le pro',erreur_bot:'erreur du bot',piece_jointe:'capture envoyée (le bot ne voit pas les images)'}[c.escalade_motif]||'')+'</div>';
   return h;
@@ -1407,6 +1408,8 @@ async function chatMajConv(patch){
   var id=window.CHAT_ACTIVE; if(!id) return false;
   var r=await _sb.from('support_conversations').update(patch).eq('id',id).select('*');
   if(r.error||!r.data||!r.data.length){ (await lxAlert('Conversation non modifiée : '+((r.error&&r.error.message)||'aucune ligne (droits ? double authentification ?)'))); return false; }
+  // 03/11/2026 (audit E M3) : changement de conversation tracé (identifiants et champs seulement, jamais le contenu)
+  try{ lxJournal("SUPPORT_CONVERSATION_MAJ",{salon:r.data[0].salon_id||null,cible:"support_conversations:"+id,details:"Champs : "+Object.keys(patch).join(", ")}); }catch(_){}
   var k=(window.CHAT_CONVS||[]).findIndex(function(c){return c.id===id;}); if(k>=0) window.CHAT_CONVS[k]=r.data[0];
   return true;
 }
@@ -1562,7 +1565,11 @@ async function chatTeleverser(salonId,convId){
   for(var k=0;k<CHAT_FICHIERS.length;k++){
     var x=CHAT_FICHIERS[k], ch=salonId+'/'+convId+'/'+chatUuid()+'.'+CHAT_TYPES_OK[x.type];
     var r=await _sb.storage.from('support-pieces').upload(ch,x.f,{contentType:x.type,upsert:false,cacheControl:'3600'});
-    if(r.error) throw new Error('« '+x.nom+' » non envoyé : '+r.error.message);
+    if(r.error){
+      // 03/11/2026 (audit E M4) : on retire les fichiers déjà envoyés de ce lot (sinon fichiers orphelins sans message)
+      try{ if(out.length) await _sb.storage.from('support-pieces').remove(out.map(function(o){return o.chemin;})); }catch(_){}
+      throw new Error('« '+x.nom+' » non envoyé : '+r.error.message);
+    }
     out.push({chemin:ch,nom:x.nom,type:x.type,taille:x.f.size});
   }
   return out;
@@ -1649,12 +1656,15 @@ async function sendChatMsg(){
       var rn=await _sb.from('support_notes').insert({conversation_id:conv,salon_id:c.salon_id,contenu:msg}).select('*');
       if(rn.error||!rn.data||!rn.data.length){ (await lxAlert('Note non enregistrée : '+((rn.error&&rn.error.message)||'droits ?'))); return; }
       CHAT_NOTES.push(rn.data[0]);
+      try{ lxJournal("SUPPORT_NOTE",{salon:c.salon_id,cible:"support_conversations:"+conv,details:"Note interne ajoutée"}); }catch(_){}
     }else{
       var pieces=CHAT_FICHIERS.length?await chatTeleverser(c.salon_id,conv):[];
+      var _lxNettoyer=async function(){ try{ if(pieces.length) await _sb.storage.from('support-pieces').remove(pieces.map(function(p){return p.chemin;})); }catch(_){} };
       // une réponse humaine coupe le bot ; le statut passe à « en attente du pro » (déclencheur fn_touch_support_conv)
       var rI=await _sb.from('support_messages').insert({salon_id:c.salon_id,conversation_id:conv,sender:'admin',message:msg,pieces:pieces,read_by_admin:true,read_by_client:false}).select('*');
-      if(rI.error||!rI.data||!rI.data.length){ (await lxAlert('Message non envoyé : '+((rI.error&&rI.error.message)||'aucune ligne'))); return; }
+      if(rI.error||!rI.data||!rI.data.length){ await _lxNettoyer(); (await lxAlert('Message non envoyé : '+((rI.error&&rI.error.message)||'aucune ligne'))); return; }
       CHAT_MSGS.push(rI.data[0]); CHAT_FICHIERS=[]; chatRenderFichiers();
+      try{ lxJournal("SUPPORT_REPONSE",{salon:c.salon_id,cible:"support_conversations:"+conv,details:"Réponse envoyée"+(pieces.length?" ("+pieces.length+" pièce(s) jointe(s))":"")}); }catch(_){}
       if(c.bot_active!==false){ var rU=await _sb.from('support_conversations').update({bot_active:false}).eq('id',conv); if(rU&&rU.error) console.warn('[chat] maj conversation',rU.error); }
     }
     i.value=''; CHAT_DRAFT[conv]=''; chatAjusterHauteur(i); try{ chatIaEtat(); }catch(_){}
@@ -1753,7 +1763,7 @@ function chatCtxHtml(){
   var d=CHAT_CTX[sid]&&CHAT_CTX[sid].d;
   var s=gSalon(sid)||{};
   var h='<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:8px"><b style="font-size:13px">'+saEsc(s.nom||chatNomSalon(sid))+'</b><button class="tb-btn chatCtxBtn" style="display:none;padding:2px 8px" data-lx-click="lxChatCtx(0)">✕</button></div>';
-  h+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px"><button class="tb-btn" style="font-size:11px" data-lx-click="openD(\''+saJs(sid)+'\')">📋 Fiche salon</button>';
+  h+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px"><button class="tb-btn" style="font-size:11px" data-lx-click="openD(\''+saJs(sid)+'\')">📋 Fiche établissement</button>';
   var cust=(d&&d.salon&&d.salon.stripe_customer_id)||s.stripeCust;
   if(cust&&/^cus_[A-Za-z0-9]+$/.test(cust)) h+='<a class="tb-btn" style="font-size:11px;text-decoration:none" target="_blank" rel="noopener" href="https://dashboard.stripe.com/customers/'+encodeURIComponent(cust)+'">💳 Stripe ↗</a>';
   h+='</div>';
@@ -2343,7 +2353,7 @@ window.lxShowErrorDetail = async function(signature){
 
     html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:18px">';
     html += '<div style="padding:10px 14px;background:var(--bg2);border-radius:8px"><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Occurrences (7j)</div><div style="font-size:20px;font-weight:800;color:#ef5350">'+rows.length+'</div></div>';
-    html += '<div style="padding:10px 14px;background:var(--bg2);border-radius:8px"><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Salons touchés</div><div style="font-size:20px;font-weight:800;color:#ff9800">'+Object.keys(distinctSalons).length+'</div></div>';
+    html += '<div style="padding:10px 14px;background:var(--bg2);border-radius:8px"><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Établissements touchés</div><div style="font-size:20px;font-weight:800;color:#ff9800">'+Object.keys(distinctSalons).length+'</div></div>';
     if(Object.keys(distinctPages).length>0){
       html += '<div style="padding:10px 14px;background:var(--bg2);border-radius:8px"><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Pages distinctes</div><div style="font-size:20px;font-weight:800;color:var(--text2)">'+Object.keys(distinctPages).length+'</div></div>';
     }
@@ -2354,7 +2364,7 @@ window.lxShowErrorDetail = async function(signature){
     // Salons concernés
     var salonList = Object.keys(distinctSalons).sort(function(a,b){return distinctSalons[b]-distinctSalons[a];});
     if(salonList.length > 0){
-      html += '<div style="margin-bottom:18px"><div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Salons concernés</div>';
+      html += '<div style="margin-bottom:18px"><div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Établissements concernés</div>';
       html += '<div style="display:flex;flex-wrap:wrap;gap:6px">';
       salonList.forEach(function(sn){
         html += '<span style="padding:3px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;font-size:12px;color:var(--text2)">'+_esc(sn)+' <span style="color:var(--text3)">×'+distinctSalons[sn]+'</span></span>';
@@ -2697,7 +2707,7 @@ function _renderMonitoringHTML(summary, recent, publicErrs, serverErrs, cronHeal
   h+=_kpi('Dernière heure', total1h, color1h, '⏱️');
   h+=_kpi('Dernières 24h', total24h, color24h, '📅');
   h+=_kpi('7 derniers jours', total7j, '#a29bfe', '📊');
-  h+=_kpi('Salons concernés', nbSalonsAffected, nbSalonsAffected>0?'#ff9800':'#9e9e9e', '🏠');
+  h+=_kpi('Établissements concernés', nbSalonsAffected, nbSalonsAffected>0?'#ff9800':'#9e9e9e', '🏠');
   h+='</div>';
   // === Tableau résumé par salon ===
   if(summary.length > 0){
@@ -2705,7 +2715,7 @@ function _renderMonitoringHTML(summary, recent, publicErrs, serverErrs, cronHeal
     h+='<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden">';
     h+='<table style="width:100%;border-collapse:collapse;font-size:13px">';
     h+='<thead style="background:var(--bg3)"><tr>'
-      +'<th style="text-align:left;padding:10px 12px;color:var(--text3);font-size:11px;text-transform:uppercase">Salon</th>'
+      +'<th style="text-align:left;padding:10px 12px;color:var(--text3);font-size:11px;text-transform:uppercase">Établissement</th>'
       +'<th style="text-align:center;padding:10px 12px;color:var(--text3);font-size:11px">1h</th>'
       +'<th style="text-align:center;padding:10px 12px;color:var(--text3);font-size:11px">24h</th>'
       +'<th style="text-align:center;padding:10px 12px;color:var(--text3);font-size:11px">7j</th>'
@@ -3499,7 +3509,7 @@ async function asGroupe(action){
     asRafraichir(); return;
   }
   if(action==="etiquette"){
-    var et=((await lxSaisie("Étiquette à ajouter (ex. VIP, Salon de Metz, Ambassadeur) :",""))||"").trim(); if(!et) return;
+    var et=((await lxSaisie("Étiquette à ajouter (ex. VIP, Metz, Ambassadeur) :",""))||"").trim(); if(!et) return;
     for(var w=0;w<L.length;w++){ var su=asSuivi(L[w].id); var arr=(su.etiquettes||[]).slice(); if(arr.indexOf(et)<0) arr.push(et); await asSauverSuivi(L[w].id,{etiquettes:arr}); }
     asRafraichir(); return;
   }
@@ -3621,6 +3631,7 @@ function openD(id){
   (function(){ var par=s.parrainId?gSalon(s.parrainId):null, fil=SALONS.filter(function(x){return x.parrainId===s.id;});
     h+='<div style="font-size:12px;color:var(--text2);margin-bottom:8px">🎁 Code parrainage : <b>'+saEsc(s.codeParr||"—")+'</b>'+(par?' · parrainé par <a href="#" data-lx-click="openD(\''+saJs(par.id)+'\');return false" style="color:var(--gold)">'+saEsc(par.nom)+'</a>':'')+(fil.length?' · a parrainé : '+fil.map(function(f){return '<a href="#" data-lx-click="openD(\''+saJs(f.id)+'\');return false" style="color:var(--gold)">'+saEsc(f.nom)+'</a>';}).join(", "):'')+'</div>'; })();
   if(s.siretAlerte) h+='<div style="background:rgba(255,152,0,.1);border:1px solid rgba(255,152,0,.4);border-radius:8px;padding:8px;font-size:12px;margin-bottom:8px">⚠️ '+saEsc(s.siretAlerte)+'</div>';
+  if(!s.mediateur && !s.fermeLe) h+='<div style="background:rgba(255,152,0,.1);border:1px solid rgba(255,152,0,.4);border-radius:8px;padding:8px;font-size:12px;margin-bottom:8px">⚠️ Médiateur de la consommation non renseigné : obligatoire pour un établissement qui vend aux particuliers (affiché dans les mentions de sa page de réservation). À compléter par l’établissement dans Paramètres › Infos établissement.</div>';
   [["Gérant",s.gerantPrenom+" "+s.gerantNom],["Forme juridique",s.formeJur],["SIRET",s.siret],["SIREN",s.siren],["TVA Intra.",s.tva]].forEach(function(f){
     h+='<div class="dp-field"><span class="k">'+f[0]+'</span><span class="v">'+(f[1]&&f[1].trim()?saEsc(f[1]):'<span style="color:var(--text3);font-style:italic">—</span>')+'</span></div>';
   });
@@ -3800,77 +3811,8 @@ document.addEventListener('keydown',function(e){
   }
 });
 
-async function deleteSalonCascade(id){
-  // ⚠️ Suppression d'un salon = SERVEUR (RPC admin_delete_salon_cascade), plus la boucle client.
-  //
-  // Pourquoi : l'ancienne boucle table-par-table était doublement cassée.
-  //  1) Sa liste contenait 17 tables FANTÔMES (ticket_lines, cash_movements, z_closures,
-  //     photos_clients, sms_logs, gift_cards, loyalty_points, absences, horaires…) qui
-  //     n'existent plus dans le schéma → "Échecs ignorés : 19" à chaque suppression.
-  //  2) Elle OUBLIAIT ~20 tables réelles (clotures, audit_log, site_config, fidelite_client,
-  //     packs_clients, cartes_cadeaux, salon_operateurs, mouvements_stock, fournisseurs…).
-  //  3) Surtout : en rôle `authenticated`, la plupart de ces DELETE ne supprimaient RIEN
-  //     (RLS sans policy DELETE → 0 ligne, AUCUNE erreur → comptés "OK"), pendant que
-  //     appointments/tickets étaient REJETÉS par les garde-fous NF525 → lignes orphelines.
-  //
-  // Le RPC (SECURITY DEFINER, gate is_admin() — le même public qu'avant, cf. la policy RLS
-  // salons.salon_delete) purge TOUTES les tables portant salon_id dans un ordre FK-safe,
-  // supprime la ligne salons en dernier, et renvoie un POST-CHECK des orphelins.
-  // Les garde-fous NF525 ne sont pas modifiés : il utilise la trappe encadrée
-  // (luxyra.allow_nf525_unlock), comme factory_reset_salon().
-  if(!_online||!id)return{ok:false,err:"offline"};
-  var s=gSalon(id);
-  var steps=[],failed=[],report=null;
-
-  // 1. Cascade base de données (toutes les tables salon_id, ordre FK-safe, salons en dernier)
-  try{
-    var rc=await _sb.rpc('admin_delete_salon_cascade',{p_salon_id:id});
-    if(rc.error)return{ok:false,err:'cascade:'+rc.error.message,steps:steps,failed:failed};
-    report=rc.data||{};
-    if(report.ok===false)return{ok:false,err:report.err||'cascade refusée',steps:steps,failed:failed};
-  }catch(e){return{ok:false,err:'cascade:'+(e.message||'err'),steps:steps,failed:failed};}
-  steps.push({name:'db_cascade',ok:true,rows:report.rows_deleted,tables:report.tables_touched});
-
-  // 2. Échecs RÉELS : une table réelle qui n'a pas pu être purgée (valeur non numérique).
-  //    Plus aucun bruit de "table fantôme" pour les noyer.
-  try{
-    var dl=report.deleted||{};
-    Object.keys(dl).forEach(function(t){
-      if(typeof dl[t]!=='number')failed.push('ÉCHEC '+t+' : '+dl[t]);
-    });
-  }catch(e){}
-
-  // 3. POST-CHECK orphelins (fait côté serveur, après le DELETE de la ligne salons)
-  var orphans=report.orphans||{};
-  var orphanTotal=report.orphans_total||0;
-  Object.keys(orphans).forEach(function(t){
-    failed.push('ORPHELINS '+t+' : '+orphans[t]+' ligne(s) restantes');
-  });
-
-  // 4. Storage : documents/{id}/*   (inchangé)
-  try{
-    var list=await _sb.storage.from('salon-documents').list('documents/'+id);
-    if(list&&list.data&&list.data.length){
-      var paths=list.data.map(function(f){return 'documents/'+id+'/'+f.name;});
-      var rm=await _sb.storage.from('salon-documents').remove(paths);
-      if(rm&&rm.error){failed.push('storage:'+rm.error.message);steps.push({name:'storage',ok:false,err:rm.error.message});}
-      else{steps.push({name:'storage',ok:true,count:paths.length});}
-    }else{steps.push({name:'storage',ok:true,count:0});}
-  }catch(e){failed.push('storage:'+(e.message||'err'));steps.push({name:'storage',ok:false,err:e.message});}
-
-  // 5. (2026-10-31, I5) Le compte de connexion n'est PAS supprimé d'ici : la route /api/admin/delete-user n'a jamais
-  //    existé (l'appel échouait toujours). Choix le plus sûr : ne pas supprimer d'identifiant depuis le navigateur.
-  //    Sans établissement, le compte ne donne accès à aucune donnée ; il peut être retiré à la main dans
-  //    Supabase › Authentication › Users si besoin.
-  if(s&&s.userId) steps.push({name:'compte_connexion',ok:true,info:'conservé (aucune donnée accessible), à retirer à la main si besoin'});
-
-  // 6. Log final SALON_DELETED_CASCADE   (inchangé — pas de salon_id : la ligne survit)
-  try{
-    await lxJournal('SALON_DELETED_CASCADE',{cible:'salons:'+id,details:{salon_id:id,nom:s&&s.nom,email:s&&s.email,rows:report.rows_deleted,tables:report.tables_touched,orphans:orphanTotal,failed:failed.length,report:report},avant:{nom:s&&s.nom,email:s&&s.email,statut:s&&s.status}});
-  }catch(e){}
-
-  return{ok:true,report:report,orphanTotal:orphanTotal,rows:report.rows_deleted||0,tables:report.tables_touched||0,failed:failed,steps:steps};
-}
+// 03/11/2026 (audit E I2) : deleteSalonCascade / confirmDeleteSalon retirées : la suppression d’un établissement
+// ne se fait plus depuis le navigateur (droit d’exécution de admin_delete_salon_cascade retiré à « authenticated »).
 
 // 2026-10-12 : FERMETURE DÉFINITIVE (remplace la suppression dès qu'il y a un historique de caisse).
 // Serveur : admin_fermer_salon -> retire la page publique + la recherche, annule les RDV en ligne à venir,
@@ -3892,40 +3834,6 @@ async function lxFermerSalon(id){
   await loadData(); render(); openD(id);
 }
 
-// Wrapper avec double confirmation — appelé depuis la fiche salon   (INCHANGÉ)
-async function confirmDeleteSalon(id){
-  var s=gSalon(id);if(!s)return;
-  // 2026-10-12 : un établissement avec historique de caisse ne se supprime JAMAIS (conservation 6 ans)
-  try{ var hf=await _sb.rpc("salon_a_historique_fiscal",{p_salon:id}); if(hf.error) throw hf.error;
-    if(hf.data===true){ if(s.fermeLe){ (await lxAlert("🔒 « "+s.nom+" » est déjà fermé.\n\nSes données de caisse sont conservées 6 ans (obligation légale) : la suppression n'est pas possible.")); return; }
-      if((await lxConfirm("« "+s.nom+" » a un historique de caisse (tickets, clôtures, journal) qui doit être conservé 6 ans.\n\nLa suppression n'est pas possible. Voulez-vous plutôt le FERMER DÉFINITIVEMENT ?"))) return lxFermerSalon(id); return; } }
-  catch(e){ (await lxAlert("❌ Vérification impossible ("+(e.message||e)+"). Rien n'a été supprimé.")); return; }
-  if(!(await lxConfirm('⚠️ SUPPRESSION DÉFINITIVE\n\nSalon : '+s.nom+'\nEmail : '+(s.email||'?')+'\n\nToutes les données seront purgées (RDV, clients, tickets, clôtures, documents).\n\nContinuer ?')))return;
-  var word=(await lxSaisie('Pour confirmer, tapez exactement le nom de l’établissement :\n\n'+s.nom));
-  if(word!==s.nom){(await lxAlert('❌ Nom incorrect, suppression annulée'));return;}
-  var res=await deleteSalonCascade(id);
-  if(res.ok){
-    // Rapport HONNÊTE : on ne dit "tout est propre" que si le post-check serveur
-    // ne trouve AUCUNE ligne restante pour ce salon_id, nulle part.
-    var msg='🗑️ Établissement supprimé\n\n'+
-            'Lignes supprimées : '+res.rows+'\n'+
-            'Tables purgées : '+res.tables+'\n';
-    if(res.orphanTotal>0){
-      msg+='\n🔴 ATTENTION : '+res.orphanTotal+' ligne(s) ORPHELINE(S) subsistent en base !\n'+
-           'L’établissement est supprimé mais des données lui appartenant restent :\n'+
-           Object.keys(res.report.orphans).map(function(t){return '  • '+t+' : '+res.report.orphans[t];}).join('\n')+
-           '\n\n→ À signaler (nettoyage manuel nécessaire).';
-    }else if(res.failed.length){
-      msg+='\n⚠️ '+res.failed.length+' avertissement(s) (hors base de données) :\n'+res.failed.slice(0,5).join('\n');
-    }else{
-      msg+='\n✅ Aucune donnée orpheline : la purge est complète.';
-    }
-    (await lxAlert(msg));
-    closeDetail();await loadData();render();
-  }else{
-    (await lxAlert('❌ Erreur critique : '+res.err+'\n\nL\'établissement N\'A PAS été supprimé.'));
-  }
-}
 
 async function actS(id,act){
   var s=gSalon(id);if(!s||!_online)return;
@@ -3938,8 +3846,8 @@ async function actS(id,act){
     var d2=await saApi({op:"changer_forfait",salon_id:id,plan:np2,motif:"bouton forfait admin"}); (await lxAlert(d2.error?"❌ "+d2.error:"📦 Forfait changé (Stripe + application)")); if(typeof loadData==="function") loadData(); return;
   }
   else if(act==="plan"){var np=s.plan==="essential"?"pro":"essential";if(!(await lxConfirm("Changer le plan de "+s.nom+" en "+np.toUpperCase()+" ?")))return;await saMaj("salons",{plan:np},id,["plan"],"PLAN_CHANGE",(s.plan||"")+" -> "+np);(await lxAlert("📦 Plan changé en "+np));}
-  else if(act==="reset"){var _rr=await _sb.auth.resetPasswordForEmail(s.email);if(_rr&&_rr.error){(await lxAlert("❌ Envoi impossible : "+_rr.error.message));return;}await saJournal(id,"RESET_PASSWORD_LINK",s.email);(await lxAlert("🔑 Lien de réinitialisation envoyé à "+s.email));return;}
-  else if(act==="delete"){await confirmDeleteSalon(id);return;}
+  else if(act==="reset"){var _rr=await _sb.auth.resetPasswordForEmail(s.email);if(_rr&&_rr.error){(await lxAlert("❌ Envoi impossible : "+_rr.error.message));return;}await saJournal(id,"RESET_PASSWORD_LINK","Lien envoyé à l’adresse du compte de l’établissement");(await lxAlert("🔑 Lien de réinitialisation envoyé à "+s.email));return;}
+  else if(act==="delete"){ (await lxAlert("La suppression d’un établissement n’est plus possible depuis le panel.\n\nFermez-le (zone sensible) : la purge automatique du serveur supprime ensuite ses données selon les durées légales.")); return; }
   }catch(eA){ (await lxAlert("❌ Action non appliquée : "+(eA&&eA.message||eA))); return; }
   await loadData();render();if(act!=="delete")openD(id);
 }
@@ -4072,7 +3980,7 @@ async function admConditionsParticulieres(salonId){
 }
 function showSalonContrat(salonId){
   var s=SALONS.find(function(x){return x.id===salonId;});
-  if(!s){lxAlert("Salon non trouv\u00e9");return;}
+  if(!s){lxAlert("\u00c9tablissement non trouv\u00e9");return;}
   var sig=null;
   try{sig=typeof s.contratSignature==="string"?JSON.parse(s.contratSignature):s.contratSignature;}catch(e){}
   if(!sig){lxAlert("Aucune signature de contrat enregistr\u00e9e pour cet \u00e9tablissement."+(s.conditionsParticulieres?"\n\nConditions particuli\u00e8res en attente de signature :\n"+s.conditionsParticulieres:""));return;}
@@ -4330,7 +4238,7 @@ function rMigrations(){
   }
 
   h+='<div class="table-wrap"><div class="table-header"><div class="table-title">📥 Toutes les demandes</div></div><div style="overflow-x:auto"><table>';
-  h+='<tr><th>Date</th><th>Salon</th><th>Source</th><th>Contact</th><th>Volume</th><th>Périmètre</th><th>Origine</th><th>Statut</th><th>Actions</th></tr>';
+  h+='<tr><th>Date</th><th>Établissement</th><th>Source</th><th>Contact</th><th>Volume</th><th>Périmètre</th><th>Origine</th><th>Statut</th><th>Actions</th></tr>';
   MIGRATIONS.forEach(function(m){
     var dt=m.created_at?new Date(m.created_at).toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit"}):"—";
     var sourceLbl=(SOURCE_LABELS[m.source_type]||saEsc(m.source_type||"—"));
@@ -4559,9 +4467,10 @@ function _ymLabel(d){ if(!d) return '?'; var p=String(d).slice(0,7).split('-'); 
 async function lxLoadMrrMovements(){
   var box=document.getElementById('lxMrrMovements'); if(!box) return;
   try{
-    var r=await _sb.from('mrr_snapshots').select('snapshot_month, mrr_total, paying_salons, breakdown').order('snapshot_month',{ascending:false}).limit(2);
+    // 03/11/2026 (audit E I1) : lecture par la fonction admin (la table mrr_snapshots reste fermée)
+    var r=await _sb.rpc('admin_mrr_mouvements');
     if(r.error) throw new Error(r.error.message);
-    var snaps=r.data||[];
+    var snaps=Array.isArray(r.data)?r.data:[];
     if(snaps.length<2){ box.innerHTML='<div style="color:var(--text3);font-size:13px">Disponible dès 2 mois mesurés (le suivi mensuel a démarré en mai 2026). Le 2e point sera relevé le 1er du mois prochain.</div>'; return; }
     var cur=snaps[0], prev=snaps[1];
     var bCur=(cur.breakdown&&typeof cur.breakdown==='object')?cur.breakdown:{};
@@ -4757,7 +4666,7 @@ async function brevoSauverReglages(){
 }
 function smsVueSalons(d){
   var C=smsCfg();
-  var h='<div class="table-wrap"><div style="overflow-x:auto"><table><tr><th>Salon</th><th>Solde</th><th>Ce mois</th><th>30 j</th><th>Dernier envoi</th><th>En attente</th><th>Mode</th><th>État</th><th>Actions</th></tr>';
+  var h='<div class="table-wrap"><div style="overflow-x:auto"><table><tr><th>Établissement</th><th>Solde</th><th>Ce mois</th><th>30 j</th><th>Dernier envoi</th><th>En attente</th><th>Mode</th><th>État</th><th>Actions</th></tr>';
   (d.salons||[]).forEach(function(s){
     var bas=s.plan==="pro"&&s.credits<C.seuil;
     h+='<tr><td><b>'+saEsc(s.nom)+'</b><div style="font-size:10px;color:var(--text3)">'+saEsc(s.plan)+' · '+saEsc(s.status)+'</div></td>';
@@ -5130,13 +5039,16 @@ function rNF525(){
 async function lxExportNf525(id){
   var s=gSalon(id); if(!s) return;
   if(!(await lxConfirm("Exporter les données de caisse NF525 de « "+s.nom+" » (fichier JSON) ?"))) return;
+  // 03/11/2026 (audit E M1) : motif obligatoire, enregistré par le serveur dans le journal admin
+  var motif=String((await lxSaisie("Motif de l’export (obligatoire, inscrit au journal) :\nex. « demande de l’établissement — contrôle fiscal »"))||"").trim();
+  if(motif.length<5){ (await lxAlert("Motif obligatoire (5 caractères minimum) : export annulé.")); return; }
   try{
     var tok=await lxAdminJeton();
-    var r=await fetch("/api/admin/export-nf525",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+tok},body:JSON.stringify({salon_id:id})});
+    var r=await fetch("/api/admin/export-nf525",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+tok},body:JSON.stringify({salon_id:id,motif:motif})});
     if(!r.ok){ var j=await r.json().catch(function(){return {};}); (await lxAlert("❌ Export impossible : "+(j.error||("erreur "+r.status)))); return; }
     var blob=await r.blob(); var a=document.createElement("a"); a.href=URL.createObjectURL(blob);
     a.download="luxyra-nf525-"+(s.siret||id)+"-"+lxJourParis()+".json"; a.click();
-    await lxJournal("EXPORT_NF525",{salon:id,cible:"salons:"+id,details:s.nom});
+    // journalisé côté serveur (EXPORT_NF525 avec le motif)
   }catch(e){ (await lxAlert("❌ Export impossible : "+(e&&e.message||e))); }
 }
 
@@ -5601,7 +5513,7 @@ async function verifSalon(id,status){
   if(status==="verified"){data.verified_at=new Date().toISOString();data.verified_by=_uid;}
   if(status==="pending"||status==="rejected"){data.verified_at=null;data.verified_by=null;}
   try{ await saMaj("salons",data,id,["verification_status"],"VERIFY_"+status.toUpperCase()); }catch(eV){ (await lxAlert("\u274c Statut non modifi\u00e9 : "+(eV&&eV.message||eV))); return; }
-  var msgs={verified:"\u2705 Salon v\u00e9rifi\u00e9 !",pending:"\u23f3 Remis en attente",incomplete:"\ud83d\udcdd Marqu\u00e9 comme incomplet",rejected:"\u274c Salon rejet\u00e9"};
+  var msgs={verified:"\u2705 \u00c9tablissement v\u00e9rifi\u00e9 !",pending:"\u23f3 Remis en attente",incomplete:"\ud83d\udcdd Marqu\u00e9 comme incomplet",rejected:"\u274c \u00c9tablissement rejet\u00e9"};
   (await lxAlert(msgs[status]||"Statut mis \u00e0 jour"));
   await loadData();render();openD(id);
 }
@@ -5654,7 +5566,8 @@ function asZoneSensible(s){
   var h='<div class="dp-section" style="border:1px solid rgba(231,76,60,.35);border-radius:12px;padding:12px;margin-top:16px"><div class="dp-label" style="color:var(--red)">⚠️ Zone sensible</div>';
   if(s.status!=="suspended") h+=bt("suspend","⛔ Suspendre le compte","L’établissement n’a plus accès à l’application (réversible).");
   h+=bt("fermer","🔒 Fermer définitivement","Fin du service ; la caisse est conservée 6 ans.");
-  h+=bt("delete","🗑️ Supprimer","Seulement si l’établissement n’a jamais rien encaissé.");
+  // 03/11/2026 (audit E I2) : plus de suppression depuis le navigateur. Un établissement sans historique de caisse
+  // est supprimé par la purge serveur (J+60 / 6 ans) ; sinon il se ferme (conservation 6 ans).
   return h+'</div>';
 }
 function asMenuActions(s){
@@ -5721,8 +5634,10 @@ async function asRepondreSupport(id,conv){
   var t=document.getElementById("asSupRep-"+id); var msg=(t&&t.value||"").trim(); if(!msg) return;
   var r=await _sb.from("support_messages").insert({salon_id:id,conversation_id:conv,sender:"admin",message:msg,read_by_admin:true,read_by_client:false});
   if(r.error){ (await lxAlert("❌ "+r.error.message)); return; }
+  try{ lxJournal("SUPPORT_REPONSE",{salon:id,cible:"support_conversations:"+conv,details:"Réponse envoyée (fiche établissement)"}); }catch(_){}
   // 2026-10-15 : statut « en attente du pro » et compteur posés par les déclencheurs ; une réponse humaine coupe le bot
-  await _sb.from("support_conversations").update({bot_active:false}).eq("id",conv);
+  var _rb=await _sb.from("support_conversations").update({bot_active:false}).eq("id",conv);
+  if(_rb&&_rb.error) console.warn("[support] bot non coupé",_rb.error.message);
   asChargerSupport(id,conv);
 }
 
@@ -5762,7 +5677,7 @@ async function saExportFactures(){
   if(d.error){ (await lxAlert("❌ "+d.error)); return; }
   var L=d.factures||[]; if(!L.length){ (await lxAlert("Aucune facture sur cette période.")); return; }
   var q=function(v){ v=(v==null?"":String(v)); return '"'+v.replace(/"/g,'""')+'"'; };
-  var cols=["Date","Numéro","Salon","Email","Statut","HT","TVA","TTC","Payé","Remboursé","Lien PDF"];
+  var cols=["Date","Numéro","Établissement","Email","Statut","HT","TVA","TTC","Payé","Remboursé","Lien PDF"];
   var rows=[cols.map(q).join(";")].concat(L.map(function(f){ return [f.date,f.numero,f.salon,f.email,f.statut,String(f.ht).replace(".",","),String(f.tva).replace(".",","),String(f.ttc).replace(".",","),String(f.paye).replace(".",","),String(f.rembourse).replace(".",","),f.pdf].map(q).join(";"); }));
   var tot=L.reduce(function(a,f){return a+(Number(f.paye)||0)-(Number(f.rembourse)||0);},0);
   rows.push(["","","","","TOTAL encaissé net","","","","",String(Math.round(tot*100)/100).replace(".",","),""].map(q).join(";"));
@@ -5791,12 +5706,9 @@ async function lxRechercher(q){
   var sansAcc=function(t){ return String(t||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,""); };
   var qa=sansAcc(q), pg=lxPagesIndex().filter(function(x){ return sansAcc(x.chemin+" "+x.mots).indexOf(qa)>=0; }).slice(0,6);
   if(pg.length) h+='<div style="padding:6px 16px;font-size:11px;color:var(--text3);text-transform:uppercase">Pages</div>'+pg.map(function(x){ return '<div style="padding:8px 16px;cursor:pointer" class="lxHov" data-lx-click="lxRechAller(\''+saJs(x.tab)+'\',\''+saJs(x.sub||'')+'\')">📄 <b>'+saEsc(x.chemin)+'</b></div>'; }).join("");
-  if(sal.length) h+='<div style="padding:6px 16px;font-size:11px;color:var(--text3);text-transform:uppercase">Salons</div>'+sal.map(function(s){ return '<div style="padding:8px 16px;cursor:pointer" class="lxHov" data-lx-click="lxRechSalon(\''+saJs(s.id)+'\')">🏠 <b>'+saEsc(s.nom)+'</b> <span style="color:var(--text3)">'+saEsc(s.ville)+' · '+saEsc(s.email)+'</span></div>'; }).join("");
+  if(sal.length) h+='<div style="padding:6px 16px;font-size:11px;color:var(--text3);text-transform:uppercase">Établissements</div>'+sal.map(function(s){ return '<div style="padding:8px 16px;cursor:pointer" class="lxHov" data-lx-click="lxRechSalon(\''+saJs(s.id)+'\')">🏠 <b>'+saEsc(s.nom)+'</b> <span style="color:var(--text3)">'+saEsc(s.ville)+' · '+saEsc(s.email)+'</span></div>'; }).join("");
   // 03/11 (audit RGPD panel B1) : plus de recherche dans les clients et tickets des établissements (sous-traitance) ;
   // pour aider un établissement : ouvrir sa vue en lecture seule, avec un motif (tracé).
-  var cl=[], tk=[];
-  if(cl.length) h+='<div style="padding:6px 16px;font-size:11px;color:var(--text3);text-transform:uppercase">Clients</div>'+cl.map(function(c){ var s=gSalon(c.salon_id); return '<div style="padding:8px 16px;cursor:pointer" class="lxHov" data-lx-click="lxRechSalon(\''+saJs(c.salon_id)+'\')">👤 <b>'+saEsc((c.prenom||"")+" "+(c.nom||""))+'</b> <span style="color:var(--text3)">'+saEsc(c.telephone||"")+' '+saEsc(c.email||"")+' · chez '+saEsc(s?s.nom:"?")+'</span></div>'; }).join("");
-  if(tk.length) h+='<div style="padding:6px 16px;font-size:11px;color:var(--text3);text-transform:uppercase">Tickets</div>'+tk.map(function(t){ var s=gSalon(t.salon_id); return '<div style="padding:8px 16px;cursor:pointer" class="lxHov" data-lx-click="lxRechSalon(\''+saJs(t.salon_id)+'\')">🧾 Ticket n°<b>'+saEsc(t.num)+'</b> <span style="color:var(--text3)">'+saEsc(t.date_ticket)+' · '+(Number(t.total_ttc)||0).toFixed(2)+' € · '+saEsc(t.client_nom||"")+' · '+saEsc(s?s.nom:"?")+(t.status==="cancelled"?' · annulé':'')+'</span></div>'; }).join("");
   el.innerHTML=h||'<div style="padding:10px 16px">Aucun résultat</div>';
 }
 document.addEventListener("keydown",function(e){
@@ -6386,7 +6298,9 @@ async function lxAudClientsChargerFaire(silencieux){
   if(r.error){ A.liste={erreur:r.error.message}; } else A.liste=r.data||{total:0,lignes:[]};
   if(!silencieux){ var z=document.getElementById('audListeCorps'); if(z) z.innerHTML=lxAudListeCorps(); else lxAudDessiner(); }
 }
-function lxAudClients(q){ var A=window._lxAud; A.q=String(q||'').slice(0,80); A.page=0; clearTimeout(A._t); A._t=setTimeout(function(){ lxAudClientsCharger(false); },350); }
+// 03/11/2026 (audit E M6) : recherche lancée à la validation (Entrée) seulement -> une ligne de journal par recherche, pas par frappe
+function lxAudClients(q){ var A=window._lxAud; A._qSaisie=String(q||'').slice(0,80); if(!A._qSaisie && A.q){ A.q=''; A.page=0; lxAudClientsCharger(false); } }
+function lxAudClientsEntree(ev,el){ if(!ev||ev.key!=='Enter') return; ev.preventDefault(); var A=window._lxAud; A.q=String((el&&el.value)||'').slice(0,80); A.page=0; lxAudClientsCharger(false); }
 function lxAudClientsPage(dp){ var A=window._lxAud; A.page=Math.max(0,A.page+(Number(dp)||0)); lxAudClientsCharger(false); }
 async function lxAudEmail(id,el){
   var r=await _sb.rpc('admin_compte_client_email',{p_id:id});
@@ -6398,7 +6312,7 @@ function lxAudListeHtml(){
   var A=window._lxAud;
   if(!A.liste){ setTimeout(function(){ lxAudClientsCharger(false); },10); }
   return '<div class="card"><h3>👤 Liste des comptes clients <span style="font-size:11px;color:var(--text3);font-weight:400">recherche par nom ou e-mail · consultation seulement, pas d’export</span></h3>'+
-    '<input type="search" id="audClientQ" placeholder="🔍 Nom, prénom ou e-mail…" value="'+saEsc(A.q||'')+'" data-lx-input="lxAudClients(this.value)" style="width:100%;max-width:360px;padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px;margin-bottom:10px">'+
+    '<input type="search" id="audClientQ" placeholder="🔍 Nom, prénom ou e-mail… (Entrée)" value="'+saEsc(A.q||'')+'" data-lx-input="lxAudClients(this.value)" data-lx-keydown="lxAudClientsEntree(event,this)" style="width:100%;max-width:360px;padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px;margin-bottom:10px">'+
     '<div id="audListeCorps">'+lxAudListeCorps()+'</div>'+
     '<div style="font-size:11px;color:var(--text3);margin-top:6px">E-mail masqué par défaut ; affiché en entier au clic (consultation notée dans le journal admin). Une recherche par adresse e-mail est aussi notée au journal.</div></div>';
 }
@@ -6415,7 +6329,7 @@ function lxAudListeCorps(){
     (A.page>0?'<button type="button" class="tb-btn" data-lx-click="lxAudClientsPage(-1)">‹ Préc.</button>':'')+((A.page+1)*50<tot?'<button type="button" class="tb-btn" data-lx-click="lxAudClientsPage(1)">Suiv. ›</button>':'')+'</span></div>';
   return h;
 }
-['rAudience','lxAudPeriode','lxAudOnglet','lxAudCharger','lxAudClients','lxAudClientsPage','lxAudEmail'].forEach(function(k){ LX_ACTIONS[k]=1; });
+['rAudience','lxAudPeriode','lxAudOnglet','lxAudCharger','lxAudClients','lxAudClientsEntree','lxAudClientsPage','lxAudEmail'].forEach(function(k){ LX_ACTIONS[k]=1; });
 var _lxGramCache=Object.create(null);
 function lxGrammaire(code){
   if(_lxGramCache[code]) return _lxGramCache[code];

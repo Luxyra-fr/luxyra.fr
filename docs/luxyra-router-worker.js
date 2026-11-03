@@ -1015,11 +1015,20 @@ async function lxGuardSalon(request, env, salonId) {
     // invitations, envoi au comptable, réponses aux demandes…) : seules les lectures dont le panneau a besoin restent permises.
     // Garantie serveur de la « vue admin lecture seule », même si le filtre du navigateur était contourné.
     const _refus = !LX_ROUTES_SALON_ADMIN_LECTURE.has(_p);
+    // 03/11/2026 (audit E M1) : export NF525 par l'admin = motif obligatoire, écrit par le serveur dans le journal
+    let _motif = "";
+    if (!_refus && _p === "/api/admin/export-nf525") {
+      const _b = await lxBodyCopie(request);
+      _motif = String((_b && _b.motif) || "").replace(/[\u0000-\u001f]/g, " ").trim().slice(0, 300);
+    }
+    const _motifManque = !_refus && _p === "/api/admin/export-nf525" && _motif.length < 5;
     // 2026-10-31 audit final F6 : l'admin sur une route d'établissement laisse une trace serveur, y compris quand
     // il est refusé (route + établissement + compte, jamais le contenu de la demande)
     try {
       const _sid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(salonId || "")) ? String(salonId) : null;
       const _ligne = { action: _refus ? "ADMIN_ROUTE_REFUSEE" : "ADMIN_ROUTE_ETABLISSEMENT", admin_user_id: u.id || null, admin_email: String(u.email || "admin"), salon_id: _sid, cible: _p.slice(0, 200), details: (_refus ? "Refusé (lecture seule) : " : "Accès admin via ") + _p.slice(0, 200) + (_sid ? "" : (salonId ? " (établissement " + String(salonId).slice(0, 40) + ")" : "")), origine: "auto" };
+      if (_motifManque) { _ligne.action = "ADMIN_ROUTE_REFUSEE"; _ligne.details = "Refusé : export NF525 sans motif"; }
+      else if (_motif) { _ligne.action = "EXPORT_NF525"; _ligne.details = ("Export NF525 — motif : " + _motif).slice(0, 4000); }
       const _post = (o) => fetch(`${CONFIG.SUPABASE_URL}/rest/v1/admin_log`, { method: "POST", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify(o) });
       let _rl = await _post(_ligne);
       // établissement inexistant (clé étrangère) : la trace est gardée sans lien, avec l'identifiant dans les détails
@@ -1027,6 +1036,7 @@ async function lxGuardSalon(request, env, salonId) {
       if (!_rl.ok) console.error("admin_log route admin : échec " + _rl.status);
     } catch (_) {}
     if (_refus) return jsonResponse({ error: "Administration : lecture seule sur les établissements" }, 403);
+    if (_motifManque) return jsonResponse({ error: "Motif obligatoire pour exporter les données de caisse d'un établissement" }, 403);
     return null;
   }
   if (!(await lxOwnsSalon(env, u.id, salonId))) return jsonResponse({ error: "Accès refusé" }, 403);
