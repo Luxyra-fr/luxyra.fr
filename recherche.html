@@ -344,6 +344,7 @@ async function loadSalons(){
     STATE.salons = [];
   }
   applyFilters();
+  lxAudRecherche(); // recherche arrivée par l'URL (ex. depuis l'accueil)
 }
 
 // NOTE 2026-08-30 : l'ancienne fonction locale computeNextOpenSlot() a ete retiree.
@@ -504,10 +505,28 @@ function lxChargerCreneaux(){
       });
   });
 }
+// 03/11/2026 : mesure d'audience des recherches (statistiques globales, sans cookie ni identifiant) :
+// seuls le métier choisi, la ville saisie (ramenée côté serveur à une commune connue, sinon « autre ») et le nombre
+// de résultats sont envoyés ; jamais le texte libre « nom / prestation ». Une fois par recherche distincte.
+var _lxAudDernier = null, _lxAudT = null;
+function lxAudRecherche(){
+  try{
+    var f = STATE.filter, cle = (f.metier||'') + '|' + (f.ville||'');
+    if(!f.metier && !f.ville) return;
+    if(cle === _lxAudDernier) return;
+    clearTimeout(_lxAudT);
+    _lxAudT = setTimeout(function(){
+      _lxAudDernier = cle;
+      var corps = JSON.stringify({ metier: f.metier || '', ville: (f.ville || '').slice(0, 80), nb: (STATE.filtered || []).length });
+      try{ fetch('/api/audience/recherche', { method:'POST', headers:{'Content-Type':'application/json'}, body: corps, keepalive: true, credentials: 'omit' }).catch(function(){}); }catch(_e){}
+    }, 1500);
+  }catch(_e){}
+}
 function setFilter(metier){
   STATE.filter.metier = metier;
   syncFormFromState();
   applyFilters();
+  lxAudRecherche();
 }
 function setModeFilter(mode){
   STATE.filter.mode = (mode === 'salon' || mode === 'domicile') ? mode : '';
@@ -519,6 +538,7 @@ function onSubmitSearch(ev){
   STATE.filter.q = document.getElementById('search-q').value.trim();
   STATE.filter.ville = document.getElementById('search-ville').value.trim();
   applyFilters();
+  lxAudRecherche();
 }
 
 function updateCount(){

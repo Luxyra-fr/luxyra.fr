@@ -621,6 +621,7 @@ async function loadMigrations(){
 // La rubrique « Communication » (SMS, e-mails) a la clé « diffusion ».
 var LX_MENU=[
   {id:'tableau',icon:'📊',label:'Tableau de bord',subs:[]},
+  {id:'audience',icon:'📈',label:'Audience & clients',subs:[]},
   {id:'salons',icon:'🏠',label:'Établissements',subs:[
     {id:'liste',label:'Liste & fiches'},{id:'inscriptions',label:'Inscriptions',badge:'inscriptions'},
     {id:'demandes',label:'Demandes d’essai',badge:'demandes'},{id:'migrations',label:'Migrations',badge:'migrations'},
@@ -645,7 +646,7 @@ var LX_MENU=[
 function lxModeAvance(){ try{ return localStorage.getItem('lx_mode_avance')==='1'; }catch(e){ return false; } }
 function lxModeAvanceBasculer(){ try{ localStorage.setItem('lx_mode_avance', lxModeAvance()?'0':'1'); }catch(e){} toast(lxModeAvance()?'Mode avancé activé : pages techniques visibles.':'Mode avancé désactivé.'); lxMenuRendu(); if(typeof render==='function') render(); }
 function lxSubsVisibles(sec, sub){ var av=lxModeAvance(); return sec.subs.filter(function(x){ return !x.avance || av || x.id===sub; }); }
-var DEFAULT_SUB={tableau:null,salons:'liste',revenus:'mrr',communication:'chat',diffusion:'sms',qualite:'areparer',croissance:'reglages'};
+var DEFAULT_SUB={tableau:null,audience:null,salons:'liste',revenus:'mrr',communication:'chat',diffusion:'sms',qualite:'areparer',croissance:'reglages'};
 // Anciennes adresses (favoris, raccourcis enregistrés, liens des notifications push) -> nouvelles pages
 var LEGACY_NAV={
   'cockpit':['tableau',null],'dashboard':['tableau',null],'alerts':['tableau',null],
@@ -755,7 +756,7 @@ function lxMenuRendu(){
   el.innerHTML=h;
 }
 // Index de la recherche Ctrl+K : toutes les pages du menu (+ mots-clés)
-var LX_PAGES_MOTS={'tableau':'accueil cockpit chiffres alertes kpi','salons/liste':'salons liste fiche établissement','salons/fermetures':'fermés archives fermeture',
+var LX_PAGES_MOTS={'tableau':'accueil cockpit chiffres alertes kpi','audience':'audience visites visiteurs statistiques pages comptes clients recherches villes prospects entonnoir','salons/liste':'salons liste fiche établissement','salons/fermetures':'fermés archives fermeture',
   'revenus/bons':'bons cadeaux cartes cadeaux encours passif e-carte','revenus/mrr':'mrr revenu arr arpu churn historique croissance','revenus/stripe':'stripe abonnements factures remises remboursement','revenus/impayes':'impayés essais fin d essai paiement échoué past due',
   'revenus/parrainage':'parrainage filleul parrain récompense','revenus/sms':'revenus sms packs marge','communication/chat':'chat support messages non lus','communication/bot':'bot base connaissances kb',
   'diffusion/sms':'sms brevo crédits','diffusion/email':'email modèles relances','diffusion/emailstats':'brevo statistiques e-mails rejets ouvertures','diffusion/desinscriptions':'désinscriptions désabonnement stop sms motifs opt-out',
@@ -791,6 +792,7 @@ function render(){
     return x+'</div>';
   }
   if(tab==='tableau'){ h=rTableau(); }
+  else if(tab==='audience'){ h=rAudience(); }
   else {
     h=subBar(); var _lxSbLen=h.length;
     if(tab==='salons'){
@@ -6248,6 +6250,131 @@ var LX_ACTIONS=Object.create(null);
 ['addModal','addSmsCredits','addSmsCreditsCustom','annAction','asAction','asAjouterEtiquette','asAjouterNote','asChargerSupport','asExport','asGroupe','asOnglet','asRepondreSupport','asRetirerEtiquette','asSauverRappel','asSel','asSelTout','asSet','asVoirApp','brevoCharger','brevoSauverReglages','chatAcChoisir','chatChangerStatut','chatColler','chatMode','chatOuvrirPiece','chatRTypesEditer','chatRTypesSupprimer','chatReactiverBot','chatRevueAjouterKb','chatRevueCharger','chatSurSaisie','chatTouchesSaisie','chatVue','chatIa','chatIaGarder','chatIaReprendre','chatIaUtiliser','closeDetail','closeMod','createFromDem','delDem','delMig','doAdminLogout','doAdminLogoutPartout','doLogin','doSaveLegal','editLegal','editUserId','emBasculer','emEditer','emSauver','emSupprimer','kbEditer','loadAppConfigEditor','loadSystemHealth','lxARCharger','lxARDetail','lxARTraiter','lxAlerteOuvrir','lxAnaCacheClear','lxAppliquerSiret','lxAsActionMenu','lxAsFiltres','lxAsRech','lxAsSelVider','lxAttEdOuvrir','lxAttEdVoir','lxAttRelanceBasculer','lxAutoFixPgrst','lxBandeauReplier','lxBasculerSuivant','lxBonsCharger','lxCdAccord','lxCdAnnuler','lxCdEnvoyer','lxCdOuvrir','lxCdPlus','lxChatCtx','lxChatFermer','lxChatFichiers','lxChatFiltre','lxChatOuvrirBoite','lxChatPlus','lxChatRechEffacer','lxChatRechEntree','lxChatRecharger','lxChatRetirerFichier','lxChatSalonRech','lxCloseErrorDetail','lxClotJour','lxClotPlus','lxClotSalon','lxContratHash','lxCopier','lxDesinsCharger','lxEmailStatsCharger','lxExportNf525','lxFermerSiFond','lxJF','lxJournalCharger','lxJournalPlus','lxLienCopier','lxLienMail','lxLienMaj','lxMarkResolvedManual','lxMfaActiver','lxMfaBandeauReplier','lxMfaFermer','lxModeAvanceBasculer','lxOfferMonths','lxOuvrirDoc','lxOuvrirLien','lxPoserRendre','lxPushDisable','lxPushEnable','lxPushPlusTard','lxPushTest','lxPushToggleEtRendre','lxRaccourci','lxRechAller','lxRechSalon','lxRechercheOuvrir','lxRequestClaudeFix','lxRetentionLancer','lxRetirerId','lxRetirerProche','lxRgpdCharger','lxSaAction','lxSauvCharger','lxScDrag','lxScDragEnd','lxScDrop','lxScMove','lxScSurvol','lxSelectionner','lxSetGroupedPeriod','lxShowErrorDetail','lxSidebarBascule','lxSmsSimul','lxSnoozeSignature','lxSuiviEtape','lxSuiviRappelEffacer','lxTdbCharger','lxTdbPlusMemo','lxTdbRessayer','lxTestMigrationPush','lxToggle1000','lxVerifierSiret','nav','openChatConv','openD','rMonitoringRefresh','resetDocs','resetSmsCredits','resolveChatConv','saChargerOverview','saChargerSalon','saExportFactures','saForfait','saLienInscription','saRelancer','saRembourser','saRemise','saveAppConfig','saveFreePlan','saveNotes','sendChatMsg','showMigrationMessage','showSalonContrat','smsAjuster','smsBloquer','smsHistorique','smsSauverReglages','toggleDocLock','toggleDrawerFull','updDem','updMig','verifSalon','lxAller'].forEach(function(k){ LX_ACTIONS[k]=1; });
 var LX_SEULES=Object.create(null);
 ['asAction','saRembourser','resetSmsCredits','lxSaAction','saveFreePlan','saRemise','saForfait','lxRetentionLancer','emSupprimer','delDem','delMig','lxExportNf525','doAdminLogoutPartout','smsAjuster','smsBloquer','addSmsCredits','addSmsCreditsCustom','lxOfferMonths','verifSalon','toggleDocLock','resetDocs','lxAppliquerSiret','doSaveLegal','editUserId','lxAsActionMenu','asGroupe','saExportFactures','lxMarkResolvedManual','lxARTraiter','chatRTypesSupprimer','kbEditer','saveAppConfig','annAction','updDem','updMig','createFromDem','asVoirApp'].forEach(function(k){ LX_SEULES[k]=1; });
+// ===== 03/11/2026 — 📈 Audience & clients (mesure d'audience sans cookie + comptes clients) =====
+// Données : RPC admin_audience / admin_comptes_clients / admin_compte_client_email (is_admin + 2FA côté serveur).
+// Statistiques globales uniquement (aucune ligne par visite) ; e-mail complet d'un client affiché au clic, tracé au journal.
+window._lxAud={jours:30, onglet:'ensemble', d:null, q:'', page:0, liste:null};
+var LX_AUD_PAGES={accueil:'Accueil',etablissement:'Pages des établissements (réservation)',recherche:'Recherche / annuaire « coiffeur à … »',pro:'Pro, tarifs et pages métiers',inscription:'Inscription des établissements',blog:'Blog',legal:'Pages légales',espace_client:'Espace client',aide:'Centre d’aide',autre:'Autres pages'};
+var LX_AUD_SOURCES={google:'Google',bing:'Bing',autres_moteurs:'Autres moteurs',direct:'Accès direct',reseaux:'Réseaux sociaux',interne:'Navigation sur luxyra.fr',autres_sites:'Autres sites'};
+var LX_AUD_METIERS={coiffure:'Coiffure',barbier:'Barbier',esthetique:'Esthétique',ongles:'Ongles',regard:'Cils & sourcils',maquillage:'Maquillage',tatouage:'Tatouage & piercing',spa:'Spa & massages',bien_etre:'Bien-être',tous:'Tous métiers',autre:'Autre'};
+function _lxAudN(n){ return (Number(n)||0).toLocaleString('fr-FR'); }
+function _lxAudPct(a,b){ a=Number(a)||0; b=Number(b)||0; return b>0?Math.round(a*100/b):0; }
+function rAudience(){
+  setTimeout(lxAudCharger,20);
+  var A=window._lxAud, per=[[7,'7 j'],[30,'30 j'],[365,'12 mois']], ong=[['ensemble','Vue d’ensemble'],['clients','👤 Comptes clients'],['visites','🌐 Visites du site'],['recherches','🔎 Recherches']];
+  var h='<div class="topbar"><h1>Audience & clients <span>Statistiques globales, sans cookie</span></h1><div style="display:flex;gap:6px;flex-wrap:wrap">';
+  per.forEach(function(p){ h+='<button type="button" class="tb-btn" style="'+(A.jours===p[0]?'background:var(--gold-bg);border-color:var(--gold);color:var(--gold)':'')+'" data-lx-click="lxAudPeriode('+p[0]+')">'+p[1]+'</button>'; });
+  h+='<button type="button" class="tb-btn" data-lx-click="lxAudCharger()">⟳</button></div></div>';
+  h+='<div class="lx-subbar" role="tablist" aria-label="Rubriques">';
+  ong.forEach(function(o){ var act=A.onglet===o[0]; h+='<button type="button" role="tab" aria-selected="'+(act?'true':'false')+'" class="tb-btn" style="'+(act?'background:var(--gold-bg);border-color:var(--gold);color:var(--gold)':'')+'" data-lx-click="lxAudOnglet(\''+o[0]+'\')">'+o[1]+'</button>'; });
+  h+='</div><div id="audZone"><div class="card" style="color:var(--text3)">Chargement…</div></div>';
+  return h;
+}
+function lxAudPeriode(j){ window._lxAud.jours=Number(j)||30; window._lxAud.d=null; render(); }
+function lxAudOnglet(o){ window._lxAud.onglet=String(o||'ensemble'); render(); }
+async function lxAudCharger(){
+  var el=document.getElementById('audZone'); if(!el) return; var A=window._lxAud;
+  var r=await _sb.rpc('admin_audience',{p_jours:A.jours});
+  if(r.error){ el.innerHTML='<div class="card" style="color:var(--red)">❌ '+saEsc(r.error.message)+'<div style="font-size:11px;color:var(--text3);margin-top:6px">RPC admin_audience : appliquer docs/migrations_1103_audience/audience.sql.</div></div>'; return; }
+  A.d=r.data||{};
+  if(A.onglet==='clients' && !A.liste) await lxAudClientsCharger(true);
+  lxAudDessiner();
+}
+function _lxAudKpi(label,val,sous,cls){ return '<div class="kpi"><div class="kpi-label">'+saEsc(label)+'</div><div class="kpi-value" style="font-size:24px">'+val+'</div>'+(sous?'<div class="kpi-sub" style="'+(cls==='up'?'color:var(--green)':cls==='dn'?'color:var(--red)':'')+'">'+sous+'</div>':'')+'</div>'; }
+function _lxAudLignes(arr,lib,cle,tot){ if(!arr||!arr.length) return '<div style="font-size:12px;color:var(--text3)">Pas encore de données.</div>'; var mx=Math.max.apply(null,arr.map(function(x){return Number(x[cle])||0;}))||1;
+  return arr.map(function(x){ var n=Number(x[cle])||0; return '<div style="padding:6px 0;border-bottom:1px solid var(--border)"><div style="display:flex;justify-content:space-between;gap:8px;font-size:13px"><span>'+saEsc(lib(x))+'</span><b>'+_lxAudN(n)+(tot?' <span style="font-weight:400;color:var(--text3);font-size:11px">'+_lxAudPct(n,tot)+' %</span>':'')+'</b></div><div style="height:5px;background:var(--bg4,#273046);border-radius:4px;margin-top:3px"><div style="height:5px;width:'+Math.max(2,Math.round(n*100/mx))+'%;background:var(--gold);border-radius:4px"></div></div></div>'; }).join(''); }
+function _lxAudBarres(serie,cle,titre){ var s=serie||[]; if(s.length>60){ var g={}; s.forEach(function(x){ var k=String(x.jour).slice(0,7); g[k]=(g[k]||0)+(Number(x[cle])||0); }); s=Object.keys(g).sort().map(function(k){ var o={jour:k}; o[cle]=g[k]; return o; }); }
+  var mx=Math.max.apply(null,s.map(function(x){return Number(x[cle])||0;}))||1;
+  return '<div title="'+saEsc(titre)+'" style="display:flex;align-items:flex-end;gap:2px;height:90px;margin-bottom:8px">'+s.map(function(x){ var n=Number(x[cle])||0; return '<div title="'+saEsc(x.jour)+' : '+_lxAudN(n)+'" style="flex:1;min-width:2px;height:'+Math.max(n?4:1,Math.round(n*100/mx))+'%;background:'+(n?'linear-gradient(180deg,#e8c873,#a8862e)':'var(--border)')+';border-radius:3px 3px 0 0"></div>'; }).join('')+'</div>'; }
+function lxAudDessiner(){
+  var el=document.getElementById('audZone'); if(!el) return; var A=window._lxAud, d=A.d||{}, c=d.clients||{}, e=d.entonnoir||{}, rc=d.recherches||{};
+  var h='';
+  var depuis=d.mesure_depuis?'Mesure des visites active depuis le '+_lxDt(d.mesure_depuis)+'.':'Mesure des visites : démarre avec la mise en ligne, aucune donnée encore.';
+  var evo=d.visiteurs_prec>0?Math.round((d.visiteurs-d.visiteurs_prec)*100/d.visiteurs_prec):null;
+  if(A.onglet==='ensemble'){
+    h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:12px">'+
+      _lxAudKpi('Comptes clients',_lxAudN(c.total),'+'+_lxAudN(c.nouveaux)+' sur la période','up')+
+      _lxAudKpi('Visiteurs du site',_lxAudN(d.visiteurs),evo===null?_lxAudN(d.vues)+' pages vues':(evo>=0?'+':'')+evo+' % vs période préc.',evo===null?'':(evo>=0?'up':'dn'))+
+      _lxAudKpi('Visites page Pro',_lxAudN(d.visites_pro),'→ '+_lxAudN(e.etablissements)+' établissement(s) créé(s)','up')+
+      _lxAudKpi('Recherches de salon',_lxAudN(rc.total),_lxAudN(rc.sans_resultat)+' sans résultat',rc.sans_resultat?'dn':'')+
+      _lxAudKpi('Réservations en ligne',_lxAudN(d.reservations),'sur la période','')+'</div>';
+    var et=[[e.visites_pro,'visites Pro, tarifs, métiers'],[e.inscription_ouverte,'ouvrent l’inscription'],[e.email_verifie,'e-mail vérifié'],[e.etablissements,'établissements créés'],[e.payants,'abonnés payants']];
+    var pire=null; for(var i=1;i<et.length;i++){ var a=Number(et[i-1][0])||0, b=Number(et[i][0])||0; if(a>0){ var p=100-Math.round(b*100/a); if(p>0&&(!pire||p>pire.p)) pire={p:p,de:et[i-1][1],a:et[i][1]}; } }
+    h+='<div class="card"><h3>🧲 Entonnoir établissements <span style="font-size:11px;color:var(--text3);font-weight:400">visite Pro → établissement inscrit</span></h3><div style="display:flex;gap:6px;flex-wrap:wrap;align-items:stretch">'+
+      et.map(function(x,i){ return (i?'<div style="align-self:center;color:var(--text3)">›</div>':'')+'<div style="flex:1;min-width:110px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:10px;text-align:center"><b style="font-size:18px;display:block">'+_lxAudN(x[0])+'</b><small style="font-size:11px;color:var(--text3)">'+saEsc(x[1])+'</small></div>'; }).join('')+'</div>'+
+      (pire?'<div style="font-size:12px;color:var(--text3);margin-top:8px">Étape qui perd le plus : <b style="color:var(--gold)">'+saEsc(pire.de)+' → '+saEsc(pire.a)+' ('+pire.p+' % d’abandon)</b></div>':'')+
+      '<div style="font-size:11px;color:var(--text3);margin-top:6px">Visites = visiteurs distincts par jour, additionnés. E-mail vérifié, établissements et abonnés : comptes réels de la période.</div></div>';
+    h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px">';
+    h+='<div class="card"><h3>👤 Nouveaux comptes clients <span style="font-size:11px;color:var(--text3);font-weight:400">par jour</span></h3>'+_lxAudBarres(d.serie,'comptes','Nouveaux comptes')+lxAudResumeClients(c)+'</div>';
+    h+='<div class="card"><h3>🌐 Pages les plus vues</h3>'+_lxAudLignes((d.pages||[]).slice(0,6),function(x){return LX_AUD_PAGES[x.page]||x.page;},'vues')+lxAudProvenance(d)+'</div>';
+    h+='</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px">';
+    h+='<div class="card"><h3>🔎 Ce que les gens cherchent</h3>'+_lxAudLignes(rc.metiers,function(x){return LX_AUD_METIERS[x.metier]||x.metier;},'nb')+'</div>';
+    h+='<div class="card"><h3>📍 Villes recherchées <span style="font-size:11px;color:var(--text3);font-weight:400">sans établissement Luxyra = prospects</span></h3>'+lxAudVilles(rc.villes)+'</div></div>';
+  } else if(A.onglet==='visites'){
+    h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:12px">'+_lxAudKpi('Visiteurs (par jour, cumulés)',_lxAudN(d.visiteurs),evo===null?'':(evo>=0?'+':'')+evo+' % vs période préc.',evo===null?'':(evo>=0?'up':'dn'))+_lxAudKpi('Pages vues',_lxAudN(d.vues),'')+_lxAudKpi('Visites page Pro',_lxAudN(d.visites_pro),'')+'</div>';
+    h+='<div class="card"><h3>📅 Visiteurs par jour</h3>'+_lxAudBarres(d.serie,'visiteurs','Visiteurs')+'</div>';
+    h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px"><div class="card"><h3>🌐 Pages vues par rubrique</h3>'+_lxAudLignes(d.pages,function(x){return LX_AUD_PAGES[x.page]||x.page;},'vues',d.vues)+'</div>'+
+      '<div class="card"><h3>🧭 Provenance</h3>'+_lxAudLignes(d.sources,function(x){return LX_AUD_SOURCES[x.source]||x.source;},'vues',d.vues)+'<h3 style="margin-top:14px">📱 Appareil</h3>'+_lxAudLignes(d.appareils,function(x){return x.appareil==='mobile'?'Mobile':'Ordinateur';},'vues',d.vues)+'</div></div>';
+  } else if(A.onglet==='recherches'){
+    h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:12px">'+_lxAudKpi('Recherches',_lxAudN(rc.total),'')+_lxAudKpi('Sans résultat',_lxAudN(rc.sans_resultat),_lxAudPct(rc.sans_resultat,rc.total)+' % des recherches',rc.sans_resultat?'dn':'')+'</div>';
+    h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px"><div class="card"><h3>🔎 Métiers recherchés</h3>'+_lxAudLignes(rc.metiers,function(x){return LX_AUD_METIERS[x.metier]||x.metier;},'nb',rc.total)+'</div>'+
+      '<div class="card"><h3>📍 Villes recherchées</h3>'+lxAudVilles(rc.villes)+'<div style="font-size:11px;color:var(--text3);margin-top:8px">Seules les communes connues sont gardées (sinon « autre ») ; un code postal devient « dép. NN ». Le texte libre (nom, prestation) n’est jamais enregistré.</div></div></div>';
+  } else {
+    h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:12px">'+_lxAudKpi('Comptes clients',_lxAudN(c.total),'')+_lxAudKpi('Nouveaux sur la période',_lxAudN(c.nouveaux),c.nouveaux_prec!=null?'période préc. : '+_lxAudN(c.nouveaux_prec):'')+_lxAudKpi('Actifs (30 j)',_lxAudN(c.actifs_30j),'connectés en 30 j')+'</div>';
+    h+='<div class="card"><h3>👤 Nouveaux comptes par jour</h3>'+_lxAudBarres(d.serie,'comptes','Nouveaux comptes')+lxAudResumeClients(c)+'</div>';
+    h+=lxAudListeHtml();
+  }
+  h+='<div class="card" style="background:rgba(76,175,80,.06);border-color:rgba(76,175,80,.35);font-size:12.5px;line-height:1.55"><b>✅ Mesure d’audience conforme (règles CNIL)</b><br>'+
+    '• Comptage par notre serveur, sans cookie ni traceur dans le navigateur, sans Google Analytics : pas de bandeau de consentement.<br>'+
+    '• Aucune adresse IP ni identité conservée pour les visites et recherches : un code anonyme qui change chaque jour sert seulement à compter les visiteurs distincts, puis il est effacé.<br>'+
+    '• Statistiques globales réservées à Luxyra, jamais revendues ni croisées. Robots et navigateurs « ne pas me suivre » non comptés. Effacement après 13 mois.<br>'+
+    '• Comptes clients : consultation seulement, e-mails masqués, aucun export. '+saEsc(depuis)+'</div>';
+  el.innerHTML=h;
+}
+function lxAudResumeClients(c){ var t=Number(c.total)||0;
+  return '<div style="font-size:13px">'+[['Créés sur le site / l’appli client',Math.max(0,(Number(c.nouveaux)||0)-(Number(c.invites)||0))],['Invités par un établissement',c.invites],['Actifs (connectés en 30 j)',c.actifs_30j],['Accord offres SMS / e-mail',_lxAudPct(c.sms_offres,t)+' % / '+_lxAudPct(c.email_offres,t)+' %'],['Préavis inactivité 3 ans en cours',c.preavis]]
+    .map(function(x){ return '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)"><span>'+saEsc(x[0])+'</span><b>'+(typeof x[1]==='string'?saEsc(x[1]):_lxAudN(x[1]))+'</b></div>'; }).join('')+'</div>'; }
+function lxAudProvenance(d){ var t=Number(d.vues)||0; if(!t) return '';
+  var s=(d.sources||[]).map(function(x){return saEsc(LX_AUD_SOURCES[x.source]||x.source)+' '+_lxAudPct(x.vues,t)+' %';}).join(' · ');
+  var a=(d.appareils||[]).map(function(x){return (x.appareil==='mobile'?'mobile ':'ordinateur ')+_lxAudPct(x.vues,t)+' %';}).join(' · ');
+  return '<div style="font-size:12px;color:var(--text3);margin-top:8px">Provenance : '+s+'<br>Appareil : '+saEsc(a)+'</div>'; }
+function lxAudVilles(v){ if(!v||!v.length) return '<div style="font-size:12px;color:var(--text3)">Pas encore de données.</div>';
+  return _lxTable(['Ville','Recherches','Établ. Luxyra'],v.map(function(x){ var n=Number(x.etablissements)||0; return [saEsc(x.ville),_lxAudN(x.nb)+(x.sans_resultat?' <span style="font-size:11px;color:var(--text3)">('+_lxAudN(x.sans_resultat)+' sans résultat)</span>':''),n+(n===0?' <span style="display:inline-block;font-size:10px;padding:2px 7px;border-radius:10px;background:rgba(239,83,80,.15);color:#ef9a9a;margin-left:4px">à démarcher</span>':'')]; })); }
+async function lxAudClientsCharger(silencieux){
+  var A=window._lxAud; var r=await _sb.rpc('admin_comptes_clients',{p_q:A.q||null,p_limite:50,p_decalage:A.page*50});
+  if(r.error){ A.liste={erreur:r.error.message}; } else A.liste=r.data||{total:0,lignes:[]};
+  if(!silencieux){ var z=document.getElementById('audListeCorps'); if(z) z.innerHTML=lxAudListeCorps(); else lxAudDessiner(); }
+}
+function lxAudClients(q){ var A=window._lxAud; A.q=String(q||'').slice(0,80); A.page=0; clearTimeout(A._t); A._t=setTimeout(function(){ lxAudClientsCharger(false); },350); }
+function lxAudClientsPage(dp){ var A=window._lxAud; A.page=Math.max(0,A.page+(Number(dp)||0)); lxAudClientsCharger(false); }
+async function lxAudEmail(id,el){
+  var r=await _sb.rpc('admin_compte_client_email',{p_id:id});
+  if(r.error){ toast('❌ '+r.error.message,'error'); return; }
+  if(el) el.textContent=String(r.data||'');
+  toast('E-mail affiché (consultation notée au journal admin).');
+}
+function lxAudListeHtml(){
+  var A=window._lxAud;
+  if(!A.liste){ setTimeout(function(){ lxAudClientsCharger(false); },10); }
+  return '<div class="card"><h3>👤 Liste des comptes clients <span style="font-size:11px;color:var(--text3);font-weight:400">recherche par nom ou e-mail · consultation seulement, pas d’export</span></h3>'+
+    '<input type="search" id="audClientQ" placeholder="🔍 Nom, prénom ou e-mail…" value="'+saEsc(A.q||'')+'" data-lx-input="lxAudClients(this.value)" style="width:100%;max-width:360px;padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px;margin-bottom:10px">'+
+    '<div id="audListeCorps">'+lxAudListeCorps()+'</div>'+
+    '<div style="font-size:11px;color:var(--text3);margin-top:6px">E-mail masqué par défaut ; affiché en entier au clic (consultation notée dans le journal admin).</div></div>';
+}
+function lxAudListeCorps(){
+  var A=window._lxAud, L=A.liste;
+  if(!L) return '<div style="color:var(--text3)">Chargement…</div>';
+  if(L.erreur) return '<div style="color:var(--red)">❌ '+saEsc(L.erreur)+'</div>';
+  var tot=Number(L.total)||0;
+  var h=_lxTable(['Client','Créé le','Origine','Dernière connexion','RDV','Offres'],(L.lignes||[]).map(function(x){
+    return [saEsc(x.nom||'—')+' · <a href="#" title="Afficher l’e-mail complet (noté au journal)" data-lx-click="lxAudEmail(\''+saJs(x.id)+'\',this);return false" style="color:var(--gold)">'+saEsc(x.email)+'</a>'+(x.preavis?' <span style="font-size:10px;color:var(--orange)">préavis</span>':''),
+      _lxDt(x.cree_le), x.origine==='invite'?'Invité par un établissement':'Site / appli', x.derniere_connexion?_lxDt(x.derniere_connexion):'—', _lxAudN(x.rdv),
+      'SMS '+(x.sms_offres?'✓':'✗')+' · e-mail '+(x.email_offres?'✓':'✗')]; }),'Aucun compte trouvé.');
+  h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;font-size:12px;color:var(--text3)"><span>'+_lxAudN(tot)+' compte(s)'+(tot>50?' · page '+(A.page+1)+' / '+Math.ceil(tot/50):'')+'</span><span style="display:flex;gap:6px">'+
+    (A.page>0?'<button type="button" class="tb-btn" data-lx-click="lxAudClientsPage(-1)">‹ Préc.</button>':'')+((A.page+1)*50<tot?'<button type="button" class="tb-btn" data-lx-click="lxAudClientsPage(1)">Suiv. ›</button>':'')+'</span></div>';
+  return h;
+}
+['rAudience','lxAudPeriode','lxAudOnglet','lxAudCharger','lxAudClients','lxAudClientsPage','lxAudEmail'].forEach(function(k){ LX_ACTIONS[k]=1; });
 var _lxGramCache=Object.create(null);
 function lxGrammaire(code){
   if(_lxGramCache[code]) return _lxGramCache[code];

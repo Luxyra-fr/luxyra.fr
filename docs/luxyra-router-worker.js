@@ -31,6 +31,98 @@ function checkRateLimit(key, maxPerMinute) {
   return true;
 }
 
+// ============================================================
+// 03/11/2026 — MESURE D'AUDIENCE SANS COOKIE (panel « 📊 Audience & clients »)
+// Cadre CNIL « mesure d'audience » : aucun cookie ni traceur dans le navigateur, finalité strictement statistique pour
+// Luxyra seul, statistiques AGRÉGÉES (compteurs par jour, rubrique, provenance, appareil), aucun recoupement.
+// L'IP n'est jamais stockée : seule une empreinte SHA-256 (IP + navigateur) est transmise ; la base la re-hache avec un sel
+// aléatoire du jour et efface empreintes et sel dès le lendemain (seul le NOMBRE de visiteurs distincts reste).
+// Robots, préchargements et navigateurs « Do Not Track » / « Global Privacy Control » ne sont pas comptés.
+// Jamais bloquant : exécuté après la réponse (ctx.waitUntil), toute erreur est ignorée.
+// ============================================================
+const LX_AUD_BOTS = /bot|crawl|spider|slurp|preview|facebookexternalhit|embedly|whatsapp|telegram|discord|headless|lighthouse|pingdom|uptime|monitor|curl|wget|python|axios|node-fetch|undici|go-http|java\/|libwww|httpclient|okhttp|scrapy|semrush|ahrefs|mj12|petal|yandex|baidu|applebot|duckduck|inspectiontool|gtmetrix|statuscake|feedfetcher|validator/i;
+const LX_AUD_ANNUAIRE = { "coiffeur": "coiffure", "institut-de-beaute": "esthetique", "spa-massage": "spa", "onglerie": "ongles", "extension-de-cils": "regard", "barbier": "barbier" };
+const LX_AUD_EXCLUS = new Set(["app", "app-play", "admin", "admin-twa", "proposal", "acompte", "reset-password", "clear", "bons-cadeaux-success",
+  "preview-email-confirmation", "annuaire-retrait", "annuaire-retrait-confirmer", "annuaire-gerant", "404", "offline"]);
+function lxAudiencePage(pathname) {
+  let p = String(pathname || "/").toLowerCase().replace(/\/+$/, "").replace(/\.html?$/, "").replace(/^\/+/, "");
+  if (p === "" || p === "index") return "accueil";
+  const seg = p.split("/");
+  if (seg[0] === "api" || seg[0] === "s" || seg[0] === "stop" || seg[0] === "admin" || seg[0] === ".well-known") return null;
+  if (LX_AUD_EXCLUS.has(seg[0])) return null;
+  if (seg[0] === "recherche" || LX_AUD_ANNUAIRE[seg[0]]) return seg.length <= 2 ? "recherche" : null;
+  if (/^(pro|tarifs|sans-commission|demo|a-propos|migration|nf525-attestation-generale)$/.test(seg[0]) || /^logiciel-/.test(seg[0])) return seg.length === 1 ? "pro" : null;
+  if (seg[0] === "inscription") return "inscription";
+  if (seg[0] === "blog") return "blog";
+  if (/^(cgv|cgu|mentions|mentions-legales|politique-confidentialite|confidentialite|securite-rgpd|securite|rgpd|suppression-donnees|dpa)$/.test(seg[0])) return "legal";
+  if (seg[0] === "compte" || seg[0] === "client") return "espace_client";
+  if (seg[0] === "aide") return "aide";
+  if (seg[0] === "site" || seg[0] === "bons-cadeaux") return "etablissement";
+  if (seg.length === 1 || (seg.length === 2 && seg[1] === "reserver")) return /^[a-z0-9-]{2,80}$/.test(seg[0]) ? "etablissement" : null;
+  return "autre";
+}
+function lxAudienceSource(ref) {
+  if (!ref) return "direct";
+  let h = "";
+  try { const u = new URL(ref); h = u.hostname.toLowerCase(); if (u.protocol === "android-app:") h = u.hostname.toLowerCase(); } catch (_) { return "direct"; }
+  if (h === "luxyra.fr" || h.endsWith(".luxyra.fr")) return "interne";
+  if (/(^|\.)google\.[a-z.]+$/.test(h) || h === "com.google.android.googlequicksearchbox") return "google";
+  if (/(^|\.)bing\.com$/.test(h)) return "bing";
+  if (/(^|\.)(duckduckgo\.com|qwant\.com|ecosia\.org|yahoo\.[a-z.]+|search\.brave\.com|startpage\.com|yandex\.[a-z.]+|lilo\.org)$/.test(h)) return "autres_moteurs";
+  if (/(^|\.)(facebook\.com|fb\.com|instagram\.com|t\.co|twitter\.com|x\.com|linkedin\.com|lnkd\.in|pinterest\.[a-z.]+|tiktok\.com|snapchat\.com|youtube\.com|whatsapp\.com|messenger\.com)$/.test(h)) return "reseaux";
+  return "autres_sites";
+}
+function lxAudienceRefuse(request) {
+  const ua = request.headers.get("user-agent") || "";
+  if (!ua || LX_AUD_BOTS.test(ua)) return true;
+  if (/prefetch|prerender/i.test(request.headers.get("sec-purpose") || request.headers.get("purpose") || "")) return true;
+  if (request.headers.get("dnt") === "1" || request.headers.get("sec-gpc") === "1") return true;
+  return false;
+}
+async function lxAudienceEmpreinte(request) {
+  const ip = request.headers.get("cf-connecting-ip") || "";
+  if (!ip) return null;
+  const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(ip + "|" + (request.headers.get("user-agent") || "")));
+  return Array.from(new Uint8Array(d)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+function lxAudienceVue(request, url, rep, env, ctx) {
+  if (!ctx || typeof ctx.waitUntil !== "function" || !env || !env.SUPABASE_SERVICE_KEY) return;
+  if (url.hostname !== "luxyra.fr" || request.method !== "GET" || !rep || rep.status !== 200) return;
+  if (!/text\/html/i.test(rep.headers.get("content-type") || "")) return;
+  if (lxAudienceRefuse(request)) return;
+  const page = lxAudiencePage(url.pathname);
+  if (!page) return;
+  if (!checkRateLimit("aud:" + (request.headers.get("cf-connecting-ip") || "?"), 120)) return;
+  const ua = request.headers.get("user-agent") || "";
+  const args = { p_page: page, p_source: lxAudienceSource(request.headers.get("referer") || ""),
+                 p_appareil: /Mobi|Android|iPhone|iPad|iPod/i.test(ua) ? "mobile" : "ordinateur", p_ph: null };
+  const ann = page === "recherche" ? url.pathname.toLowerCase().match(/^\/([a-z-]+)\/([a-z0-9-]{2,80})\/?$/) : null;
+  ctx.waitUntil((async () => {
+    try {
+      args.p_ph = await lxAudienceEmpreinte(request);
+      await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/lx_audience_vue`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify(args) });
+      if (ann && LX_AUD_ANNUAIRE[ann[1]]) {
+        await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/lx_audience_recherche`, { method: "POST", headers: _sbHeaders(env),
+          body: JSON.stringify({ p_origine: "annuaire", p_metier: LX_AUD_ANNUAIRE[ann[1]], p_ville: ann[2], p_nb: null }) });
+      }
+    } catch (_) { /* jamais bloquant */ }
+  })());
+}
+// POST /api/audience/recherche {metier, ville, nb} — envoyé par recherche.html après une recherche (aucun cookie, aucun
+// identifiant) ; la base ne garde que métier connu + commune connue (sinon « autre ») + « avec / sans résultat ».
+async function handleAudienceRecherche(request, env) {
+  const vide = new Response(null, { status: 204, headers: { "Cache-Control": "no-store" } });
+  try {
+    if (lxAudienceRefuse(request) || !env.SUPABASE_SERVICE_KEY) return vide;
+    if (!checkRateLimit("audr:" + (request.headers.get("cf-connecting-ip") || "?"), 30)) return vide;
+    const b = await request.json().catch(() => ({}));
+    const nb = Number.isFinite(Number(b && b.nb)) ? Math.max(0, Math.min(100000, Math.floor(Number(b.nb)))) : null;
+    await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/lx_audience_recherche`, { method: "POST", headers: _sbHeaders(env),
+      body: JSON.stringify({ p_origine: "recherche", p_metier: String((b && b.metier) || "").slice(0, 30), p_ville: String((b && b.ville) || "").slice(0, 80), p_nb: nb }) });
+  } catch (_) { /* jamais bloquant */ }
+  return vide;
+}
+
 const CONFIG = {
   SUPABASE_URL: "https://kxdgjtvrkwugbifgppai.supabase.co",
   // Cle ANON (publique — deja exposee dans luxyra-supabase.js / le navigateur).
@@ -235,6 +327,8 @@ async function __wrappedApiHandler(request, url, env) {
       if (url.pathname === "/api/inscription/email-check" && request.method === "POST") return await handleInscriptionEmailCheck(request, env);
       if (url.pathname === "/api/annuaire/signaler" && request.method === "POST") return await handleAnnuaireSignaler(request, env);
       if (url.pathname === "/api/annuaire/retrait" && request.method === "POST") return await handleAnnuaireRetrait(request, env);
+      // 03/11/2026 : mesure d'audience des recherches (statistiques agrégées, sans cookie ; voir lxAudienceVue)
+      if (url.pathname === "/api/audience/recherche" && request.method === "POST") return await handleAudienceRecherche(request, env);
       // Endpoint admin pour déclencher manuellement le job de rétention (debug/test).
       // Sécurisé par un secret bearer token dans env.RETENTION_ADMIN_TOKEN.
       // 2026-10-15 : aussi déclenchable depuis le panneau admin (session support@luxyra.fr + double authentification),
@@ -438,7 +532,7 @@ async function lxVueRequete(request, env, worker) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const _uA = new URL(request.url);
     // 01/11/2026 (audit global serveur I11) : fichiers de travail du dépôt jamais servis (documentation interne, SQL, notes,
     // sources des fonctions serveur) — sur tous les domaines (luxyra.fr, sous-domaines, admin, vue).
@@ -454,7 +548,10 @@ export default {
       catch (e) { console.error("vue.luxyra.fr", e); return new Response(JSON.stringify({ error: "Erreur interne" }), { status: 500, headers: { "Content-Type": "application/json" } }); }
     }
     if (_uA.hostname === "admin.luxyra.fr") return lxEntetesAdmin(await this._fetchPrincipal(request, env), _uA.pathname);
-    return this._fetchPrincipal(request, env);
+    const _rep = await this._fetchPrincipal(request, env);
+    // 03/11/2026 : mesure d'audience côté serveur (après la réponse, jamais bloquante ; voir lxAudienceVue)
+    try { lxAudienceVue(request, _uA, _rep, env, ctx); } catch (_) {}
+    return _rep;
   },
   async _fetchPrincipal(request, env) {
     const url = new URL(request.url);
