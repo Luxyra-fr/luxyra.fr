@@ -4019,7 +4019,7 @@ function rInscriptions(){
   h+='</table></div></div>';
 
   // Documents r\u00e9capitulatif
-  var docsNeeded=SALONS.filter(function(s){return s.status==="active"&&s.stripeSub&&(!s.docKbis||!s.docId);});
+  var docsNeeded=SALONS.filter(function(s){return s.status==="active"&&s.stripeSub&&(!s.docKbis||(!s.docId&&!s.docIdSupprimeLe));}); // 03/11 (RGPD I4)
   var docsPending=SALONS.filter(function(s){return s.verif==="pending_review"&&!s.fermeLe;});
   if(docsNeeded.length||docsPending.length){
     h+='<div class="card"><h3>\ud83d\udcc1 Documents \u00e0 contr\u00f4ler</h3>';
@@ -4040,7 +4040,7 @@ function rInscriptions(){
       docsNeeded.forEach(function(s){
         h+='<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px">';
         h+='<span><strong>'+saEsc(s.nom)+'</strong> — '+saEsc(s.email)+'</span>';
-        h+='<span style="color:var(--orange);font-size:12px">'+(s.docKbis?'\u2705 Kbis':'\u274c Kbis')+' '+(s.docId?'\u2705 ID':'\u274c ID')+'</span>';
+        h+='<span style="color:var(--orange);font-size:12px">'+(s.docKbis?'\u2705 Kbis':'\u274c Kbis')+' '+((s.docId||s.docIdSupprimeLe)?'\u2705 ID':'\u274c ID')+'</span>';
         h+='</div>';
       });
     }
@@ -5561,7 +5561,7 @@ async function resetDocs(id){
       else { var l2=await st.list(pref+"/"+it.name,{limit:1000}); if(l2.error) throw new Error("liste des fichiers : "+l2.error.message); (l2.data||[]).forEach(function(x){ if(x.id) chemins.push(pref+"/"+it.name+"/"+x.name); }); }
     }
     if(chemins.length){ var rm=await st.remove(chemins); if(rm.error) throw new Error("suppression des fichiers : "+rm.error.message); }
-    await saMaj("salons",{documents_kbis:null,documents_id:null,documents_id_verso:null,verification_status:"pending",verified_at:null,verified_by:null,documents_uploaded_at:null},id,["verification_status"],"DOCS_RESET","Tous les documents supprim\u00e9s ("+chemins.length+" fichier(s) effac\u00e9(s) du stockage)");
+    await saMaj("salons",{documents_kbis:null,documents_id:null,documents_id_verso:null,documents_id_supprime_le:null,verification_status:"pending",verified_at:null,verified_by:null,documents_uploaded_at:null},id,["verification_status"],"DOCS_RESET","Tous les documents supprim\u00e9s ("+chemins.length+" fichier(s) effac\u00e9(s) du stockage)");
     (await lxAlert("\ud83d\uddd1 Documents r\u00e9initialis\u00e9s ("+chemins.length+" fichier(s) supprim\u00e9(s))"));
   }catch(eD){ (await lxAlert("\u274c R\u00e9initialisation interrompue : "+(eD&&eD.message||eD))); return; }
   await loadData();render();openD(id);

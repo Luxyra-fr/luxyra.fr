@@ -9808,7 +9808,7 @@ async function runRgpdPurgeJ60(env) {
 
 // 03/11/2026 (audit RGPD panel I3 + I7) : fichiers à supprimer chaque nuit.
 //  - support-pieces/<salon>/… : 1 an après la fin du service (messages supprimés en base par lx_prive.rgpd_conservation_quotidienne) ;
-//  - pièces d'identité du gérant (salon-documents) : dès que l'identité est vérifiée (ou à la fin du service). Le Kbis est conservé.
+//  - pièces d'identité du gérant (salon-documents) : dès que l'identité est VÉRIFIÉE (03/11 contre-audit I1 : plus « ou fin du service »). Le Kbis est conservé.
 //    Les chemins ne sont effacés en base (lx_justificatifs_id_effaces, tracé au journal admin) qu'après suppression réussie des fichiers.
 async function _lxStorageLister(env, bucket, prefixe) {
   const chemins = [];
@@ -9856,6 +9856,12 @@ async function runRgpdFichiers(env) {
         if (chemins.length) {
           const d = await fetch(`${CONFIG.SUPABASE_URL}/storage/v1/object/salon-documents`, { method: "DELETE", headers: _sbHeaders(env), body: JSON.stringify({ prefixes: chemins }) });
           if (!d.ok) { out.erreurs++; continue; }
+          // 03/11 (contre-audit M3) : le stockage répond 200 même si rien n'est effacé -> on relit le dossier et on ne
+          // touche à la base que si AUCUN des fichiers visés n'existe encore (un fichier déjà absent compte comme effacé).
+          const lv = await fetch(`${CONFIG.SUPABASE_URL}/storage/v1/object/list/salon-documents`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ prefix: `documents/${sid}`, limit: 1000 }) });
+          if (!lv.ok) { out.erreurs++; continue; } // relecture impossible : on ne touche pas à la base, nouvel essai la nuit suivante
+          const restants = ((await lv.json()) || []).map((it) => `documents/${sid}/${it.name}`);
+          if (chemins.some((c) => restants.includes(c))) { out.erreurs++; continue; }
         }
         const e = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/lx_justificatifs_id_effaces`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_salon: sid }) });
         if (!e.ok) { out.erreurs++; continue; }
