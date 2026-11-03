@@ -37,6 +37,36 @@ function checkRateLimit(key, maxPerMinute) {
   return true;
 }
 
+// 03/11/2026 (contre-audit 77e2ca4) : limitation de débit de l'AUDIENCE dans une table À PART, pour qu'un flot de clés
+// d'audience ne puisse jamais purger ni remettre à zéro les limites sensibles (sms:, email_*…) de RATE_LIMITS.
+// Clé = IP hachée avec un sel aléatoire du jour gardé en mémoire du worker (jamais stocké, renouvelé chaque jour) :
+// changer d'en-tête navigateur ne crée plus de nouvelle clé.
+const RATE_LIMITS_AUD = new Map();
+function checkRateLimitAud(key, maxPerMinute) {
+  const now = Date.now();
+  if (RATE_LIMITS_AUD.size > 5000) {
+    for (const [k, e] of RATE_LIMITS_AUD) { if (now > e.resetAt) RATE_LIMITS_AUD.delete(k); }
+    if (RATE_LIMITS_AUD.size > 20000) RATE_LIMITS_AUD.clear();
+  }
+  const e = RATE_LIMITS_AUD.get(key);
+  if (!e || now > e.resetAt) { RATE_LIMITS_AUD.set(key, { count: 1, resetAt: now + 60000 }); return true; }
+  if (e.count >= maxPerMinute) return false;
+  e.count++;
+  return true;
+}
+let LX_AUD_SEL = { jour: "", sel: "" };
+async function lxAudienceCleDebit(request) {
+  const ip = request.headers.get("cf-connecting-ip") || "";
+  if (!ip) return "?";
+  const jour = new Date().toISOString().slice(0, 10);
+  if (LX_AUD_SEL.jour !== jour) {
+    const r = new Uint8Array(16); crypto.getRandomValues(r);
+    LX_AUD_SEL = { jour, sel: Array.from(r).map((b) => b.toString(16).padStart(2, "0")).join("") };
+  }
+  const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(LX_AUD_SEL.sel + "|" + ip));
+  return Array.from(new Uint8Array(d)).slice(0, 16).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 // ============================================================
 // 03/11/2026 — MESURE D'AUDIENCE SANS COOKIE (panel « 📊 Audience & clients »)
 // Cadre CNIL « mesure d'audience » : aucun cookie ni traceur dans le navigateur, finalité strictement statistique pour
@@ -111,8 +141,8 @@ function lxAudienceVue(request, url, rep, env, ctx) {
   ctx.waitUntil((async () => {
     try {
       args.p_ph = await lxAudienceEmpreinte(request);
-      // 03/11 (contre-audit) : limitation de débit par empreinte hachée (l'IP n'est plus gardée, même en mémoire)
-      if (!checkRateLimit("aud:" + (args.p_ph ? args.p_ph.slice(0, 32) : "?"), 120)) return;
+      // 03/11 (contre-audit 77e2ca4) : table de limitation à part, clé = IP hachée avec le sel du jour
+      if (!checkRateLimitAud("aud:" + (await lxAudienceCleDebit(request)), 120)) return;
       await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/lx_audience_vue`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify(args) });
       if (ann && LX_AUD_ANNUAIRE[ann[1]]) {
         await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/lx_audience_recherche`, { method: "POST", headers: _sbHeaders(env),
@@ -124,21 +154,27 @@ function lxAudienceVue(request, url, rep, env, ctx) {
 }
 // POST /api/audience/recherche {metier, ville, nb} — envoyé par recherche.html après une recherche (aucun cookie, aucun
 // identifiant) ; la base ne garde que métier connu + commune connue (sinon « autre ») + « avec / sans résultat ».
-async function handleAudienceRecherche(request, env) {
+async function handleAudienceRecherche(request, env, ctx) {
   const vide = new Response(null, { status: 204, headers: { "Cache-Control": "no-store" } });
   try {
     if (lxAudienceRefuse(request) || !env.SUPABASE_SERVICE_KEY) return vide;
     // 03/11 (contre-audit) : seulement depuis les pages de luxyra.fr (évite le gonflement des statistiques par un tiers)
     const sfs = request.headers.get("sec-fetch-site") || "", org = request.headers.get("origin") || "";
     if (!(sfs === "same-origin" || org === "https://luxyra.fr")) return vide;
-    const emp = await lxAudienceEmpreinte(request);
-    if (!checkRateLimit("audr:" + (emp ? emp.slice(0, 32) : "?"), 30)) return vide;
+    // 03/11 (contre-audit 77e2ca4) : le corps (petit) est lu tout de suite ; la réponse 204 part immédiatement et
+    // la limitation, l'appel geo.api.gouv.fr et l'écriture en base se font après (ctx.waitUntil).
     const b = await request.json().catch(() => ({}));
-    const nb = Number.isFinite(Number(b && b.nb)) ? Math.max(0, Math.min(100000, Math.floor(Number(b.nb)))) : null;
-    const ville = String((b && b.ville) || "").slice(0, 80);
-    await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/lx_audience_recherche`, { method: "POST", headers: _sbHeaders(env),
-      body: JSON.stringify(Object.assign({ p_origine: "recherche", p_metier: String((b && b.metier) || "").slice(0, 30), p_ville: ville, p_nb: nb },
-        lxAudCommuneArgs(await lxAudienceCommune(ville)))) });
+    const travail = (async () => {
+      try {
+        if (!checkRateLimitAud("audr:" + (await lxAudienceCleDebit(request)), 30)) return;
+        const nb = Number.isFinite(Number(b && b.nb)) ? Math.max(0, Math.min(100000, Math.floor(Number(b.nb)))) : null;
+        const ville = String((b && b.ville) || "").slice(0, 80);
+        await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/lx_audience_recherche`, { method: "POST", headers: _sbHeaders(env),
+          body: JSON.stringify(Object.assign({ p_origine: "recherche", p_metier: String((b && b.metier) || "").slice(0, 30), p_ville: ville, p_nb: nb },
+            lxAudCommuneArgs(await lxAudienceCommune(ville)))) });
+      } catch (_) { /* jamais bloquant */ }
+    })();
+    if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(travail); else await travail;
   } catch (_) { /* jamais bloquant */ }
   return vide;
 }
@@ -147,25 +183,27 @@ async function handleAudienceRecherche(request, env) {
 // Nom : correspondance exacte (sans accents ni casse) avec la commune la plus peuplée ; code postal : commune la plus peuplée.
 // Sans réponse dans les 2,5 s ou sans correspondance : null (la base garde alors sa règle « commune connue, sinon autre »).
 const LX_AUD_COMMUNES = new Map();
+let LX_AUD_GEO_KO_JUSQUA = 0; // 03/11 (contre-audit 77e2ca4) : service indisponible -> plus d'appel pendant 60 s
 function lxAudSlug(v) { return String(v || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""); }
 async function lxAudienceCommune(saisie) {
   const s = lxAudSlug(saisie).slice(0, 80);
   if (!s || s.length < 2) return null;
   if (LX_AUD_COMMUNES.has(s)) return LX_AUD_COMMUNES.get(s);
+  if (Date.now() < LX_AUD_GEO_KO_JUSQUA) return null;
   let res = null;
   try {
     const cp = /^[0-9]{5}$/.test(s) ? s : null;
     const q = cp ? "codePostal=" + cp : "nom=" + encodeURIComponent(s.replace(/-/g, " ")) + "&boost=population&limit=10";
     const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 2500);
-    const r = await fetch("https://geo.api.gouv.fr/communes?" + q + "&fields=nom,code,codeDepartement,population&format=json", { signal: ctl.signal });
-    clearTimeout(t);
-    if (r.ok) {
-      const l = (await r.json()) || [];
+    try {
+      const r = await fetch("https://geo.api.gouv.fr/communes?" + q + "&fields=nom,code,codeDepartement,population&format=json", { signal: ctl.signal });
+      if (!r.ok) { LX_AUD_GEO_KO_JUSQUA = Date.now() + 60000; return null; } // erreur du service : pas de mise en cache
+      const l = (await r.json()) || []; // le délai de 2,5 s couvre aussi la lecture du corps
       const ok = (Array.isArray(l) ? l : []).filter((c) => c && c.code && c.nom && c.codeDepartement && (cp || lxAudSlug(c.nom) === s))
         .sort((a, b) => (Number(b.population) || 0) - (Number(a.population) || 0));
       if (ok.length) res = { code: String(ok[0].code), nom: String(ok[0].nom).slice(0, 80), dep: String(ok[0].codeDepartement) };
-    } else { return null; } // erreur du service : pas de mise en cache
-  } catch (_) { return null; }
+    } finally { clearTimeout(t); }
+  } catch (_) { LX_AUD_GEO_KO_JUSQUA = Date.now() + 60000; return null; }
   if (LX_AUD_COMMUNES.size > 3000) LX_AUD_COMMUNES.clear();
   LX_AUD_COMMUNES.set(s, res);
   return res;
@@ -377,7 +415,7 @@ async function __wrappedApiHandler(request, url, env) {
       if (url.pathname === "/api/annuaire/signaler" && request.method === "POST") return await handleAnnuaireSignaler(request, env);
       if (url.pathname === "/api/annuaire/retrait" && request.method === "POST") return await handleAnnuaireRetrait(request, env);
       // 03/11/2026 : mesure d'audience des recherches (statistiques agrégées, sans cookie ; voir lxAudienceVue)
-      if (url.pathname === "/api/audience/recherche" && request.method === "POST") return await handleAudienceRecherche(request, env);
+      if (url.pathname === "/api/audience/recherche" && request.method === "POST") return await handleAudienceRecherche(request, env, null); // repli (normalement intercepté dans fetch() avec ctx)
       // Endpoint admin pour déclencher manuellement le job de rétention (debug/test).
       // Sécurisé par un secret bearer token dans env.RETENTION_ADMIN_TOKEN.
       // 2026-10-15 : aussi déclenchable depuis le panneau admin (session support@luxyra.fr + double authentification),
@@ -597,6 +635,8 @@ export default {
       catch (e) { console.error("vue.luxyra.fr", e); return new Response(JSON.stringify({ error: "Erreur interne" }), { status: 500, headers: { "Content-Type": "application/json" } }); }
     }
     if (_uA.hostname === "admin.luxyra.fr") return lxEntetesAdmin(await this._fetchPrincipal(request, env), _uA.pathname);
+    // 03/11/2026 (contre-audit 77e2ca4) : recherche d'audience traitée ici pour disposer de ctx (réponse 204 immédiate)
+    if (_uA.hostname === "luxyra.fr" && _uA.pathname === "/api/audience/recherche" && request.method === "POST") return await handleAudienceRecherche(request, env, ctx);
     const _rep = await this._fetchPrincipal(request, env);
     // 03/11/2026 : mesure d'audience côté serveur (après la réponse, jamais bloquante ; voir lxAudienceVue)
     try { lxAudienceVue(request, _uA, _rep, env, ctx); } catch (_) {}
