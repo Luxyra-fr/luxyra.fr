@@ -21,6 +21,12 @@ import "../lx-bon-cadeau.js";
 const RATE_LIMITS = new Map(); // key → {count, resetAt}
 function checkRateLimit(key, maxPerMinute) {
   const now = Date.now();
+  // 03/11/2026 (contre-audit audience) : table bornée — au-delà de 5 000 clés, purge des entrées expirées ;
+  // si elle reste trop grosse (flot de clés), les plus anciennes sont retirées (ordre d'insertion de la Map).
+  if (RATE_LIMITS.size > 5000) {
+    for (const [k, e] of RATE_LIMITS) { if (now > e.resetAt) RATE_LIMITS.delete(k); }
+    if (RATE_LIMITS.size > 20000) { let n = RATE_LIMITS.size - 15000; for (const k of RATE_LIMITS.keys()) { if (n-- <= 0) break; RATE_LIMITS.delete(k); } }
+  }
   const entry = RATE_LIMITS.get(key);
   if (!entry || now > entry.resetAt) {
     RATE_LIMITS.set(key, { count: 1, resetAt: now + 60000 });
@@ -44,6 +50,8 @@ const LX_AUD_BOTS = /bot|crawl|spider|slurp|preview|facebookexternalhit|embedly|
 const LX_AUD_ANNUAIRE = { "coiffeur": "coiffure", "institut-de-beaute": "esthetique", "spa-massage": "spa", "onglerie": "ongles", "extension-de-cils": "regard", "barbier": "barbier" };
 const LX_AUD_EXCLUS = new Set(["app", "app-play", "admin", "admin-twa", "proposal", "acompte", "reset-password", "clear", "bons-cadeaux-success",
   "preview-email-confirmation", "annuaire-retrait", "annuaire-retrait-confirmer", "annuaire-gerant", "404", "offline"]);
+const LX_AUD_RACINE_AUTRES = new Set(["verif-nf525", "home"]);
+const LX_AUD_RACINE_IGNOREES = new Set(["health", "robots", "sitemap", "sitemap-index", "email", "store", "fonts", "icons", "vendor", "docs", "sw", "manifest", "favicon", "unsubscribe", "desinscription"]);
 function lxAudiencePage(pathname) {
   let p = String(pathname || "/").toLowerCase().replace(/\/+$/, "").replace(/\.html?$/, "").replace(/^\/+/, "");
   if (p === "" || p === "index") return "accueil";
@@ -51,13 +59,17 @@ function lxAudiencePage(pathname) {
   if (seg[0] === "api" || seg[0] === "s" || seg[0] === "stop" || seg[0] === "admin" || seg[0] === ".well-known") return null;
   if (LX_AUD_EXCLUS.has(seg[0])) return null;
   if (seg[0] === "recherche" || LX_AUD_ANNUAIRE[seg[0]]) return seg.length <= 2 ? "recherche" : null;
-  if (/^(pro|tarifs|sans-commission|demo|a-propos|migration|nf525-attestation-generale)$/.test(seg[0]) || /^logiciel-/.test(seg[0])) return seg.length === 1 ? "pro" : null;
+  if (/^(pro|tarifs|sans-commission|nf525-attestation-generale)$/.test(seg[0]) || /^logiciel-/.test(seg[0])) return seg.length === 1 ? "pro" : null;
+  if (/^(demo|a-propos|about|migration)$/.test(seg[0])) return seg.length === 1 ? "vitrine" : null; // 03/11 : hors entonnoir « pro »
   if (seg[0] === "inscription") return "inscription";
   if (seg[0] === "blog") return "blog";
   if (/^(cgv|cgu|mentions|mentions-legales|politique-confidentialite|confidentialite|securite-rgpd|securite|rgpd|suppression-donnees|dpa)$/.test(seg[0])) return "legal";
   if (seg[0] === "compte" || seg[0] === "client") return "espace_client";
   if (seg[0] === "aide") return "aide";
   if (seg[0] === "site" || seg[0] === "bons-cadeaux") return "etablissement";
+  // 03/11 (contre-audit) : pages racine connues qui ne sont PAS des pages d'établissement
+  if (LX_AUD_RACINE_AUTRES.has(seg[0])) return "autre";
+  if (LX_AUD_RACINE_IGNOREES.has(seg[0])) return null;
   if (seg.length === 1 || (seg.length === 2 && seg[1] === "reserver")) return /^[a-z0-9-]{2,80}$/.test(seg[0]) ? "etablissement" : null;
   return "autre";
 }
@@ -92,7 +104,6 @@ function lxAudienceVue(request, url, rep, env, ctx) {
   if (lxAudienceRefuse(request)) return;
   const page = lxAudiencePage(url.pathname);
   if (!page) return;
-  if (!checkRateLimit("aud:" + (request.headers.get("cf-connecting-ip") || "?"), 120)) return;
   const ua = request.headers.get("user-agent") || "";
   const args = { p_page: page, p_source: lxAudienceSource(request.headers.get("referer") || ""),
                  p_appareil: /Mobi|Android|iPhone|iPad|iPod/i.test(ua) ? "mobile" : "ordinateur", p_ph: null };
@@ -100,10 +111,13 @@ function lxAudienceVue(request, url, rep, env, ctx) {
   ctx.waitUntil((async () => {
     try {
       args.p_ph = await lxAudienceEmpreinte(request);
+      // 03/11 (contre-audit) : limitation de débit par empreinte hachée (l'IP n'est plus gardée, même en mémoire)
+      if (!checkRateLimit("aud:" + (args.p_ph ? args.p_ph.slice(0, 32) : "?"), 120)) return;
       await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/lx_audience_vue`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify(args) });
       if (ann && LX_AUD_ANNUAIRE[ann[1]]) {
         await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/lx_audience_recherche`, { method: "POST", headers: _sbHeaders(env),
-          body: JSON.stringify({ p_origine: "annuaire", p_metier: LX_AUD_ANNUAIRE[ann[1]], p_ville: ann[2], p_nb: null }) });
+          body: JSON.stringify(Object.assign({ p_origine: "annuaire", p_metier: LX_AUD_ANNUAIRE[ann[1]], p_ville: ann[2], p_nb: null },
+            lxAudCommuneArgs(await lxAudienceCommune(ann[2])))) });
       }
     } catch (_) { /* jamais bloquant */ }
   })());
@@ -114,14 +128,49 @@ async function handleAudienceRecherche(request, env) {
   const vide = new Response(null, { status: 204, headers: { "Cache-Control": "no-store" } });
   try {
     if (lxAudienceRefuse(request) || !env.SUPABASE_SERVICE_KEY) return vide;
-    if (!checkRateLimit("audr:" + (request.headers.get("cf-connecting-ip") || "?"), 30)) return vide;
+    // 03/11 (contre-audit) : seulement depuis les pages de luxyra.fr (évite le gonflement des statistiques par un tiers)
+    const sfs = request.headers.get("sec-fetch-site") || "", org = request.headers.get("origin") || "";
+    if (!(sfs === "same-origin" || org === "https://luxyra.fr")) return vide;
+    const emp = await lxAudienceEmpreinte(request);
+    if (!checkRateLimit("audr:" + (emp ? emp.slice(0, 32) : "?"), 30)) return vide;
     const b = await request.json().catch(() => ({}));
     const nb = Number.isFinite(Number(b && b.nb)) ? Math.max(0, Math.min(100000, Math.floor(Number(b.nb)))) : null;
+    const ville = String((b && b.ville) || "").slice(0, 80);
     await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/lx_audience_recherche`, { method: "POST", headers: _sbHeaders(env),
-      body: JSON.stringify({ p_origine: "recherche", p_metier: String((b && b.metier) || "").slice(0, 30), p_ville: String((b && b.ville) || "").slice(0, 80), p_nb: nb }) });
+      body: JSON.stringify(Object.assign({ p_origine: "recherche", p_metier: String((b && b.metier) || "").slice(0, 30), p_ville: ville, p_nb: nb },
+        lxAudCommuneArgs(await lxAudienceCommune(ville)))) });
   } catch (_) { /* jamais bloquant */ }
   return vide;
 }
+// 03/11/2026 (contre-audit) : ville saisie -> commune OFFICIELLE via l'API publique de l'État geo.api.gouv.fr (base INSEE).
+// Appel fait par notre serveur (aucune donnée du visiteur transmise : seulement le nom de ville ou le code postal saisi).
+// Nom : correspondance exacte (sans accents ni casse) avec la commune la plus peuplée ; code postal : commune la plus peuplée.
+// Sans réponse dans les 2,5 s ou sans correspondance : null (la base garde alors sa règle « commune connue, sinon autre »).
+const LX_AUD_COMMUNES = new Map();
+function lxAudSlug(v) { return String(v || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""); }
+async function lxAudienceCommune(saisie) {
+  const s = lxAudSlug(saisie).slice(0, 80);
+  if (!s || s.length < 2) return null;
+  if (LX_AUD_COMMUNES.has(s)) return LX_AUD_COMMUNES.get(s);
+  let res = null;
+  try {
+    const cp = /^[0-9]{5}$/.test(s) ? s : null;
+    const q = cp ? "codePostal=" + cp : "nom=" + encodeURIComponent(s.replace(/-/g, " ")) + "&boost=population&limit=10";
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 2500);
+    const r = await fetch("https://geo.api.gouv.fr/communes?" + q + "&fields=nom,code,codeDepartement,population&format=json", { signal: ctl.signal });
+    clearTimeout(t);
+    if (r.ok) {
+      const l = (await r.json()) || [];
+      const ok = (Array.isArray(l) ? l : []).filter((c) => c && c.code && c.nom && c.codeDepartement && (cp || lxAudSlug(c.nom) === s))
+        .sort((a, b) => (Number(b.population) || 0) - (Number(a.population) || 0));
+      if (ok.length) res = { code: String(ok[0].code), nom: String(ok[0].nom).slice(0, 80), dep: String(ok[0].codeDepartement) };
+    } else { return null; } // erreur du service : pas de mise en cache
+  } catch (_) { return null; }
+  if (LX_AUD_COMMUNES.size > 3000) LX_AUD_COMMUNES.clear();
+  LX_AUD_COMMUNES.set(s, res);
+  return res;
+}
+function lxAudCommuneArgs(c) { return c ? { p_commune_code: c.code, p_commune_nom: c.nom, p_commune_dep: c.dep } : {}; }
 
 const CONFIG = {
   SUPABASE_URL: "https://kxdgjtvrkwugbifgppai.supabase.co",
