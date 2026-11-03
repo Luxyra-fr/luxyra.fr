@@ -7210,6 +7210,8 @@ async function handleClientRdvs(request, env) {
           // 2026-10-13 : pour « Reprendre ce RDV », l'agenda et l'itinéraire (adresse masquée pour le domicile)
           if (d.salons) { d.salon_slug = d.salons.slug || ""; if (String(d.salons.mode_activite || "") !== "domicile") d.salon_adresse = [d.salons.adresse, d.salons.cp, d.salons.ville].filter(Boolean).join(" "); }
           delete d.salons;
+          // 04/11/2026 (contre-audit 0fe5d2a, I-2) : jamais de données internes de l'établissement ni de jetons de paiement vers l'espace client
+          delete d.salon_edit; delete d.stripe_token; delete d.payment_intent_id; delete d.refund_error;
           seenSlot.add(_slotKey(d.salon_id, d.date_rdv, d.heure_rdv));
           rdvs.push(d);
         }
@@ -8510,6 +8512,14 @@ function lxRdvOnlinePhases(svcPh, serviceId, items, salonEdit, duree, lieu) {
   } catch (_e) { return null; }
 }
 
+// 04/11/2026 : prestations d'une réservation = service principal + lignes (sId / service_id) — même règle que lx_prive.resa_sids
+function lxResaSids(serviceId, items) {
+  const out = new Set();
+  const ent = (v) => { if (v === null || v === undefined || v === "") return null; const n = Number(v); return Number.isInteger(n) ? n : null; };
+  const s0 = ent(serviceId); if (s0 !== null) out.add(s0);
+  if (Array.isArray(items)) for (const it of items) { if (it && typeof it === "object") { const s = ent(it.sId != null ? it.sId : it.service_id); if (s !== null) out.add(s); } }
+  return [...out].sort((a, b) => a - b);
+}
 async function handleSalonAvailability(request, env) {
   try {
     const { salon_id, date_from, date_to } = await request.json();
@@ -8539,7 +8549,7 @@ async function handleSalonAvailability(request, env) {
     const _sansDuree = (a) => a && a.from_caisse === true && !(Array.isArray(a.a_phases) && a.a_phases.length) && !a.service_id
       && !(Array.isArray(a.items) && a.items.some((it) => it && (it.sId || it.isForfait)));
     const appointments = Array.isArray(appointmentsBrut)
-      ? appointmentsBrut.filter((a) => !_sansDuree(a)).map(({ from_caisse, items, ...r }) => r)
+      ? appointmentsBrut.filter((a) => !_sansDuree(a)).map(({ from_caisse, items, ...r }) => (r.collab_id == null ? { ...r, sids: lxResaSids(r.service_id, items) } : r))
       : appointmentsBrut;
     // 2. Online RDV (may also be RLS-protected)
     // FIX 2026-05-12 : on récupère aussi created_at pour permettre au client de
@@ -8563,7 +8573,9 @@ async function handleSalonAvailability(request, env) {
       }
       rdvOnlineBrut = rdvOnlineLu.map(({ service_id, items, salon_edit, lieu, ...r }) => {
         const ph = lxRdvOnlinePhases(_svcPh, service_id, items, salon_edit, r.duree_minutes, lieu);
-        return ph ? { ...r, a_phases: ph } : r;
+        // 04/11/2026 : prestations (identifiants seuls) des réservations sans collaborateur, pour l'affectation aux habilités (même règle que la base)
+        const r2 = r.collaborateur_id == null ? { ...r, sids: lxResaSids(service_id, items) } : r;
+        return ph ? { ...r2, a_phases: ph } : r2;
       });
     }
     // 2026-10-14 : un paiement en cours (pending_payment) bloque le créneau 35 min (session Stripe = 31 min,

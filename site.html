@@ -1356,7 +1356,7 @@ async function loadSalon(){
           }
           return true;
         }).forEach(function(r){
-          RDV_EXISTING.push({date_rdv:r.date_rdv,heure:r.heure_rdv?r.heure_rdv.slice(0,5):null,collab_id:r.collaborateur_id,status:"conf",a_phases:lxPhasesResaEnLigne(r)});
+          RDV_EXISTING.push({date_rdv:r.date_rdv,heure:r.heure_rdv?r.heure_rdv.slice(0,5):null,collab_id:r.collaborateur_id,status:"conf",a_phases:lxPhasesResaEnLigne(r),sids:Array.isArray(r.sids)?r.sids:[]}); // 04/11 : sids pour l'affectation
         });
       }
     }catch(e){console.log("Availability load error:",e);}
@@ -3544,20 +3544,43 @@ function _lxNbSansCollab(date,time,duration){
   }
   return n;
 }
+// 04/11/2026 : réservations sans collaborateur qui chevauchent le créneau, avec leurs prestations (sids), pauses libres
+function _lxSansCollabChev(date,time,duration){
+  var s0=toMin(time), e0=s0+duration, out=[];
+  for(var i=0;i<RDV_EXISTING.length;i++){
+    var r=RDV_EXISTING[i]; if(r.date_rdv!==date||!r.heure||!_lxRdvSansCollab(r)) continue;
+    var st=toMin(r.heure), d=0, chev=false; (r.a_phases||[]).forEach(function(p){ var pd=(p&&p.d)||0; if(p&&p.t!=="p"&&s0<st+d+pd&&e0>st+d) chev=true; d+=pd; });
+    if(!d){ d=30; chev=(s0<st+d && e0>st); }
+    if(chev) out.push({sids:Array.isArray(r.sids)?r.sids:[]});
+  }
+  return out;
+}
+// 04/11/2026 : chaque demande (liste d'identifiants admissibles) reçoit un collaborateur distinct — même règle que lx_prive.affectation_possible
+function _lxAffectationPossible(dem,i,pris){
+  i=i||0; pris=pris||[];
+  if(i>=dem.length) return true;
+  for(var k=0;k<dem[i].length;k++){ var c=dem[i][k]; if(pris.indexOf(c)<0 && _lxAffectationPossible(dem,i+1,pris.concat([c]))) return true; }
+  return false;
+}
 function isSlotTaken(date,time,duration,collabId){
   var activeCollabs=_lxCollabsActifsEligibles(); // 2026-10-14 : seulement les collaborateurs habilités pour la prestation
   if(!activeCollabs.length && _lxAucunHabilite()) return true; // 2026-10-17 audit réglages (#6) : personne d'habilité -> aucun créneau
-  // 2026-10-14 audit : capacité — chaque réservation sans collaborateur qui chevauche consomme un collaborateur libre
+  // 04/11/2026 : capacité par AFFECTATION — chaque réservation sans collaborateur qui chevauche reçoit un collaborateur
+  // libre habilité pour SES prestations ; la nouvelle (sans préférence) un collaborateur habilité pour la sienne.
+  // Sans compétences, identique à l'ancienne règle des totaux. Même règle que la base (lx_prive.rdv_dispo_conflit).
   if(activeCollabs.length){
-    var nU=_lxNbSansCollab(date,time,duration), libres=0;
-    if(collabId){
-      if(isSpecificCollabBusy(date,time,duration,collabId,true)) return true;
-      if(!nU) return false;
-      activeCollabs.forEach(function(c){ if(c.id!==collabId && !isSpecificCollabBusy(date,time,duration,c.id,true)) libres++; });
-      return libres<nU;
-    }
-    activeCollabs.forEach(function(c){ if(!isSpecificCollabBusy(date,time,duration,c.id,true)) libres++; });
-    return libres<=nU;
+    if(collabId && isSpecificCollabBusy(date,time,duration,collabId,true)) return true;
+    var refs=_lxSansCollabChev(date,time,duration);
+    if(collabId && !refs.length) return false;
+    var libres=_lxCollabsActifs().filter(function(c){ return !isSpecificCollabBusy(date,time,duration,c.id,true); });
+    var eligIds=activeCollabs.map(function(c){ return c.id; });
+    var dem=refs.map(function(r){ return libres.filter(function(c){ return c.id!==collabId && r.sids.every(function(sid){ return _lxCollabHabilite(c,sid); }); }).map(function(c){ return c.id; }); });
+    if(!collabId) dem.push(libres.filter(function(c){ return eligIds.indexOf(c.id)>=0; }).map(function(c){ return c.id; }));
+    if(!dem.length) return false;
+    if(dem.length>libres.length) return true;
+    if(dem.length>10) return dem.length>libres.length-(collabId?1:0);
+    dem.sort(function(a,b){ return a.length-b.length || (JSON.stringify(a)<JSON.stringify(b)?-1:(JSON.stringify(a)>JSON.stringify(b)?1:0)); });
+    return !_lxAffectationPossible(dem);
   }
   // Mode collab spécifique : check ce collab uniquement
   if(collabId) return isSpecificCollabBusy(date,time,duration,collabId);
