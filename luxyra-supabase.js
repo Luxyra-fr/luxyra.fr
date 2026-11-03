@@ -4,7 +4,7 @@
 // BUILD: 20260426-04 — fix CSS options dropdown lisibles
 window.__LUXYRA_BUILD = "20260426-04";
 // 2026-10-14 : version de la couche donnees, comparee par app.html (evite un melange ancienne/nouvelle version via le cache)
-window.LX_DATA_VERSION = "20261103-6"; // 03/11 (-6) : contrat, empreinte contrôlée par le serveur + texte signé conservé (couche données inchangée) ; 03/11 (-5) : 03/11 (-5) : signature du contrat dans l'appli (bandeau propriétaire, couche données inchangée) ; 03/11 (-4) : reprise d abonnement après suppression du Kbis (5 ans) = nouveau délai de 15 jours ; 03/11 (-3) : copie d identité supprimée comptée comme reçue seulement si identité vérifiée (contre-audit RGPD I2) ;  03/11 (-2) : pièce d'identité supprimée après vérification (RGPD) = justificatif reçu, jamais de blocage ;  03/11 (-1) : glisser-déposer tactile protégé du rafraîchissement, note « confirmation déjà envoyée automatiquement », retour de date (force). 02/11 (-12) : case rétractation sans paiement + rappel dans les e-mails de confirmation, planning (case avant la pause, Encaissé direct en multi-jours, collaborateurs partis, retour de date) ; (-11) : planning, vue plusieurs jours = mêmes RDV que la vue 1 jour (encaissements directs, anciens collaborateurs) + case de grille dans une pause = heure exacte de la pause (couche données inchangée). 02/11 (-10) : planning, pause des forfaits touchable aussi en vue plusieurs jours (couche données inchangée). 02/11 (-9) : conformité (slugs cgu/dpa réservés, message refus offres SMS, commentaires anonymisés). 02/11 (-8) : planning, retour après création client depuis Nouveau RDV sur le bon collaborateur (contre-audit I1), libellés échappés (couche données inchangée). // 02/11 (-7) : 02/11 (-6) : planning, heures de chaque étape d un forfait + pause touchable (couche données inchangée). // 02/11 (-4) : réservations en ligne déjà au planning recalculées en entier au chargement (si étapes automatiques). // 02/11 (-3) : planning, réservation en ligne multi-prestations reprise en entier (couche données inchangée). // 02/11 (-2) : médiateur de la consommation (config_json.mediateur) relu. // 02/11 (-1) : offres refusées par le client (compte en ligne) lues (smsPub / emPub) et exclues des envois publicitaires. // 01/11 (-2) : annulation refusée par le serveur relue depuis meta (lxAnnulRefusee), lien de modification. // 01/11 (-1) : champs saisis par les clients sans < > " (audit global, lot S1). // 31/10 (-14) : vue établissement, garde-fou de navigation (window.open, liens et formulaires externes bloqués). // 31/10 (-13) : vue établissement, secrets jamais lus (vues lxv_*), opérateurs non chargés, ancienne vue luxyra.fr supprimée. // 31/10 (-12) : vue établissement sur vue.luxyra.fr (jeton de lecture 15 min, relais /sb, plus jamais la session admin). // 31/10 (-11) : vue admin, /api/stripe/fees retiré de la liste de lecture (refusé par le serveur). // 31/10 (-10) : factures Luxyra rendues par le serveur (FR complet). // 31/10 (-9) : e-mails en série espacés + nouvelle tentative, limite du jour affichée (couche données inchangée). Précédent -8 : // 31/10 (-8) : bons cadeaux, palettes + e-carte en caisse + formats A4. // 31/10 (-7) : tarif Fondateur sur l écran fin d essai. // 31/10 (-6) : bons cadeaux, échappement des champs acheteur (H1) + réserves R1-R7. // 2026-10-31 (-5) : modele des bons cadeaux (config_json.bonModele) lu au chargement. Precedent : "20261031-4"
+window.LX_DATA_VERSION = "20261103-7"; // 03/11 (-7) : audit A/B — RDV jamais ressuscités, consentements, fidélité source unique, panier persistant ; (-6) : contrat, empreinte contrôlée par le serveur + texte signé conservé (couche données inchangée) ; 03/11 (-5) : 03/11 (-5) : signature du contrat dans l'appli (bandeau propriétaire, couche données inchangée) ; 03/11 (-4) : reprise d abonnement après suppression du Kbis (5 ans) = nouveau délai de 15 jours ; 03/11 (-3) : copie d identité supprimée comptée comme reçue seulement si identité vérifiée (contre-audit RGPD I2) ;  03/11 (-2) : pièce d'identité supprimée après vérification (RGPD) = justificatif reçu, jamais de blocage ;  03/11 (-1) : glisser-déposer tactile protégé du rafraîchissement, note « confirmation déjà envoyée automatiquement », retour de date (force). 02/11 (-12) : case rétractation sans paiement + rappel dans les e-mails de confirmation, planning (case avant la pause, Encaissé direct en multi-jours, collaborateurs partis, retour de date) ; (-11) : planning, vue plusieurs jours = mêmes RDV que la vue 1 jour (encaissements directs, anciens collaborateurs) + case de grille dans une pause = heure exacte de la pause (couche données inchangée). 02/11 (-10) : planning, pause des forfaits touchable aussi en vue plusieurs jours (couche données inchangée). 02/11 (-9) : conformité (slugs cgu/dpa réservés, message refus offres SMS, commentaires anonymisés). 02/11 (-8) : planning, retour après création client depuis Nouveau RDV sur le bon collaborateur (contre-audit I1), libellés échappés (couche données inchangée). // 02/11 (-7) : 02/11 (-6) : planning, heures de chaque étape d un forfait + pause touchable (couche données inchangée). // 02/11 (-4) : réservations en ligne déjà au planning recalculées en entier au chargement (si étapes automatiques). // 02/11 (-3) : planning, réservation en ligne multi-prestations reprise en entier (couche données inchangée). // 02/11 (-2) : médiateur de la consommation (config_json.mediateur) relu. // 02/11 (-1) : offres refusées par le client (compte en ligne) lues (smsPub / emPub) et exclues des envois publicitaires. // 01/11 (-2) : annulation refusée par le serveur relue depuis meta (lxAnnulRefusee), lien de modification. // 01/11 (-1) : champs saisis par les clients sans < > " (audit global, lot S1). // 31/10 (-14) : vue établissement, garde-fou de navigation (window.open, liens et formulaires externes bloqués). // 31/10 (-13) : vue établissement, secrets jamais lus (vues lxv_*), opérateurs non chargés, ancienne vue luxyra.fr supprimée. // 31/10 (-12) : vue établissement sur vue.luxyra.fr (jeton de lecture 15 min, relais /sb, plus jamais la session admin). // 31/10 (-11) : vue admin, /api/stripe/fees retiré de la liste de lecture (refusé par le serveur). // 31/10 (-10) : factures Luxyra rendues par le serveur (FR complet). // 31/10 (-9) : e-mails en série espacés + nouvelle tentative, limite du jour affichée (couche données inchangée). Précédent -8 : // 31/10 (-8) : bons cadeaux, palettes + e-carte en caisse + formats A4. // 31/10 (-7) : tarif Fondateur sur l écran fin d essai. // 31/10 (-6) : bons cadeaux, échappement des champs acheteur (H1) + réserves R1-R7. // 2026-10-31 (-5) : modele des bons cadeaux (config_json.bonModele) lu au chargement. Precedent : "20261031-4"
 // (historique) "20261028-3"; // 2026-10-28 (-3, Luxyra 6.8.1 : version de l'application transmise dans chaque ticket (raw_data.lxVersion, contrôlée par le serveur), série de n° imprimés propre au serveur (meta.tkNumServeur), copies serveur jamais réécrites, refus LX_APP_OBSOLETE / LX_TKNUM_SERIE_SERVEUR / LX_CC_DEJA_EN_CAISSE)
 // (historique) "20261028-2"; // 2026-10-28 (-2, Luxyra 6.8.0 : recettes en ligne enregistrées en caisse par le serveur — champs meta serveur / recetteKey…, refus définitif LX_CC_DEJA_EN_CAISSE)
 // (historique) "20261028-1"; // 2026-10-28 (-1 : bons cadeaux à usage unique / multiple — qualification TVA du bon (usage_tva, qualif_tva, repli historique), ticket v2 HT/TVA par ventilation de l'app, taux_tva 0 pour une vente de BUM seule, bonsUtil conservé dans appointments.meta) ; 2026-10-27 (-3 : rapport du mois en vrai PDF + correctifs d’exports comptables, app.html seulement ; -2 : envoi au comptable — FEC + pack Excel + rapport par défaut, ZIP en option, app.html seulement ; -1 : envoi automatique au comptable — changement dans app.html seulement, couche données inchangée) ; 2026-10-17 (-2 : audit réglages — taux TVA produits brut (tvaProduitsColonne), familles produit sans produit (pcats), ancien saveSalonConfig renommé ; -1 : retour / remboursement partiel — champs du ticket de retour conservés dans appointments.meta, refus définitif LX_RETOUR_REFUSE jamais rejoué, ticket de retour refusé au rejeu écarté de la caisse) ; 2026-10-16 (-1 : incident Z n°128 — 1 réservation en ligne = 1 entrée, Z refusée par la base si différente du journal, annotations correctives) ; 2026-10-15 (-3 : multi-appareils, champs modifiés seulement + lignes supprimées ailleurs jamais recréées ; -2 : plus aucun enregistrement muet, lxEcritureVerifiee ; -1 : « Prix à partir de » + sur devis sur les forfaits) ; 2026-10-14 (-8 : correctifs revue d intégration) intégration des audits (données, sécurité, planning, clients, caisse, site, réglages)
@@ -546,6 +546,16 @@ async function _walResync(walId, force){
         var _w = window._walGetAll(), _e = null;
         for (var q = 0; q < _w.length; q++) { if (_w[q].id === walId) { _e = _w[q]; break; } }
         if (!_e || _e.synced) return { ok: true, deja: true };
+        // 03/11/2026 (audit A, I8) : une entrée PLUS RÉCENTE de la même fiche existe encore en file -> elle contient tout
+        // (copie complète, même base de fusion) : celle-ci n'est pas rejouée (sinon l'écart de points compté une fois par entrée).
+        try {
+          for (var q2 = 0; q2 < _w.length; q2++) {
+            var _o = _w[q2];
+            if (_o && _o.id !== walId && !_o.synced && _o.type === "client" && _o.data && d && _o.data.id === d.id && String(_o.ts || "") > String(_e.ts || "")) {
+              return { ok: true, deja: true, remplacee: true };
+            }
+          }
+        } catch (_eRp) {}
         var _pb = window._walBypass, _pp; window._walBypass = true;
         try { _pp = _saveClientUneFois(d); } finally { window._walBypass = _pb; } // lu de façon synchrone au début de la sauvegarde
         return _pp;
@@ -1798,7 +1808,11 @@ function lxFusionnerCollabs(rows) {
       out.push(c); // pas encore enregistré
     });
     window._lxCollabIdsServeur = vus;
+    // 03/11/2026 (audit A, I5) : la page Équipe repère les collaborateurs par leur POSITION dans la liste. Si la liste a
+    // changé (collaborateur ajouté / supprimé ailleurs), la page ouverte est redessinée pour que chaque champ vise le bon.
+    var _avantIds = cur.map(function(c){ return c && c.id; }).join("|"), _apresIds = out.map(function(c){ return c && c.id; }).join("|");
     T = out;
+    if (_avantIds !== _apresIds) { try { if (typeof window._lxRedessinerSiReglages === "function") window._lxRedessinerSiReglages(); } catch (_eRd) {} }
     return true;
   } catch(e) { console.warn("[sync équipe] fusion", e); return false; }
 }
@@ -1899,7 +1913,9 @@ function lxSaveSalonColumns(patch) {
       var v = patch[k];
       if (k === "__silencieux") continue;
       if (k === "siret" && !String(v || "").trim()) continue; // 2026-10-13 : jamais de SIRET vide
-      if (v === undefined || v === null) continue;      // jamais de NULL par omission
+      if (v === undefined) continue;
+      // 03/11/2026 (audit A, mineur) : NULL volontaire autorisé seulement pour les champs facultatifs qu'on peut effacer
+      if (v === null && ["capital_social", "taux_tva_produits", "rcs_ville", "site_web", "note_ticket", "sous_titre", "gerant_qualite"].indexOf(k) < 0) continue; // jamais de NULL par omission
       if (typeof v === "number" && !isFinite(v)) continue; // jamais de NaN
       data[k] = v;
     }
@@ -1909,6 +1925,7 @@ function lxSaveSalonColumns(patch) {
       return Promise.resolve({ ok:false, offline:true, error:{ message:"hors ligne" } });
     }
     return _sb.from("salons").update(data).eq("id", _salonId).select("id").then(function(res){
+      try { if (res && !res.error) window._lxColsRebase = true; } catch (_eRb) {} // 03/11/2026 (I3) : propre modification -> pas d'alerte « autre appareil »
       if (res && res.error) {
         console.warn("lxSaveSalonColumns:", res.error.message);
         // 2026-10-13 : plus jamais d'échec silencieux d'un réglage (l'utilisateur croyait avoir enregistré)
@@ -2439,19 +2456,10 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
     }
   } catch(e) { console.warn("[loadSalonData] clients skipped", e); }
 
-  // 5b. Sync fidelite points from fidelite_client (source of truth)
-  try {
-    var fidRes = await _sb.from("fidelite_client").select("client_luxyra_id,points").eq("salon_id", _salonId);
-    if (fidRes.data) {
-      fidRes.data.forEach(function(f) {
-        for (var ci = 0; ci < CL.length; ci++) {
-          if (CL[ci].em && CL[ci].em === f.client_luxyra_id) {
-            CL[ci].fid = f.points || 0;
-          }
-        }
-      });
-    }
-  } catch(e) {}
+  // 5b. 03/11/2026 (audit A, B3) : plus de remplacement par fidelite_client. Source unique = clients.points_fidelite ;
+  // fidelite_client n'est qu'un miroir (lecture du compte client), aligné par le déclencheur serveur
+  // trg_clients_fidelite_miroir. Avant : la valeur du miroir remplaçait celle de la fiche sans recaler la référence de
+  // synchronisation -> l'écart était rejoué comme un compteur à la sauvegarde suivante (points comptés 2 fois ou perdus).
 
   // 6. Charger rendez-vous/tickets → AP[]
   try {
@@ -2560,7 +2568,7 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
             pr: r.svcPrix,
             st: r.status === "confirmed" ? "conf" : "conf",
             items: aptItems,
-            comment: "RDV EN LIGNE - " + r.nom + (r.prenom ? " " + r.prenom : "") + " - " + r.tel + (r.message ? " - " + r.message : "") + (_oNeed ? " \u2014 SANS PR\u00c9F\u00c9RENCE (\u00e0 assigner)" : ""),
+            comment: (r.salonEdit && typeof r.salonEdit.comment === "string") ? r.salonEdit.comment : "RDV EN LIGNE - " + r.nom + (r.prenom ? " " + r.prenom : "") + " - " + r.tel + (r.message ? " - " + r.message : "") + (_oNeed ? " \u2014 SANS PR\u00c9F\u00c9RENCE (\u00e0 assigner)" : ""),
             aPhases: phases,
             isOnline: true,
             onlineStatus: r.status,
@@ -3416,8 +3424,11 @@ async function _saveAppointmentUneFois(appt) {
     // sinon tout revenait au catalogue au rechargement. Le nom vu par le client liste les ajouts.
     try {
       var _seItems = (Array.isArray(appt.items) ? appt.items : []).filter(function (x) { return x && !x.isAcompteData; });
-      if ((Array.isArray(appt.aPhases) && appt.aPhases.length) || _seItems.length) {
-        onlineData.salon_edit = { phases: (Array.isArray(appt.aPhases) && appt.aPhases.length) ? appt.aPhases : null, items: _seItems, at: new Date().toISOString() };
+      if ((Array.isArray(appt.aPhases) && appt.aPhases.length) || _seItems.length || typeof appt.comment === "string") {
+        var _seAvant = (Array.isArray(appt.aPhases) && appt.aPhases.length) || _seItems.length; // comportement d'avant (phases ou lignes)
+        onlineData.salon_edit = { phases: (Array.isArray(appt.aPhases) && appt.aPhases.length) ? appt.aPhases : null, at: new Date().toISOString() };
+        if (_seAvant) onlineData.salon_edit.items = _seItems; // 03/11 : un salon_edit « commentaire seul » ne vide jamais les lignes
+        if (typeof appt.comment === "string") onlineData.salon_edit.comment = appt.comment.slice(0, 2000); // 03/11/2026 (audit A, I2) : commentaire du salon conservé
       }
       if (onlineData.service_nom) {
         var _ajouts = [];
@@ -3577,7 +3588,27 @@ async function _saveAppointmentUneFois(appt) {
 
   _ensureUuidId(appt);
   data.id = appt.id;
+  // 03/11/2026 (audit A, B4) : RDV DÉJÀ VU EN BASE (non encaissé) -> contrôle avant l'upsert. Un appareil resté ouvert
+  // ne doit ni RESSUSCITER un RDV supprimé ailleurs, ni « désannuler » un RDV annulé ailleurs (cancelled true -> false).
+  if (!(appt.st === "done" || appt.tkNum || appt.hash) && window._lxApVusEnBase && window._lxApVusEnBase[appt.id]) {
+    try {
+      var _curA = await _sb.from("appointments").select("id,cancelled,cancel_reason").eq("id", appt.id).eq("salon_id", _salonId).maybeSingle();
+      if (!_curA.error && !_curA.data) {
+        var _sessA = null; try { _sessA = (await _sb.auth.getSession()).data.session; } catch (_eSa) {}
+        if (_sessA) {
+          try { if (typeof window.lxRdvSupprimeAilleurs === "function") window.lxRdvSupprimeAilleurs(appt.id); else lxRdvMarquerSupprime(appt.id); } catch (_eSup) {}
+          try { if (typeof toast === "function") toast("Ce rendez-vous a été supprimé sur un autre appareil : modification non enregistrée.", "warning"); } catch (_eT) {}
+          return { ok: false, permanent: true, supprime: true };
+        }
+      } else if (!_curA.error && _curA.data && _curA.data.cancelled === true && !appt.cancelled) {
+        data.cancelled = true; delete data.cancel_reason; appt.cancelled = true;
+        if (!appt.cancelReason) appt.cancelReason = _curA.data.cancel_reason || "";
+        try { if (typeof toast === "function") toast("Ce rendez-vous a été annulé sur un autre appareil : il reste annulé.", "warning"); } catch (_eT2) {}
+      }
+    } catch (_eChk) {}
+  }
   var r = await _sb.from("appointments").upsert(data).select();
+  if (!r.error) { try { if (typeof _lxApVu === "function") _lxApVu(appt.id); } catch (_eV) {} }
   if (r.error && data.meta && _lxErreurColonneMeta(r.error)) {
     // 2026-10-14 (NF525) : colonne meta pas encore créée en base -> on continue sans elle (mémorisé pour la session)
     window._lxApptMetaAbsent = true; delete data.meta;
@@ -4857,6 +4888,7 @@ async function _lxSaveSalonConfigAncienInutilise() {
   if(!String(data.siret||"").trim()) delete data.siret; // 2026-10-13 : jamais de SIRET vide (refusé -> tout l'enregistrement échouait)
   var r=await _sb.from("salons").update(data).eq("id", _salonId);
   if(r&&r.error){delete data.config_json;await _sb.from("salons").update(data).eq("id", _salonId);}
+  window._lxColsRebase = true; // 03/11/2026 (I3) : propre modification -> pas d'alerte « autre appareil »
 }
 
 // Supprime un service en DB. Vérifie le NOMBRE DE ROWS supprimées —
@@ -4932,7 +4964,7 @@ function _lxSvcPayload(s) {
     show_site: s.showSite !== false, book_online: s.bookOnline !== false,
     prix_sur_devis: s.devis === true // 2026-10-13 : prestation sur devis (prix saisi à l'encaissement)
   };
-  if (window._lxColsCat.svcApd || s.apartir === true) o.prix_a_partir_de = (s.apartir === true && s.devis !== true); // 2026-10-15 : prix minimum
+  if (window._lxColsCat.svcApd || s.apartir === true || s._lxApdVu) { o.prix_a_partir_de = (s.apartir === true && s.devis !== true); if (s.apartir === true) { s._lxApdVu = true; window._lxColsCat.svcApd = true; } } // 2026-10-15 : prix minimum ; 03/11 (I6) : décocher possible même si aucun service au chargement
   return o;
 }
 function _lxForfPayload(f) {
@@ -4945,7 +4977,7 @@ function _lxForfPayload(f) {
     show_site: f.showSite !== false, book_online: f.bookOnline !== false
   };
   if (window._lxColsCat.forfDevis || f.devis === true) o.prix_sur_devis = (f.devis === true); // 2026-10-15
-  if (window._lxColsCat.forfApd || f.apartir === true) o.prix_a_partir_de = (f.apartir === true && f.devis !== true);
+  if (window._lxColsCat.forfApd || f.apartir === true || f._lxApdVu) { o.prix_a_partir_de = (f.apartir === true && f.devis !== true); if (f.apartir === true) { f._lxApdVu = true; window._lxColsCat.forfApd = true; } } // 03/11 (I6)
   return o;
 }
 function _lxSig(o) { try { return JSON.stringify(o); } catch(_e) { return ""; } }
