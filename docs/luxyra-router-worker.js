@@ -4543,8 +4543,9 @@ async function lxConfAutoEnvoyer(env, rdvId, opts) {
   // paiement Stripe : laisse le temps à un ancien parcours « sur mesure » (v1) de rattacher sa demande avant de décider
   if (r.payment_intent_id && !opts.sansAttente) { await new Promise((ok) => setTimeout(ok, 3000)); r = (await lire()) || r; }
   if (r.status !== "confirmed") return { ok: true, ignore: "statut " + r.status };
-  // 03/11/2026 : domicile = toujours validé par le pro (qui envoie son propre message) ; seul l'acompte payé APRÈS
-  // acceptation (acompte.html) déclenche cette confirmation. Un domicile « confirmé » sans paiement est ignoré.
+  // 03/11/2026 : domicile = toujours validé par le pro, dont l'e-mail d'acceptation (app : _lxMessageCliente +
+  // lxTexteRetractConfirm) contient déjà le rappel L221-13. La base ne déclenche jamais cette confirmation pour un
+  // domicile (insertion forcée en attente, déclencheur limité à « attente de paiement -> confirmé ») : garde-fou seul.
   if (String(r.lieu || "salon") === "domicile" && r.acompte_paye !== true) return { ok: true, ignore: "domicile sans paiement" };
   if (String(r.date_rdv || "") < lxParisAujourdhui()) return { ok: true, ignore: "rdv passé" };
   const email = String(r.client_email || "").trim();
@@ -4577,6 +4578,12 @@ async function lxConfAutoEnvoyer(env, rdvId, opts) {
   try { envoi = await brevoSendEmail(env, { to: email, toName, senderName: String(salon.nom || "Luxyra").slice(0, 70), replyTo: salon.email || undefined, subject: m.sujet, htmlContent: m.html, textContent: m.texte }); }
   catch (e) { envoi = { code: "exception", message: String((e && e.message) || e) }; }
   if (envoi && envoi.messageId) return { ok: true, email: "envoye" };
+  // 03/11/2026 (contre-audit) : verrou libéré SEULEMENT sur un vrai refus de Brevo (réponse avec un code d'erreur).
+  // Exception réseau / réponse illisible : l'e-mail a pu partir -> verrou gardé (pas de doublon par le rattrapage).
+  if (!envoi || envoi.code === "exception" || !envoi.code) {
+    await reportWorkerError(env, "worker:confirmation-auto", new Error("E-mail de confirmation automatique : réponse Brevo incertaine (verrou gardé)"), { rdv_online_id: r.id, reponse: JSON.stringify(envoi || {}).slice(0, 200) }, "warning");
+    return { ok: false, email: "incertain" };
+  }
   await lxEmailLiberer(env, resa.cle);
   await reportWorkerError(env, "worker:confirmation-auto", new Error("E-mail de confirmation automatique refusé par Brevo"), { rdv_online_id: r.id, reponse: JSON.stringify(envoi || {}).slice(0, 200) }, "warning");
   return { ok: false, email: "echec" };
