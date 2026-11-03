@@ -1354,7 +1354,7 @@ async function handleWebhook(request, env) {
         // et si CE salon est un parrain qui vient de s'abonner, ses mois offerts en attente sont appliqués.
         if (Number(data.amount_paid || 0) > 0) {
           // 2026-10-10 : date du 1er paiement (départ des 15 jours pour fournir les justificatifs)
-          try { const _sa = await supabaseGet(env, salonId); if (_sa && !_sa.abonne_depuis) await supabaseUpdate(env, salonId, { abonne_depuis: new Date().toISOString() }); } catch (_) {}
+          try { const _sa = await supabaseGet(env, salonId); if (_sa && (!_sa.abonne_depuis || (!_sa.documents_kbis && _sa.documents_kbis_supprime_le && new Date(_sa.abonne_depuis) < new Date(_sa.documents_kbis_supprime_le)))) await supabaseUpdate(env, salonId, { abonne_depuis: new Date().toISOString() }); } catch (_) {} // 03/11 : reprise après suppression du Kbis (5 ans) -> nouveau départ des 15 jours
           try { await lxParrainageRecompenser(env, salonId); } catch (e) { console.error("parrainage:", e?.message || e); }
         }
         try { await lxParrainageAppliquerEnAttente(env, salonId); } catch (e) { console.error("parrainage attente:", e?.message || e); }

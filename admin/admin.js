@@ -544,7 +544,7 @@ async function loadData(){
           gerantNom:s.gerant_nom||"",gerantPrenom:s.gerant_prenom||"",
           adresse:s.adresse||"",cp:s.cp||"",formeJur:s.forme_juridique||"",
           verif:s.verification_status||"pending",
-          docKbis:s.documents_kbis||"",docId:s.documents_id||"",docIdVerso:s.documents_id_verso||"",docIdSupprimeLe:s.documents_id_supprime_le||"",
+          docKbis:s.documents_kbis||"",docId:s.documents_id||"",docIdVerso:s.documents_id_verso||"",docIdSupprimeLe:s.documents_id_supprime_le||"",docKbisSupprimeLe:s.documents_kbis_supprime_le||"",
           documents_locked:!!s.documents_locked,
           verifiedAt:s.verified_at,notesAdmin:s.notes_admin||"",
           userId:s.user_id||"",
@@ -3639,7 +3639,7 @@ function openD(id){
 
   // DOCUMENTS
   h+='<div class="dp-section"><div class="dp-label">\ud83d\udcc4 Documents</div>';
-  h+='<div class="dp-field"><span class="k">Kbis / INSEE</span><span class="v">'+(s.docKbis?'<a href="#" data-lx-click="lxOuvrirDoc(\''+saJs(s.docKbis)+'\');return false" style="color:var(--green);font-weight:700">\u2705 Re\u00e7u \u2014 Voir / T\u00e9l\u00e9charger \u2197</a>':'<span style="color:var(--orange)">\u23f3 En attente</span>')+'</span></div>';
+  h+='<div class="dp-field"><span class="k">Kbis / INSEE</span><span class="v">'+(s.docKbis?'<a href="#" data-lx-click="lxOuvrirDoc(\''+saJs(s.docKbis)+'\');return false" style="color:var(--green);font-weight:700">\u2705 Re\u00e7u \u2014 Voir / T\u00e9l\u00e9charger \u2197</a>':(s.docKbisSupprimeLe?'<span style="color:var(--text2)">\ud83d\uddd1 Kbis supprim\u00e9 (5 ans apr\u00e8s la fin, le '+saEsc(fmtD(s.docKbisSupprimeLe))+')</span>':'<span style="color:var(--orange)">\u23f3 En attente</span>'))+'</span></div>';
   h+='<div class="dp-field"><span class="k">Pi\u00e8ce d\u2019identit\u00e9 (recto)</span><span class="v">'+(s.docId?'<a href="#" data-lx-click="lxOuvrirDoc(\''+saJs(s.docId)+'\');return false" style="color:var(--green);font-weight:700">\u2705 Re\u00e7u \u2014 Voir \u2197</a>':(s.docIdSupprimeLe?'<span style="color:var(--text2)">\ud83d\uddd1 Supprim\u00e9e apr\u00e8s v\u00e9rification ('+saEsc(fmtD(s.docIdSupprimeLe))+')</span>':'<span style="color:var(--orange)">\u23f3 En attente</span>'))+'</span></div>';
   h+='<div class="dp-field"><span class="k">Pi\u00e8ce d\u2019identit\u00e9 (verso)</span><span class="v">'+(s.docIdVerso?'<a href="#" data-lx-click="lxOuvrirDoc(\''+saJs(s.docIdVerso)+'\');return false" style="color:var(--green);font-weight:700">\u2705 Re\u00e7u \u2014 Voir \u2197</a>':'<span style="color:var(--text3);font-style:italic">Non fourni</span>')+'</span></div>';
   h+='<div class="dp-field"><span class="k">V\u00e9rification</span><span class="v" style="color:'+(s.verif==="verified"?"var(--green)":s.verif==="pending_review"?"var(--gold)":"var(--orange)")+'"><strong>'+(s.verif==="verified"?"\u2705 V\u00e9rifi\u00e9":s.verif==="pending_review"?"\ud83d\udd0d \u00c0 v\u00e9rifier":"\u23f3 En attente des documents")+'</strong></span></div>';
