@@ -1,6 +1,11 @@
 // contrat-luxyra.js — SOURCE UNIQUE du contrat d'abonnement Luxyra (03/11/2026).
 // Utilisé par inscription.html (signature à l'inscription) et app.html (signature dans l'appli d'un établissement déjà inscrit).
 // Toute modification du texte : incrémenter CONTRAT_VERSION (l'empreinte SHA-256 du texte sans balises est la preuve de ce qui a été signé).
+// 03/11/2026 (contre-audit) : à CHAQUE modification du texte (y compris un tarif) :
+//   1. incrémenter CONTRAT_VERSION ci-dessous ;
+//   2. enregistrer la nouvelle version de référence en base : lx_prive.contrat_reference (version + empreinte du corps,
+//      calculée par docs/migrations_1103_contrat/contrat_corps_hash.mjs) — sinon la signature dans l'appli est refusée ;
+//   3. changer le paramètre ?v= de ce fichier dans LX_CONTRAT_JS_V (app.html) ET dans inscription.html (balise <script>).
 (function(){
 // Version du contrat \u2014 incr\u00e9mente \u00e0 CHAQUE modification de getContratHTML.
 // Permet de tracer dans inscriptions_log quelle version exacte a \u00e9t\u00e9 sign\u00e9e.
@@ -16,7 +21,7 @@ var CONTRAT_DATE_EFFET = "2026-05-19";
 
 function getContratHTML(opts){
   opts=opts||{};
-  var d=opts.date?new Date(opts.date):new Date();var dateStr=d.toLocaleDateString("fr-FR",{day:"numeric",month:"long",year:"numeric"});
+  var d=opts.date?new Date(opts.date):new Date();var dateStr;try{dateStr=d.toLocaleDateString("fr-FR",{day:"numeric",month:"long",year:"numeric",timeZone:"Europe/Paris"});}catch(_eTz){dateStr=d.toLocaleDateString("fr-FR",{day:"numeric",month:"long",year:"numeric"});} // 03/11 (I1) : date de Paris, comme le contrôle du serveur
   var h='<h3>Contrat d\u2019abonnement Luxyra <span style="font-size:11px;font-weight:400;color:#999">\u2014 version '+CONTRAT_VERSION+'</span></h3>';
   h+='<p><em>En vigueur au '+dateStr+'</em></p>';
   // 03/11/2026 : conditions particulières propres à l'établissement (posées par l'administrateur), incluses dans le texte signé et son empreinte
@@ -66,6 +71,7 @@ function getContratHTML(opts){
 
 
   window.LX_CONTRAT_VERSION = CONTRAT_VERSION;
+  window.LX_CONTRAT_JS_CHARGE = "20261103-2"; // doit correspondre au ?v= des deux balises de chargement
   window.LX_CONTRAT_DATE_EFFET = CONTRAT_DATE_EFFET;
   // opts : { conditionsParticulieres: texte, date: date d'en-tête (défaut : aujourd'hui) }
   window.lxContratHTML = getContratHTML;
