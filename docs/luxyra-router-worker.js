@@ -7179,6 +7179,17 @@ async function handleClientFavoris(request, env) {
     return jsonResponse({ error: "Erreur favoris" }, 500);
   }
 }
+// 04/11/2026 (contre-audit final) : champs de rdv_online visibles par le client dans son espace (liste blanche)
+const LX_RDV_CLIENT_CHAMPS = ["id", "salon_id", "salon_nom", "salon_slug", "salon_adresse", "date_rdv", "heure_rdv", "duree_minutes", "status",
+  "service_id", "service_nom", "service_prix", "items", "collaborateur_id", "collaborateur_nom", "message", "lieu",
+  "client_nom", "client_prenom", "client_tel", "client_email", "client_luxyra_id", "client_adresse", "client_adresse_cp", "client_adresse_ville", "adresse_complement",
+  "frais_deplacement_montant", "distance_km", "remise_carte_montant", "carte_abo_id",
+  "acompte_montant", "acompte_modele", "acompte_paye", "acompte_paye_at", "acompte_rembourse", "acompte_rembourse_montant", "refunded_at", "ticket_num", "acompte_tk_num",
+  "empreinte_amount", "empreinte_status", "empreinte_held_at", "empreinte_released_at", "empreinte_captured_at", "empreinte_captured_amount", "stripe_last4", "stripe_brand",
+  "created_at", "confirmed_at", "cancelled_at", "cancelled_by", "cancel_reason",
+  "modification_demandee", "modification_date", "modification_heure", "modification_message", "modification_status",
+  "salon_modified_at", "salon_modified_fields", "salon_modified_acknowledged_by_client", "salon_modified_acknowledged_at",
+  "exec_avant_retractation", "exec_avant_retractation_at"];
 async function handleClientRdvs(request, env) {
   try {
     const body = await request.json().catch(() => null);
@@ -7210,10 +7221,12 @@ async function handleClientRdvs(request, env) {
           // 2026-10-13 : pour « Reprendre ce RDV », l'agenda et l'itinéraire (adresse masquée pour le domicile)
           if (d.salons) { d.salon_slug = d.salons.slug || ""; if (String(d.salons.mode_activite || "") !== "domicile") d.salon_adresse = [d.salons.adresse, d.salons.cp, d.salons.ville].filter(Boolean).join(" "); }
           delete d.salons;
-          // 04/11/2026 (contre-audit 0fe5d2a, I-2) : jamais de données internes de l'établissement ni de jetons de paiement vers l'espace client
-          delete d.salon_edit; delete d.stripe_token; delete d.payment_intent_id; delete d.refund_error;
-          seenSlot.add(_slotKey(d.salon_id, d.date_rdv, d.heure_rdv));
-          rdvs.push(d);
+          // 04/11/2026 (contre-audit 0fe5d2a, I-2, puis contre-audit final) : LISTE BLANCHE des champs renvoyés à l'espace client
+          // (jamais de données internes de l'établissement, de jetons de paiement, d'identifiants Stripe ni de réservations de tickets).
+          const _o = {};
+          for (const k of LX_RDV_CLIENT_CHAMPS) if (d[k] !== undefined) _o[k] = d[k];
+          seenSlot.add(_slotKey(_o.salon_id, _o.date_rdv, _o.heure_rdv));
+          rdvs.push(_o);
         }
       } catch (e) {}
     }

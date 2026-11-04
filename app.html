@@ -422,12 +422,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261104-3"></script>
+<script src="luxyra-supabase.js?v=20261104-4"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261104-3";
+  var attendu="20261104-4";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -6761,7 +6761,7 @@ function _lxCoffreRattrapageAutoZ(){
       (CD.mouvements||[]).filter(function(m){ return m&&m.date===c.date&&(m.type==="sortie"||m.type==="retrait"||m.type==="depense"); }).forEach(function(m){ ret+=Number(m.montant)||0; });
       var esp=Math.max(0,Math.round(((Number(det.esp)||0)-ret)*100)/100), chq=Math.round((Number(det.chq)||0)*100)/100;
       CD.coffreEsp=Math.round(((Number(CD.coffreEsp)||0)+esp)*100)/100; CD.coffreChq=Math.round(((Number(CD.coffreChq)||0)+chq)*100)/100;
-      CD.misesAuCoffre.push({date:c.date,esp:esp,chq:chq,autoZ:true});
+      CD.misesAuCoffre.push({id:"autoz-"+c.date,date:c.date,esp:esp,chq:chq,autoZ:true});
       CD.coffreAutoZ[c.date]=true; fait=true;
       try{ if(typeof auditLog==="function") auditLog("MISE_AU_COFFRE","Auto (cl\u00f4ture automatique Z n\u00b0"+(c.num||"?")+" du "+c.date+") : Especes "+esp.toFixed(2)+"E + Cheques "+chq.toFixed(2)+"E (retraits "+ret.toFixed(2)+"E deduits)"); }catch(_eA){}
     });
@@ -6959,7 +6959,7 @@ function _lxZFinaliser(opts){
   var chqCoffre=c.details.chq;
   CD.coffreEsp+=espCoffre;
   CD.coffreChq+=chqCoffre;
-  CD.misesAuCoffre.push({date:TD,esp:espCoffre,chq:chqCoffre});
+  CD.misesAuCoffre.push({id:"mc-"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),date:TD,esp:espCoffre,chq:chqCoffre}); // 04/11/2026 : identifiant (fusion entre postes) ; anciennes lignes sans id inchangées
   // FIX 2026-08-31 : mise au coffre de la cloture -> ecriture dediee de la caisse.
   // C'est le mouvement le plus important de la journee : il ne doit pas dependre
   // d'une sauvegarde generale qui reecrit tout depuis la memoire.
@@ -14300,7 +14300,7 @@ async function lxAssignOnlineRdv(apptId,newId){
   _lxRemapPhasesCollab(a, a.stId, newId);
   a.stId=newId;
   try{ if(window.RDV_ONLINE){ for(var k=0;k<RDV_ONLINE.length;k++){ if(RDV_ONLINE[k].id===a.onlineId){ RDV_ONLINE[k].collabId=newId; break; } } } }catch(_eR){}
-  if(a.comment){ var _i=a.comment.indexOf("SANS PR"); if(_i>0){ a.comment=a.comment.substring(0,_i).replace(/[^\w)]+$/,""); } }
+  if(a.comment){ a.comment=String(a.comment).replace(/\s*\u2014?\s*SANS PR\u00c9F\u00c9RENCE \(\u00e0 assigner\)/g,"").trim(); } // 04/11/2026 : mention retirée où qu'elle soit, sans couper le texte qui suit
   window._apDirty=true;
   hideRdvPopup();
   if(typeof refreshCurrentView==="function") refreshCurrentView(); else if(typeof go==="function") go("planning");
@@ -15402,7 +15402,20 @@ function _lxCancelOnlineRdv(rdvId, reason){
     if(_by==="no_show") _upd.retenue_at=new Date().toISOString();
     _sb.from("rdv_online").update(_upd).eq("id",rdvId).eq("salon_id",_salonId).select("id").then(function(res){
       if(res&&!res.error&&(!res.data||!res.data.length)) res={error:{message:"aucune modification accept\u00e9e par le serveur"}}; // 2026-10-15
-      if(res&&res.error){ try{ toast("L\u2019annulation du rendez-vous en ligne n\u2019a pas pu \u00eatre enregistr\u00e9e : "+res.error.message,"error"); }catch(_eT){} return; }
+      if(res&&res.error){
+        // 04/11/2026 (contre-audit final) : erreur réseau (supabase-js renvoie une erreur au lieu d'échouer) -> mise en file
+        if(_lxErreurReseau(res.error)){ try{ _lxAnnulFileAjouter(rdvId,_upd,{by:_by,prevenir:_prevenir,ro:_roMsg,motif:_motif}); toast("Hors connexion : l\u2019annulation sera envoy\u00e9e d\u00e8s le retour du r\u00e9seau","warning"); }catch(_eQ){} return; }
+        try{ toast("L\u2019annulation du rendez-vous en ligne n\u2019a pas pu \u00eatre enregistr\u00e9e : "+res.error.message,"error"); }catch(_eT){} return; }
+      _lxAnnulApres(_by,_prevenir,_roMsg,_motif);
+    },function(_e){
+      // 04/11/2026 (audit A, mineur) : hors ligne -> annulation mise en file et renvoyée au retour du réseau
+      try{ _lxAnnulFileAjouter(rdvId,_upd,{by:_by,prevenir:_prevenir,ro:_roMsg,motif:_motif}); toast("Hors connexion : l\u2019annulation sera envoy\u00e9e d\u00e8s le retour du r\u00e9seau","warning"); }catch(_eT){} });
+  }catch(_e){}
+}
+// 04/11/2026 (contre-audit final) : suites d'une annulation enregistrée (no-show -> acompte conservé ; client prévenu),
+// communes à l'envoi direct et au renvoi depuis la file hors ligne.
+function _lxErreurReseau(err){ try{ var m=String((err&&(err.message||err.details))||err||""); return (typeof navigator!=="undefined"&&navigator.onLine===false) || /failed to fetch|fetch failed|networkerror|network request failed|load failed|r\u00e9seau|timeout/i.test(m); }catch(_e){ return false; } }
+function _lxAnnulApres(_by,_prevenir,_roMsg,_motif){
       if(_by==="no_show") setTimeout(function(){ try{ lxRetenuesSync(true); }catch(_eR){} },1200);
       // 2026-10-14 (NF525 acompte en ligne) : le remboursement automatique (annulation par l'établissement) est fait par le serveur
       // (cron) ; le ticket négatif est créé au passage suivant de lxAcomptesEnLigneSync (poll / retour au premier plan / démarrage).
@@ -15416,13 +15429,9 @@ function _lxCancelOnlineRdv(rdvId, reason){
           _lxMessageCliente(_roMsg,"Rendez-vous annul\u00e9","\u274c",_txtE,_txtS,null).then(function(c){ try{ if(c) toast("Client pr\u00e9venu par "+c,"success"); }catch(_t){} },function(){});
         }catch(_eMsg){ console.warn("[annulation] message client",_eMsg); }
       }
-    },function(_e){
-      // 04/11/2026 (audit A, mineur) : hors ligne -> annulation mise en file et renvoyée au retour du réseau
-      try{ _lxAnnulFileAjouter(rdvId,_upd); toast("Hors connexion : l\u2019annulation sera envoy\u00e9e d\u00e8s le retour du r\u00e9seau","warning"); }catch(_eT){} });
-  }catch(_e){}
 }
 function _lxAnnulFileCle(){ return "lx_annul_file_"+(window._salonId||"x"); }
-function _lxAnnulFileAjouter(rdvId,upd){ try{ var f=JSON.parse(localStorage.getItem(_lxAnnulFileCle())||"[]"); f=f.filter(function(x){ return x&&x.id!==rdvId; }); f.push({id:rdvId,upd:upd,t:Date.now()}); localStorage.setItem(_lxAnnulFileCle(),JSON.stringify(f)); }catch(_e){} }
+function _lxAnnulFileAjouter(rdvId,upd,suite){ try{ var f=JSON.parse(localStorage.getItem(_lxAnnulFileCle())||"[]"); f=f.filter(function(x){ return x&&x.id!==rdvId; }); f.push({id:rdvId,upd:upd,suite:suite||null,t:Date.now()}); localStorage.setItem(_lxAnnulFileCle(),JSON.stringify(f)); }catch(_e){} }
 function _lxAnnulFileRejouer(){
   try{
     if(typeof _sb==="undefined"||!_sb||!window._salonId) return;
@@ -15431,7 +15440,9 @@ function _lxAnnulFileRejouer(){
       if(!x||!x.id||!x.upd) return;
       _sb.from("rdv_online").update(x.upd).eq("id",x.id).eq("salon_id",window._salonId).in("status",["pending","pending_payment","confirmed"]).select("id").then(function(res){
         if(res&&!res.error){ try{ var g=JSON.parse(localStorage.getItem(_lxAnnulFileCle())||"[]").filter(function(y){ return y&&y.id!==x.id; }); localStorage.setItem(_lxAnnulFileCle(),JSON.stringify(g)); }catch(_e2){}
-          if(res.data&&res.data.length){ try{ toast("Annulation envoy\u00e9e (rendez-vous en ligne)","success"); }catch(_t){} } }
+          if(res.data&&res.data.length){ try{ toast("Annulation envoy\u00e9e (rendez-vous en ligne)","success"); }catch(_t){}
+            // 04/11/2026 (contre-audit final) : au renvoi, mêmes suites qu'une annulation directe (client prévenu, no-show)
+            try{ var _su=x.suite||{}; _lxAnnulApres(_su.by||(x.upd&&x.upd.cancelled_by)||"salon", _su.prevenir!==false, _su.ro||null, _su.motif||""); }catch(_eSu){} } }
       },function(){});
     });
   }catch(_e){}
@@ -33343,24 +33354,31 @@ function _lxBandeauColsDistantes(){
     document.body.appendChild(el);
   }catch(_e){}
 }
-var LX_COLS_IDENTITE="nom,sous_titre,logo,adresse,cp,ville,tel,email,siret,tva,tva_intra,taux_tva,taux_tva_produits,note_ticket,exercice_fin_mois,couleur_primaire,couleur_secondaire,capital_social,rcs_ville,forme_juridique";
+var LX_COLS_IDENTITE="nom,sous_titre,updated_at,adresse,cp,ville,tel,email,siret,tva,tva_intra,taux_tva,taux_tva_produits,note_ticket,exercice_fin_mois,couleur_primaire,couleur_secondaire,capital_social,rcs_ville,forme_juridique";
+// 04/11/2026 (contre-audit final) : le logo (jusqu'à 50 Ko) n'est plus relu chaque minute. On lit updated_at ; le logo n'est
+// relu que si la ligne a changé, et c'est le LOGO (pas updated_at, qui bouge aussi avec nos propres écritures) qui est comparé.
+async function _lxColsComparer(row){
+  try{
+    if(!row) return;
+    if(row.updated_at!==undefined && row.updated_at!==window._lxLogoUA){
+      var rl=await _sb.from("salons").select("logo").eq("id",_salonId).limit(1);
+      if(rl && !rl.error && rl.data && rl.data[0]){ window._lxLogoCache=rl.data[0].logo===undefined?null:rl.data[0].logo; window._lxLogoUA=row.updated_at; }
+    }
+    if(window._lxLogoCache===undefined) return; // logo pas encore lu : comparaison au prochain passage (jamais de fausse alerte)
+    var _ci={}; LX_COLS_IDENTITE.split(",").forEach(function(k){ if(k!=="updated_at") _ci[k]=row[k]===undefined?null:row[k]; });
+    _ci.logo = (window._lxLogoCache===undefined) ? null : window._lxLogoCache;
+    var _cs=JSON.stringify(_ci);
+    if(window._lxColsBase===undefined || window._lxColsRebase){ window._lxColsBase=_cs; window._lxColsRebase=false; }
+    else if(_cs!==window._lxColsBase){ window._lxColsBase=_cs; _lxBandeauColsDistantes(); }
+  }catch(_eCc){}
+}
 async function _lxCfgAppliquerDistante(mode){
   var lu=await _lxCfgLire("show_tva_ticket,"+LX_COLS_IDENTITE);
   if(!lu.ok || lu.vide) return false;
   // 03/11/2026 (audit A, I3) : réglages rangés en COLONNES de salons (TVA, adresse, note de ticket, logo, exercice…)
   // modifiés sur un autre appareil : config_version ne bouge pas -> invisibles ici jusqu'au redémarrage (ex. tablette de
   // caisse à l'ancien taux de TVA). On compare une empreinte de ces colonnes et on propose d'actualiser.
-  try{
-    if(lu.row){
-      var _ci={}; LX_COLS_IDENTITE.split(",").forEach(function(k){ _ci[k]=lu.row[k]===undefined?null:lu.row[k]; });
-      var _cs=JSON.stringify(_ci);
-      if(window._lxColsBase===undefined || window._lxColsRebase){ window._lxColsBase=_cs; window._lxColsRebase=false; }
-      else if(_cs!==window._lxColsBase){
-        window._lxColsBase=_cs;
-        _lxBandeauColsDistantes();
-      }
-    }
-  }catch(_eCi){}
+  try{ if(lu.row) await _lxColsComparer(lu.row); }catch(_eCi){}
   if(lu.version!==null && lu.version===window._lxCfgVersion) return false;
   var bDb=window._lxCfgBaseDb||{}, bMem=window._lxCfgBaseMem||{}, aAppliquer=[];
   LX_CFG_SECTIONS.forEach(function(sec){
@@ -33420,8 +33438,7 @@ async function lxReglagesSynchro(origine){
       var rv=await _sb.from("salons").select("config_version,"+LX_COLS_IDENTITE).eq("id",_salonId).limit(1);
       var v=(rv && !rv.error && rv.data && rv.data[0]) ? rv.data[0].config_version : null;
       // 04/11/2026 (contre-audit A, mineur 3) : colonnes d'identité comparées à chaque minute (pas seulement quand config_version change)
-      try{ if(rv && !rv.error && rv.data && rv.data[0]){ var _ci2={}; LX_COLS_IDENTITE.split(",").forEach(function(k){ _ci2[k]=rv.data[0][k]===undefined?null:rv.data[0][k]; }); var _cs2=JSON.stringify(_ci2);
-        if(window._lxColsBase===undefined || window._lxColsRebase){ window._lxColsBase=_cs2; window._lxColsRebase=false; } else if(_cs2!==window._lxColsBase){ window._lxColsBase=_cs2; _lxBandeauColsDistantes(); } } }catch(_eCi2){}
+      try{ if(rv && !rv.error && rv.data && rv.data[0]) await _lxColsComparer(rv.data[0]); }catch(_eCi2){}
       lireCfg = (typeof v==="number" && v!==window._lxCfgVersion);
     } else if(window._lxCfgVersionOk!==true && origine!=="afficher" && !window._lxMajEnAttente){
       lireCfg = (tour%5===0); // sans colonne : relecture complete toutes les 5 min (config_json peut etre lourde)
@@ -37326,6 +37343,23 @@ function newMouvement(type){
 // 04/11/2026 (audit A, I10) : fusion à trois (référence chargée / ce poste / base) de la caisse de gestion
 function _lxCaisseCle(x){ try{ return (x && typeof x==="object" && x.id) ? "id:"+x.id : JSON.stringify(x); }catch(_e){ return String(x); } }
 function _lxCaisseFusion(base, loc, db){
+  // 04/11/2026 (contre-audit I2) : mise au coffre automatique d'une Z faite sur LES DEUX postes (chacun avait chargé avant
+  // l'écriture de l'autre) : on retire la version locale (liste ET coffre) si la date est déjà dans la base et pas dans la référence.
+  loc = JSON.parse(JSON.stringify(loc||{}));
+  try{
+    var _bz=(base&&base.coffreAutoZ)||{}, _lz=loc.coffreAutoZ||{}, _dz=(db&&db.coffreAutoZ)||{};
+    Object.keys(_lz).forEach(function(dt){
+      if(!_lz[dt] || _bz[dt] || !_dz[dt]) return;
+      var garde=[];
+      (Array.isArray(loc.misesAuCoffre)?loc.misesAuCoffre:[]).forEach(function(m){
+        if(m && m.autoZ===true && m.date===dt){
+          loc.coffreEsp=Math.round(((Number(loc.coffreEsp)||0)-(Number(m.esp)||0))*100)/100;
+          loc.coffreChq=Math.round(((Number(loc.coffreChq)||0)-(Number(m.chq)||0))*100)/100;
+        } else garde.push(m);
+      });
+      if(Array.isArray(loc.misesAuCoffre)) loc.misesAuCoffre=garde;
+    });
+  }catch(_eAz){}
   var out = JSON.parse(JSON.stringify(loc||{}));
   var cles = {}; [base||{}, loc||{}, db||{}].forEach(function(o){ Object.keys(o).forEach(function(k){ cles[k]=1; }); });
   Object.keys(cles).forEach(function(k){
@@ -37363,6 +37397,9 @@ async function saveCaisseData(){
         var _fus = _lxCaisseFusion(_base, window.CAISSE_DATA, _db), _cd = window.CAISSE_DATA;
         Object.keys(_fus).forEach(function(k){ _cd[k] = _fus[k]; }); // même objet (des références CD = CAISSE_DATA sont gardées ailleurs)
       }
+      // 04/11/2026 (contre-audit I1) : la mémoire contient désormais l'état de la base + les changements de ce poste ;
+      // la référence devient donc l'état de la base lu ici (sinon, si l'écriture échoue, un nouvel essai recompterait les ajouts de l'autre poste).
+      if(_db){ try{ window._lxCaisseBase = JSON.parse(JSON.stringify(_db)); }catch(_eB0){} }
     }catch(_eFu){ console.warn("[caisse] fusion", _eFu); }
     var v = { caisse_data: JSON.parse(JSON.stringify(window.CAISSE_DATA)) };
     if(typeof window.CAISSE_DATA.fond !== "undefined") v.fond_caisse = window.CAISSE_DATA.fond;
@@ -37415,7 +37452,7 @@ function addRemiseBanque(){
 function doRemiseBanque(){
   var val=parseFloat(document.getElementById("rbVal").value)||0;var type=document.getElementById("rbType").value;
   if(val<=0){cM();return;}
-  window.CAISSE_DATA.remisesBanque.push({date:TD,type:type,montant:val});
+  window.CAISSE_DATA.remisesBanque.push({id:"rb-"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),date:TD,type:type,montant:val}); // 04/11/2026 : identifiant (fusion entre postes)
   auditLog("REMISE_BANQUE",type+" "+val.toFixed(2)+"E");
   if(type==="Ch\u00e8ques")window.CAISSE_DATA.coffreChq=Math.max(0,window.CAISSE_DATA.coffreChq-val);
   else if(type==="Esp\u00e8ces")window.CAISSE_DATA.coffreEsp=Math.max(0,window.CAISSE_DATA.coffreEsp-val);

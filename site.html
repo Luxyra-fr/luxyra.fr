@@ -3544,6 +3544,12 @@ function _lxNbSansCollab(date,time,duration){
   }
   return n;
 }
+// 04/11/2026 (contre-audit I4) : prestations de la réservation en cours (même règle que lxResaSids du worker)
+function _lxBookingSids(){
+  var out={}, ent=function(v){ if(v===null||v===undefined||v==="") return null; var n=Number(v); return (isFinite(n)&&Math.floor(n)===n)?n:null; };
+  try{ var s0=ent(booking.svcId); if(s0!==null) out[s0]=1; (booking.items||[]).forEach(function(it){ var s=ent(it&&(it.svcId!=null?it.svcId:it.sId)); if(s!==null) out[s]=1; }); }catch(_e){}
+  return Object.keys(out).map(Number).sort(function(a,b){return a-b;});
+}
 // 04/11/2026 : réservations sans collaborateur qui chevauchent le créneau, avec leurs prestations (sids), pauses libres
 function _lxSansCollabChev(date,time,duration){
   var s0=toMin(time), e0=s0+duration, out=[];
@@ -3902,7 +3908,7 @@ async function refreshRDV(){
         }
         return true;
       }).forEach(function(r){
-        RDV_EXISTING.push({date_rdv:r.date_rdv,heure:r.heure_rdv?r.heure_rdv.slice(0,5):null,collab_id:r.collaborateur_id,status:"conf",a_phases:lxPhasesResaEnLigne(r)});
+        RDV_EXISTING.push({date_rdv:r.date_rdv,heure:r.heure_rdv?r.heure_rdv.slice(0,5):null,collab_id:r.collaborateur_id,status:"conf",a_phases:lxPhasesResaEnLigne(r),sids:Array.isArray(r.sids)?r.sids:[]}); // 04/11 (contre-audit I4) : sids gardés au rafraîchissement
       });
     }
   }catch(e){console.log("refreshRDV:",e);}
@@ -3996,7 +4002,7 @@ async function _lxSubmitBookingImpl(){
     var r=await sb.from("rdv_online").insert(data);
     if(r.error){_resaFail(r.error,"insert_direct",data);showAlert(rdvErrorMessage(r.error),"info");await refreshRDV();renderTimeSlots(booking.date);return;}
     // Immediately block this slot from being rebooked
-    RDV_EXISTING.push({date_rdv:booking.date,heure:booking.time,collab_id:booking.collabId,status:"conf",a_phases:[{t:"w",d:dur,l:primaryNom}]});
+    RDV_EXISTING.push({date_rdv:booking.date,heure:booking.time,collab_id:booking.collabId,status:"conf",a_phases:[{t:"w",d:dur,l:primaryNom}],sids:_lxBookingSids()}); // 04/11 (contre-audit I4)
     // Success
     var confirmMsg=SITE_CFG.msgConfirm?lxTexteProHtml(SITE_CFG.msgConfirm):"Votre demande a bien \u00e9t\u00e9 envoy\u00e9e."; // 2026-10-17 audit réglages (#65) : échappé
     var h='<div class="success-page">';
@@ -4497,7 +4503,7 @@ async function processStripePayment(){
     }
     
     // SUCCESS - block slot from being rebooked
-    RDV_EXISTING.push({date_rdv:booking.date,heure:booking.time,collab_id:booking.collabId,status:"conf",a_phases:[{t:"w",d:dur,l:primaryNom}]});
+    RDV_EXISTING.push({date_rdv:booking.date,heure:booking.time,collab_id:booking.collabId,status:"conf",a_phases:[{t:"w",d:dur,l:primaryNom}],sids:_lxBookingSids()}); // 04/11 (contre-audit I4)
     // SUCCESS - show confirmation with payment receipt
     var hasMulti=booking.items&&booking.items.length>1;
     var h='<div class="success-page">';
