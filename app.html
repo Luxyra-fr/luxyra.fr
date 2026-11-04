@@ -422,12 +422,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261104-8"></script>
+<script src="luxyra-supabase.js?v=20261104-9"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261104-8";
+  var attendu="20261104-9";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -8825,7 +8825,7 @@ function lxTvaFiger(tk){
   var V=tk.lxTva?_lxTvaValide(tk.lxTva, {ttc:tk.pr, items:tk.items, bons:tk.bonsUtil, tx:lxTauxTvaAu(null)}):null;
   if(V){ tk.lxTva=_lxTvaStock(V); return tk.lxTva; }
   var R=null;
-  try{ if(tk.isCancel && tk.cancelRef!=null){ var o=_lxTvaOrigine(tk); if(o && Math.abs(_lxRc(o.pr)+_lxRc(tk.pr))<0.005){ /* 04/11 (contre-audit I1) : ventilation FIGÉE de l'origine en priorité (taux propre d'un produit, vente faite avant un changement de régime) */ var Ro=(o.lxTva&&Array.isArray(o.lxTva.l)&&o.lxTva.l.length&&Math.abs(_lxRc(o.lxTva.ttc)-_lxRc(o.pr))<0.005)?o.lxTva:lxTvaTk(o); if(Math.abs(_lxRc(Ro.ttc)+_lxRc(tk.pr))<0.005) R=_lxTvaNeg(Ro); } } }catch(_e){ R=null; }
+  try{ if(tk.isCancel && tk.cancelRef!=null){ var o=_lxTvaOrigine(tk); if(o && Math.abs(_lxRc(o.pr)+_lxRc(tk.pr))<0.005){ /* 04/11 (contre-audit I1) : ventilation FIGÉE de l'origine en priorité (taux propre d'un produit, vente faite avant un changement de régime) */ /* 04/11 (B1bis, mineur) : ventilation de l'origine JAMAIS reprise sans revalidation : lxTvaTk(o) = journal scellé (montants TVA réels, même après un passage en franchise) sinon lxTva revalidée aux taux de sa date, sinon ancien calcul miroir */ var Ro=lxTvaTk(o); if(Math.abs(_lxRc(Ro.ttc)+_lxRc(tk.pr))<0.005) R=_lxTvaNeg(Ro); } } }catch(_e){ R=null; }
   if(!R) R=lxTvaCalculer(tk, lxTauxTvaAu(null));
   tk.lxTva=_lxTvaStock(R);
   return tk.lxTva;
@@ -41109,6 +41109,9 @@ async function _cancelSecureTicketDoUneFois(id,motif){
   var orig=null;
   for(var i=0;i<AP.length;i++){if(AP[i].id===id){orig=AP[i];break;}}
   if(!orig)return;
+  // 04/11/2026 (B1bis, mineur) : journal scellé du jour du ticket d'origine chargé AVANT de calculer le contre-ticket miroir
+  // (ancien ticket sans ventilation, vente faite avant un passage en franchise : TVA réellement enregistrée reprise).
+  try{ if(typeof lxTvaJournalCharger==="function"){ var _dO=String((typeof _lxDJ==="function"?_lxDJ(orig):orig.date)||"").slice(0,10); if(_dO) await lxTvaJournalCharger(_dO,_dO); } }catch(_eJ){}
   // 2026-10-14 audit (NF525) : un ticket ne s'annule qu'UNE fois, et un contre-ticket ne s'annule jamais
   // (BOI-TVA-DECLA-30-10-30 §90 : la correction est une opération en « moins » définitive ; annuler l'annulation
   // créerait un 3e enregistrement qui reconstituerait la recette sans vente réelle).
@@ -42743,6 +42746,9 @@ function cloturerJournee(opts){
       // 2026-10-16 : Z refusée par le contrôle serveur (différente du journal des tickets) -> rien n'est verrouillé ;
       // la journée est rouverte sur cet appareil (saveCloture -> _lxZRefuseeParServeur).
       if(_sv && _sv.refuseeJournal) return;
+      // 04/11/2026 (B1bis) : Z refusée pour numéro hors séquence = conservée en file (Z antérieure en attente) : rien n'est verrouillé maintenant ;
+      // le verrouillage se fera au renvoi réussi de la file de secours.
+      if(_sv && _sv.numeroEnAttente) return;
       if(typeof lockTicketsForCloture==="function"){
         var lockRes = await lockTicketsForCloture(c);
         // Vérification cohérence : on devrait avoir verrouillé exactement c.nbTickets tickets
