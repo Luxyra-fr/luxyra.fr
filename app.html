@@ -422,12 +422,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261104-5"></script>
+<script src="luxyra-supabase.js?v=20261104-6"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261104-5";
+  var attendu="20261104-6";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -6760,8 +6760,8 @@ function _lxCoffreRattrapageAutoZ(){
       var det=c.details||{}, ret=0;
       (CD.mouvements||[]).filter(function(m){ return m&&m.date===c.date&&(m.type==="sortie"||m.type==="retrait"||m.type==="depense"); }).forEach(function(m){ ret+=Number(m.montant)||0; });
       var esp=Math.max(0,Math.round(((Number(det.esp)||0)-ret)*100)/100), chq=Math.round((Number(det.chq)||0)*100)/100;
-      CD.coffreEsp=Math.round(((Number(CD.coffreEsp)||0)+esp)*100)/100; CD.coffreChq=Math.round(((Number(CD.coffreChq)||0)+chq)*100)/100;
-      CD.misesAuCoffre.push({id:"autoz-"+c.date,date:c.date,esp:esp,chq:chq,autoZ:true});
+      _lxCoffreAssurerReport(CD);
+      CD.misesAuCoffre.push({id:"autoz-"+c.date,date:c.date,esp:esp,chq:chq,autoZ:true}); _lxCoffreRecalc(CD); // 04/11/2026 : solde calculé
       CD.coffreAutoZ[c.date]=true; fait=true;
       try{ if(typeof auditLog==="function") auditLog("MISE_AU_COFFRE","Auto (cl\u00f4ture automatique Z n\u00b0"+(c.num||"?")+" du "+c.date+") : Especes "+esp.toFixed(2)+"E + Cheques "+chq.toFixed(2)+"E (retraits "+ret.toFixed(2)+"E deduits)"); }catch(_eA){}
     });
@@ -6957,9 +6957,9 @@ function _lxZFinaliser(opts){
   else if(CD.retraits)CD.retraits.filter(function(r){return r.date===TD&&r.type==="retrait";}).forEach(function(r){espRetraits+=r.montant;});
   var espCoffre=Math.max(0,c.details.esp-espRetraits);
   var chqCoffre=c.details.chq;
-  CD.coffreEsp+=espCoffre;
-  CD.coffreChq+=chqCoffre;
+  _lxCoffreAssurerReport(CD);
   CD.misesAuCoffre.push({id:"mc-"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),date:TD,esp:espCoffre,chq:chqCoffre}); // 04/11/2026 : identifiant (fusion entre postes) ; anciennes lignes sans id inchangées
+  _lxCoffreRecalc(CD); // 04/11/2026 : solde du coffre calculé à partir des mouvements
   // FIX 2026-08-31 : mise au coffre de la cloture -> ecriture dediee de la caisse.
   // C'est le mouvement le plus important de la journee : il ne doit pas dependre
   // d'une sauvegarde generale qui reecrit tout depuis la memoire.
@@ -15406,7 +15406,7 @@ function _lxCancelOnlineRdv(rdvId, reason){
         // 04/11/2026 (contre-audit final) : erreur réseau (supabase-js renvoie une erreur au lieu d'échouer) -> mise en file
         if(_lxErreurReseau(res.error)){ try{ _lxAnnulFileAjouter(rdvId,_upd,{by:_by,prevenir:_prevenir,ro:_roMsg,motif:_motif}); toast("Hors connexion : l\u2019annulation sera envoy\u00e9e d\u00e8s le retour du r\u00e9seau","warning"); }catch(_eQ){} return; }
         try{ toast("L\u2019annulation du rendez-vous en ligne n\u2019a pas pu \u00eatre enregistr\u00e9e : "+res.error.message,"error"); }catch(_eT){} return; }
-      _lxAnnulApres(_by,_prevenir,_roMsg,_motif);
+      _lxAnnulApres(_by,_prevenir,_roMsg,_motif,rdvId);
     },function(_e){
       // 04/11/2026 (audit A, mineur) : hors ligne -> annulation mise en file et renvoyée au retour du réseau
       try{ _lxAnnulFileAjouter(rdvId,_upd,{by:_by,prevenir:_prevenir,ro:_roMsg,motif:_motif}); toast("Hors connexion : l\u2019annulation sera envoy\u00e9e d\u00e8s le retour du r\u00e9seau","warning"); }catch(_eT){} });
@@ -15415,7 +15415,21 @@ function _lxCancelOnlineRdv(rdvId, reason){
 // 04/11/2026 (contre-audit final) : suites d'une annulation enregistrée (no-show -> acompte conservé ; client prévenu),
 // communes à l'envoi direct et au renvoi depuis la file hors ligne.
 function _lxErreurReseau(err){ try{ var m=String((err&&(err.message||err.details))||err||""); return (typeof navigator!=="undefined"&&navigator.onLine===false) || /failed to fetch|fetch failed|networkerror|network request failed|load failed|r\u00e9seau|timeout/i.test(m); }catch(_e){ return false; } }
-function _lxAnnulApres(_by,_prevenir,_roMsg,_motif){
+// 04/11/2026 (vérif. 8fd2998) : suites d'une annulation appliquées UNE SEULE FOIS par RDV, même avec deux onglets ou
+// une minuterie + l'événement « online » en même temps : verrou inter-onglets (Web Locks) + marque persistée (localStorage)
+// + clé anti-doublon côté serveur pour l'e-mail au client (index unique messaging_log.dedup_key).
+function _lxAnnulSuitesCle(){ return "lx_annul_suites_"+(window._salonId||"x"); }
+function _lxAnnulSuitesFaites(id){ try{ var m=JSON.parse(localStorage.getItem(_lxAnnulSuitesCle())||"{}"); return !!(id&&m[id]); }catch(_e){ return false; } }
+function _lxAnnulSuitesMarquer(id){ try{ var m=JSON.parse(localStorage.getItem(_lxAnnulSuitesCle())||"{}"), lim=Date.now()-30*86400000; Object.keys(m).forEach(function(k){ if(!(m[k]>lim)) delete m[k]; }); m[id]=Date.now(); localStorage.setItem(_lxAnnulSuitesCle(),JSON.stringify(m)); }catch(_e){} }
+function _lxAnnulApres(_by,_prevenir,_roMsg,_motif,_rdvId){
+  var id=_rdvId||(_roMsg&&_roMsg.id)||null;
+  if(!id){ return _lxAnnulApresImpl(_by,_prevenir,_roMsg,_motif,null); }
+  window._lxAnnulSuitesMem=window._lxAnnulSuitesMem||{};
+  var faire=function(){ if(window._lxAnnulSuitesMem[id] || _lxAnnulSuitesFaites(id)) return; window._lxAnnulSuitesMem[id]=1; _lxAnnulSuitesMarquer(id); _lxAnnulApresImpl(_by,_prevenir,_roMsg,_motif,id); };
+  try{ if(typeof navigator!=="undefined" && navigator.locks && navigator.locks.request){ navigator.locks.request("lx_annul_"+id,{mode:"exclusive"},function(){ faire(); }).catch(function(){ faire(); }); return; } }catch(_eL){}
+  faire();
+}
+function _lxAnnulApresImpl(_by,_prevenir,_roMsg,_motif,_rdvId){
       if(_by==="no_show") setTimeout(function(){ try{ lxRetenuesSync(true); }catch(_eR){} },1200);
       // 2026-10-14 (NF525 acompte en ligne) : le remboursement automatique (annulation par l'établissement) est fait par le serveur
       // (cron) ; le ticket négatif est créé au passage suivant de lxAcomptesEnLigneSync (poll / retour au premier plan / démarrage).
@@ -15426,7 +15440,7 @@ function _lxAnnulApres(_by,_prevenir,_roMsg,_motif){
           var _ac=Number(_roMsg.acompte)||0, _acTxt=(_ac>0&&_roMsg.acomptePaye)?"\n\nL\u2019acompte de "+_ac.toFixed(2).replace(".",",")+" \u20ac vous est rembours\u00e9 automatiquement (d\u00e9lai bancaire de quelques jours).":"";
           var _txtE="Nous sommes d\u00e9sol\u00e9s : votre rendez-vous du "+_q+(_roMsg.svcNom?" ("+_roMsg.svcNom+")":"")+" est annul\u00e9 par l\u2019\u00e9tablissement."+(_motif?"\n\u00ab "+_motif+" \u00bb":"")+_acTxt+"\n\nVous pouvez reprendre rendez-vous en ligne quand vous le souhaitez.";
           var _txtS=(SALON_CONFIG.nom||"").slice(0,22)+": RDV du "+_q+" annule par l etablissement."+(_motif?" "+_motif.slice(0,60):"")+" Reprenez RDV en ligne.";
-          _lxMessageCliente(_roMsg,"Rendez-vous annul\u00e9","\u274c",_txtE,_txtS,null).then(function(c){ try{ if(c) toast("Client pr\u00e9venu par "+c,"success"); }catch(_t){} },function(){});
+          _lxMessageCliente(_roMsg,"Rendez-vous annul\u00e9","\u274c",_txtE,_txtS,null,(_rdvId&&window._salonId)?{dedupKey:window._salonId+"|annulation_salon|"+_rdvId,context:"annulation_salon"}:null).then(function(c){ try{ if(c) toast("Client pr\u00e9venu par "+c,"success"); }catch(_t){} },function(){});
         }catch(_eMsg){ console.warn("[annulation] message client",_eMsg); }
       }
 }
@@ -15436,13 +15450,16 @@ function _lxAnnulFileRejouer(){
   try{
     if(typeof _sb==="undefined"||!_sb||!window._salonId) return;
     var f=JSON.parse(localStorage.getItem(_lxAnnulFileCle())||"[]"); if(!f.length) return;
+    window._lxAnnulEnCours=window._lxAnnulEnCours||{};
     f.forEach(function(x){
       if(!x||!x.id||!x.upd) return;
+      if(window._lxAnnulEnCours[x.id]) return; // 04/11/2026 : déjà en cours de renvoi dans cet onglet
+      window._lxAnnulEnCours[x.id]=1; var _fin=function(){ try{ delete window._lxAnnulEnCours[x.id]; }catch(_eF){} };
       _sb.from("rdv_online").update(x.upd).eq("id",x.id).eq("salon_id",window._salonId).in("status",["pending","pending_payment","confirmed"]).select("id").then(function(res){
         if(res&&!res.error){ try{ var g=JSON.parse(localStorage.getItem(_lxAnnulFileCle())||"[]").filter(function(y){ return y&&y.id!==x.id; }); localStorage.setItem(_lxAnnulFileCle(),JSON.stringify(g)); }catch(_e2){}
           if(res.data&&res.data.length){ try{ toast("Annulation envoy\u00e9e (rendez-vous en ligne)","success"); }catch(_t){}
             // 04/11/2026 (contre-audit final) : au renvoi, mêmes suites qu'une annulation directe (client prévenu, no-show)
-            try{ var _su=x.suite||{}; _lxAnnulApres(_su.by||(x.upd&&x.upd.cancelled_by)||"salon", _su.prevenir!==false, _su.ro||null, _su.motif||""); }catch(_eSu){} }
+            try{ var _su=x.suite||{}; _lxAnnulApres(_su.by||(x.upd&&x.upd.cancelled_by)||"salon", _su.prevenir!==false, _su.ro||null, _su.motif||"", x.id); }catch(_eSu){} }
           else {
             // 04/11/2026 (vérif. 833b957) : aucune ligne modifiée -> l'annulation est peut-être DÉJÀ arrivée au premier envoi
             // (réponse perdue). Si la base montre NOTRE annulation (même auteur, même motif), on applique les suites une seule fois.
@@ -15450,12 +15467,12 @@ function _lxAnnulFileRejouer(){
               try{
                 var row=r2&&!r2.error?r2.data:null;
                 if(row && row.status==="cancelled" && row.cancelled_by===(x.upd&&x.upd.cancelled_by) && String(row.cancel_reason||"")===String((x.upd&&x.upd.cancel_reason)||"")){
-                  var _su2=x.suite||{}; _lxAnnulApres(_su2.by||x.upd.cancelled_by||"salon", _su2.prevenir!==false, _su2.ro||null, _su2.motif||"");
+                  var _su2=x.suite||{}; _lxAnnulApres(_su2.by||x.upd.cancelled_by||"salon", _su2.prevenir!==false, _su2.ro||null, _su2.motif||"", x.id);
                 }
               }catch(_eR2){}
-            },function(){});
-          } }
-      },function(){});
+            },function(){}).then(_fin,_fin);
+          } if(!(res&&!res.error&&!(res.data&&res.data.length))) _fin(); } else _fin();
+      },function(){ _fin(); });
     });
   }catch(_e){}
 }
@@ -33228,6 +33245,11 @@ async function _lxCfgEcrireSectionsUneFois(valeurs){
     var aMettre=memV;
     if(connu && dbV!==undefined && dbV!==null && dbS!==refDb && dbS!==memS){
       var baseV; try{ baseV = refMem!==undefined ? JSON.parse(refMem) : undefined; }catch(_b){ baseV=undefined; }
+      if(k==="caisse_data" && typeof _lxCaisseFusion==="function" && memV && typeof memV==="object" && typeof dbV==="object"){
+        // 04/11/2026 (vérif. 8fd2998) : caisse -> fusion dédiée (listes par identifiant, coffre recalculé), sans fausse alerte de conflit
+        aMettre=_lxCaisseFusion((window._lxCaisseBase&&typeof window._lxCaisseBase==="object")?window._lxCaisseBase:(baseV||{}), memV, dbV);
+        try{ var _cdM=window.CAISSE_DATA; if(_cdM && typeof _cdM==="object"){ Object.keys(aMettre).forEach(function(kk){ _cdM[kk]=JSON.parse(JSON.stringify(aMettre[kk])); }); } window._lxCaisseEcrit=JSON.parse(JSON.stringify(aMettre)); }catch(_eCm){}
+      } else
       aMettre=_lxCfgFusionValeur(baseV, memV, dbV, k, conflitsCfg);
     }
     var aMettreS=lxJsonCanon(aMettre);
@@ -37257,6 +37279,7 @@ function rCaisseGestion(){
   if(CD.coffreChq===undefined)CD.coffreChq=0;
   if(!CD.misesAuCoffre)CD.misesAuCoffre=[];
   if(!CD.remisesBanque)CD.remisesBanque=CD.remises||[];
+  try{ _lxCoffreRecalc(CD); }catch(_eRc){}
   if(!CD.mouvements){CD.mouvements=[];if(CD.retraits)CD.retraits.forEach(function(r){CD.mouvements.push({id:r.id||("PC-"+(CD.mouvements.length+1)),date:r.date,type:r.type==="retrait"?"retrait":"ajout",motif:r.label||r.type,montant:r.montant});});if(CD.pieces)CD.pieces.forEach(function(p){CD.mouvements.push({id:p.id||("PC-"+(CD.mouvements.length+1)),date:p.date,type:p.montant<0?"depense":"recette",motif:p.label,montant:Math.abs(p.montant)});});}
   
   var h='';
@@ -37353,25 +37376,45 @@ function newMouvement(type){
 // que le bloc caisse. Confirme l'enregistrement et alerte en cas d'echec — un
 // mouvement de caisse perdu en silence est pire qu'un message d'erreur.
 // 04/11/2026 (audit A, I10) : fusion à trois (référence chargée / ce poste / base) de la caisse de gestion
+// 04/11/2026 (vérif. 8fd2998) : SOLDE DU COFFRE CALCULÉ, plus jamais fusionné comme un total.
+// coffre = report initial (ancien solde, converti UNE fois, id fixe « report-init ») + somme des mises au coffre - somme des remises
+// en banque. Les listes sont réunies par identifiant entre postes ; un renvoi (réponse perdue) réécrit les mêmes identifiants
+// sans rien compter deux fois. Donnée de gestion, hors NF525 (la Z ne lit que le fond de caisse).
+function _lxRemiseParts(r){ var m=Number(r&&r.montant)||0, t=String((r&&r.type)||""); if(t==="Ch\u00e8ques") return {esp:0,chq:m}; if(t==="Esp\u00e8ces") return {esp:m,chq:0}; var hf=m/2; return {esp:hf,chq:m-hf}; }
+function _lxCoffreDedupAutoZ(CD){
+  if(!Array.isArray(CD.misesAuCoffre)) return; var vus={}, out=[];
+  CD.misesAuCoffre.forEach(function(m){ if(m && m.autoZ===true && m.date){ if(vus[m.date]) return; vus[m.date]=1; } out.push(m); });
+  if(out.length!==CD.misesAuCoffre.length) CD.misesAuCoffre=out;
+}
+function _lxCoffreSommes(CD){
+  var me=0, mc=0, re=0, rc=0;
+  (Array.isArray(CD.misesAuCoffre)?CD.misesAuCoffre:[]).forEach(function(m){ if(!m||m.supprime) return; me+=Number(m.esp)||0; mc+=Number(m.chq)||0; });
+  (Array.isArray(CD.remisesBanque)?CD.remisesBanque:[]).forEach(function(r){ if(!r||r.supprime) return; var p=_lxRemiseParts(r); re+=p.esp; rc+=p.chq; });
+  return {me:me, mc:mc, re:re, rc:rc};
+}
+// Report initial : calculé UNE seule fois, à partir d'un état cohérent (solde stocké + listes du même état), de sorte que le
+// montant affiché ne change pas au passage à la nouvelle règle.
+function _lxCoffreAssurerReport(CD){
+  if(!CD || typeof CD!=="object") return;
+  if(!Array.isArray(CD.misesAuCoffre)) CD.misesAuCoffre=[];
+  if(!Array.isArray(CD.remisesBanque)) CD.remisesBanque=Array.isArray(CD.remises)?CD.remises:[];
+  _lxCoffreDedupAutoZ(CD);
+  if(CD.coffreReport && typeof CD.coffreReport==="object" && CD.coffreReport.id==="report-init") return;
+  var s=_lxCoffreSommes(CD), ce=(CD.coffreEsp!==undefined)?CD.coffreEsp:(CD.coffre||0), cc=CD.coffreChq||0;
+  CD.coffreReport={id:"report-init", esp:_lxR2(Number(ce)-s.me+s.re), chq:_lxR2(Number(cc)-s.mc+s.rc), le:new Date().toISOString()};
+}
+function _lxCoffreRecalc(CD){
+  CD=CD||window.CAISSE_DATA; if(!CD || typeof CD!=="object") return;
+  _lxCoffreAssurerReport(CD);
+  var s=_lxCoffreSommes(CD), r=CD.coffreReport||{esp:0,chq:0};
+  CD.coffreEsp=_lxR2((Number(r.esp)||0)+s.me-s.re); CD.coffreChq=_lxR2((Number(r.chq)||0)+s.mc-s.rc);
+}
+window._lxCoffreRecalc=_lxCoffreRecalc;
 function _lxCaisseCle(x){ try{ return (x && typeof x==="object" && x.id) ? "id:"+x.id : JSON.stringify(x); }catch(_e){ return String(x); } }
 function _lxCaisseFusion(base, loc, db){
-  // 04/11/2026 (contre-audit I2) : mise au coffre automatique d'une Z faite sur LES DEUX postes (chacun avait chargé avant
-  // l'écriture de l'autre) : on retire la version locale (liste ET coffre) si la date est déjà dans la base et pas dans la référence.
-  loc = JSON.parse(JSON.stringify(loc||{}));
-  try{
-    var _bz=(base&&base.coffreAutoZ)||{}, _lz=loc.coffreAutoZ||{}, _dz=(db&&db.coffreAutoZ)||{};
-    Object.keys(_lz).forEach(function(dt){
-      if(!_lz[dt] || _bz[dt] || !_dz[dt]) return;
-      var garde=[];
-      (Array.isArray(loc.misesAuCoffre)?loc.misesAuCoffre:[]).forEach(function(m){
-        if(m && m.autoZ===true && m.date===dt){
-          loc.coffreEsp=Math.round(((Number(loc.coffreEsp)||0)-(Number(m.esp)||0))*100)/100;
-          loc.coffreChq=Math.round(((Number(loc.coffreChq)||0)-(Number(m.chq)||0))*100)/100;
-        } else garde.push(m);
-      });
-      if(Array.isArray(loc.misesAuCoffre)) loc.misesAuCoffre=garde;
-    });
-  }catch(_eAz){}
+  // 04/11/2026 (vérif. 8fd2998) : listes réunies par identifiant ; solde du coffre RECALCULÉ (plus de fusion par différence de totaux).
+  loc = JSON.parse(JSON.stringify(loc||{})); db = db ? JSON.parse(JSON.stringify(db)) : db;
+  try{ _lxCoffreAssurerReport(loc); if(db && typeof db==="object") _lxCoffreAssurerReport(db); }catch(_eR){}
   var out = JSON.parse(JSON.stringify(loc||{}));
   var cles = {}; [base||{}, loc||{}, db||{}].forEach(function(o){ Object.keys(o).forEach(function(k){ cles[k]=1; }); });
   Object.keys(cles).forEach(function(k){
@@ -37379,11 +37422,13 @@ function _lxCaisseFusion(base, loc, db){
     if(Array.isArray(l) || Array.isArray(d)){
       var la=Array.isArray(l)?l:[], ba=Array.isArray(b)?b:[], da=Array.isArray(d)?d:[];
       var vuL={}, vuB={}; la.forEach(function(x){ vuL[_lxCaisseCle(x)]=1; }); ba.forEach(function(x){ vuB[_lxCaisseCle(x)]=1; });
-      var res=la.slice(); da.forEach(function(x){ var c=_lxCaisseCle(x); if(!vuL[c] && !vuB[c]){ res.push(x); vuL[c]=1; } }); // ajouts de l'autre poste (jamais ce qui a été supprimé ici)
+      var vuD={}; if(Array.isArray(d)) da.forEach(function(x){ vuD[_lxCaisseCle(x)]=1; });
+      // 04/11/2026 (vérif. 8fd2998) : un élément présent à la référence mais retiré dans la base (supprimé sur l'autre poste) n'est pas recréé
+      var res=la.filter(function(x){ var c=_lxCaisseCle(x); return !(Array.isArray(d) && vuB[c] && !vuD[c]); });
+      da.forEach(function(x){ var c=_lxCaisseCle(x); if(!vuL[c] && !vuB[c]){ res.push(x); vuL[c]=1; } }); // ajouts de l'autre poste (jamais ce qui a été supprimé ici)
       out[k]=res;
-    } else if(k==="coffreEsp" || k==="coffreChq"){
-      var nb=Number(b)||0, nl=Number(l)||0, nd=Number(d)||0;
-      out[k]=Math.round((nd + (nl - nb))*100)/100;
+    } else if(k==="coffreEsp" || k==="coffreChq" || k==="coffreReport"){
+      return; // recalculés ci-dessous
     } else if(l && typeof l==="object" && d && typeof d==="object"){
       out[k]=Object.assign({}, d, l);
     } else {
@@ -37391,6 +37436,10 @@ function _lxCaisseFusion(base, loc, db){
       out[k] = (same && d!==undefined) ? d : l;
     }
   });
+  // report : celui déjà en base l'emporte (même valeur en principe : calculé sur un état cohérent de chaque côté)
+  out.coffreReport = (db && db.coffreReport && db.coffreReport.id==="report-init") ? db.coffreReport : loc.coffreReport;
+  _lxCoffreDedupAutoZ(out);
+  _lxCoffreRecalc(out);
   return out;
 }
 // 04/11/2026 (vérif. 833b957) : enregistrements de la caisse SÉRIALISÉS sur ce poste (une fusion/écriture à la fois)
@@ -37412,6 +37461,7 @@ async function _lxSaveCaisseDataImpl(){
       var _lu = (typeof _lxCfgLire==="function") ? await _lxCfgLire() : null;
       var _db = (_lu && _lu.ok && _lu.cfg && _lu.cfg.caisse_data && typeof _lu.cfg.caisse_data==="object") ? _lu.cfg.caisse_data : null;
       var _base = window._lxCaisseBase;
+      try{ _lxCoffreRecalc(window.CAISSE_DATA); }catch(_eRc0){}
       if(_db && _base && typeof _base==="object"){
         var _fus = _lxCaisseFusion(_base, window.CAISSE_DATA, _db), _cd = window.CAISSE_DATA;
         Object.keys(_fus).forEach(function(k){ _cd[k] = _fus[k]; }); // même objet (des références CD = CAISSE_DATA sont gardées ailleurs)
@@ -37422,9 +37472,11 @@ async function _lxSaveCaisseDataImpl(){
     }catch(_eFu){ console.warn("[caisse] fusion", _eFu); }
     var v = { caisse_data: JSON.parse(JSON.stringify(window.CAISSE_DATA)) };
     if(typeof window.CAISSE_DATA.fond !== "undefined") v.fond_caisse = window.CAISSE_DATA.fond;
+    window._lxCaisseEcrit = null;
     var ok = await lxCfgEcrireSections(v);
     // 04/11/2026 (vérif. 833b957) : référence = ce qui a été ÉCRIT (pas la mémoire, qui a pu changer pendant l'écriture)
-    if(ok){ try{ window._lxCaisseBase = JSON.parse(JSON.stringify(v.caisse_data)); }catch(_eB){} }
+    // (vérif. 8fd2998) : si l'écriture a dû fusionner après un conflit de version, c'est la valeur fusionnée qui a été écrite
+    if(ok){ try{ window._lxCaisseBase = JSON.parse(JSON.stringify(window._lxCaisseEcrit || v.caisse_data)); }catch(_eB){} }
     return ok ? {ok:true} : {ok:false,error:"enregistrement de la configuration impossible"};
   }catch(e){ return {ok:false,error:(e&&e.message)||"erreur"}; }
 }
@@ -37472,13 +37524,10 @@ function addRemiseBanque(){
 function doRemiseBanque(){
   var val=parseFloat(document.getElementById("rbVal").value)||0;var type=document.getElementById("rbType").value;
   if(val<=0){cM();return;}
+  _lxCoffreAssurerReport(window.CAISSE_DATA);
   window.CAISSE_DATA.remisesBanque.push({id:"rb-"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),date:TD,type:type,montant:val}); // 04/11/2026 : identifiant (fusion entre postes)
   auditLog("REMISE_BANQUE",type+" "+val.toFixed(2)+"E");
-  // 04/11/2026 (vérif. 833b957) : plus de plancher à 0 -> la différence exacte (-val) est fusionnée entre postes même si ce poste avait un coffre périmé
-  var _r2=function(x){return Math.round(x*100)/100;};
-  if(type==="Ch\u00e8ques")window.CAISSE_DATA.coffreChq=_r2((Number(window.CAISSE_DATA.coffreChq)||0)-val);
-  else if(type==="Esp\u00e8ces")window.CAISSE_DATA.coffreEsp=_r2((Number(window.CAISSE_DATA.coffreEsp)||0)-val);
-  else{var hf=val/2;window.CAISSE_DATA.coffreEsp=_r2((Number(window.CAISSE_DATA.coffreEsp)||0)-hf);window.CAISSE_DATA.coffreChq=_r2((Number(window.CAISSE_DATA.coffreChq)||0)-(val-hf));}
+  _lxCoffreRecalc(window.CAISSE_DATA); // 04/11/2026 (vérif. 8fd2998) : solde calculé à partir des mouvements
   _lxCaisseSaveEtAlerte("La remise en banque"); // FIX 2026-08-31 : ecriture dediee de la caisse
   cM();go("caisseGestion");
 }
@@ -40557,13 +40606,13 @@ function lxTexteRetractConfirm(ro, acompte){
         : " Vous pouvez vous rétracter sans frais avant le rendez-vous ; une fois la prestation entièrement réalisée, vous ne pouvez plus vous rétracter.");
   }catch(e){ return ""; }
 }
-async function _lxMessageCliente(ro, titre, icone, texteEmail, texteSms, lien){
+async function _lxMessageCliente(ro, titre, icone, texteEmail, texteSms, lien, opts){
   try{
     if(ro.email){
       var corps=_lxEsc(texteEmail).replace(/\n/g,"<br>");
       var bt=lien?[{t:"💳 Régler l’acompte",u:lien,principal:true}]:_lxBoutonsSalon();
-      var re=await sendEmailViaWorker(ro.email,((ro.prenom||"")+" "+(ro.nom||"")).trim(),titre+" - "+(SALON_CONFIG.nom||""),lxEmailSalon({icone:icone,titre:titre,salutation:ro.prenom||"",carte:corps,boutons:bt}));
-      if(re&&re.ok) return "email";
+      var re=await sendEmailViaWorker(ro.email,((ro.prenom||"")+" "+(ro.nom||"")).trim(),titre+" - "+(SALON_CONFIG.nom||""),lxEmailSalon({icone:icone,titre:titre,salutation:ro.prenom||"",carte:corps,boutons:bt}),opts||undefined);
+      if(re&&re.ok) return re.deduplique?null:"email"; // 04/11/2026 : déjà envoyé par un autre onglet/appareil -> ni SMS ni 2e message
     }
     if(ro.tel && typeof sendSms==="function"){
       var t=(typeof lxSmsGsm==="function")?lxSmsGsm(texteSms):texteSms;
