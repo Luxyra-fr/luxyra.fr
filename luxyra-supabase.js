@@ -4,7 +4,7 @@
 // BUILD: 20260426-04 — fix CSS options dropdown lisibles
 window.__LUXYRA_BUILD = "20260426-04";
 // 2026-10-14 : version de la couche donnees, comparee par app.html (evite un melange ancienne/nouvelle version via le cache)
-window.LX_DATA_VERSION = "20261104-9"; // 04/11 (-9) : Z « déjà enregistrée » seulement si même id ou même jour en base (jamais sur le seul n°), refus de n° = Z conservée en file, journée jamais rouverte si une Z du jour existe, contre-ticket : ventilation de l origine revalidée + journal scellé chargé, ticket refusé bloqué dès le 1er refus ; 04/11 (-8) : Z déjà enregistrée reconnue malgré un refus de numéro (renvoi, 2e poste), libellés de refus de Z distincts, refus définitifs de ticket (règlement / TVA) signalés ; // 04/11 (-7) : NF525 audit C — Z refusée par la base pour numéro hors séquence (LX_Z_NUM_IMPOSE) ou répartition des règlements différente du journal (LX_Z_REPARTITION) traitée comme les autres refus définitifs de Z (journée laissée ouverte, message) ; // 04/11 (-6) : solde du coffre calculé depuis les mouvements (report initial), annulation renvoyée une seule fois ; // 04/11 (-5) : caisse sérialisée, remise sans plancher, annulation renvoyée détectée ; // 04/11 (-4) : file de secours d une fiche avant l attente de chargement ; ancien (-3) : 04/11 (-3) : caisse fusionnée entre postes, écritures après chargement, instantané local complet, infos établissement champs modifiés seulement ; 04/11 (-2) : mention « sans préférence » jamais figée, panier repris sans règlement partiel ; 04/11 (-1) : fenêtres de nouveau à leur largeur d origine sur ordinateur (règle :where) ; 03/11 (-7) : audit A/B — RDV jamais ressuscités, consentements, fidélité source unique, panier persistant ; (-6) : contrat, empreinte contrôlée par le serveur + texte signé conservé (couche données inchangée) ; 03/11 (-5) : 03/11 (-5) : signature du contrat dans l'appli (bandeau propriétaire, couche données inchangée) ; 03/11 (-4) : reprise d abonnement après suppression du Kbis (5 ans) = nouveau délai de 15 jours ; 03/11 (-3) : copie d identité supprimée comptée comme reçue seulement si identité vérifiée (contre-audit RGPD I2) ;  03/11 (-2) : pièce d'identité supprimée après vérification (RGPD) = justificatif reçu, jamais de blocage ;  03/11 (-1) : glisser-déposer tactile protégé du rafraîchissement, note « confirmation déjà envoyée automatiquement », retour de date (force). 02/11 (-12) : case rétractation sans paiement + rappel dans les e-mails de confirmation, planning (case avant la pause, Encaissé direct en multi-jours, collaborateurs partis, retour de date) ; (-11) : planning, vue plusieurs jours = mêmes RDV que la vue 1 jour (encaissements directs, anciens collaborateurs) + case de grille dans une pause = heure exacte de la pause (couche données inchangée). 02/11 (-10) : planning, pause des forfaits touchable aussi en vue plusieurs jours (couche données inchangée). 02/11 (-9) : conformité (slugs cgu/dpa réservés, message refus offres SMS, commentaires anonymisés). 02/11 (-8) : planning, retour après création client depuis Nouveau RDV sur le bon collaborateur (contre-audit I1), libellés échappés (couche données inchangée). // 02/11 (-7) : 02/11 (-6) : planning, heures de chaque étape d un forfait + pause touchable (couche données inchangée). // 02/11 (-4) : réservations en ligne déjà au planning recalculées en entier au chargement (si étapes automatiques). // 02/11 (-3) : planning, réservation en ligne multi-prestations reprise en entier (couche données inchangée). // 02/11 (-2) : médiateur de la consommation (config_json.mediateur) relu. // 02/11 (-1) : offres refusées par le client (compte en ligne) lues (smsPub / emPub) et exclues des envois publicitaires. // 01/11 (-2) : annulation refusée par le serveur relue depuis meta (lxAnnulRefusee), lien de modification. // 01/11 (-1) : champs saisis par les clients sans < > " (audit global, lot S1). // 31/10 (-14) : vue établissement, garde-fou de navigation (window.open, liens et formulaires externes bloqués). // 31/10 (-13) : vue établissement, secrets jamais lus (vues lxv_*), opérateurs non chargés, ancienne vue luxyra.fr supprimée. // 31/10 (-12) : vue établissement sur vue.luxyra.fr (jeton de lecture 15 min, relais /sb, plus jamais la session admin). // 31/10 (-11) : vue admin, /api/stripe/fees retiré de la liste de lecture (refusé par le serveur). // 31/10 (-10) : factures Luxyra rendues par le serveur (FR complet). // 31/10 (-9) : e-mails en série espacés + nouvelle tentative, limite du jour affichée (couche données inchangée). Précédent -8 : // 31/10 (-8) : bons cadeaux, palettes + e-carte en caisse + formats A4. // 31/10 (-7) : tarif Fondateur sur l écran fin d essai. // 31/10 (-6) : bons cadeaux, échappement des champs acheteur (H1) + réserves R1-R7. // 2026-10-31 (-5) : modele des bons cadeaux (config_json.bonModele) lu au chargement. Precedent : "20261031-4"
+window.LX_DATA_VERSION = "20261104-10"; // 04/11 (-10) : NF525 réserves a/b/c — Z en file jamais retirée sur un seul 23505, Z refusée pour son n° renumérotée (empreinte recalculée, ancien n° tracé), contre-ticket jamais à TVA 0 pour une vente avec TVA (annulation reportée hors ligne) ; 04/11 (-9) : Z « déjà enregistrée » seulement si même id ou même jour en base (jamais sur le seul n°), refus de n° = Z conservée en file, journée jamais rouverte si une Z du jour existe, contre-ticket : ventilation de l origine revalidée + journal scellé chargé, ticket refusé bloqué dès le 1er refus ; 04/11 (-8) : Z déjà enregistrée reconnue malgré un refus de numéro (renvoi, 2e poste), libellés de refus de Z distincts, refus définitifs de ticket (règlement / TVA) signalés ; // 04/11 (-7) : NF525 audit C — Z refusée par la base pour numéro hors séquence (LX_Z_NUM_IMPOSE) ou répartition des règlements différente du journal (LX_Z_REPARTITION) traitée comme les autres refus définitifs de Z (journée laissée ouverte, message) ; // 04/11 (-6) : solde du coffre calculé depuis les mouvements (report initial), annulation renvoyée une seule fois ; // 04/11 (-5) : caisse sérialisée, remise sans plancher, annulation renvoyée détectée ; // 04/11 (-4) : file de secours d une fiche avant l attente de chargement ; ancien (-3) : 04/11 (-3) : caisse fusionnée entre postes, écritures après chargement, instantané local complet, infos établissement champs modifiés seulement ; 04/11 (-2) : mention « sans préférence » jamais figée, panier repris sans règlement partiel ; 04/11 (-1) : fenêtres de nouveau à leur largeur d origine sur ordinateur (règle :where) ; 03/11 (-7) : audit A/B — RDV jamais ressuscités, consentements, fidélité source unique, panier persistant ; (-6) : contrat, empreinte contrôlée par le serveur + texte signé conservé (couche données inchangée) ; 03/11 (-5) : 03/11 (-5) : signature du contrat dans l'appli (bandeau propriétaire, couche données inchangée) ; 03/11 (-4) : reprise d abonnement après suppression du Kbis (5 ans) = nouveau délai de 15 jours ; 03/11 (-3) : copie d identité supprimée comptée comme reçue seulement si identité vérifiée (contre-audit RGPD I2) ;  03/11 (-2) : pièce d'identité supprimée après vérification (RGPD) = justificatif reçu, jamais de blocage ;  03/11 (-1) : glisser-déposer tactile protégé du rafraîchissement, note « confirmation déjà envoyée automatiquement », retour de date (force). 02/11 (-12) : case rétractation sans paiement + rappel dans les e-mails de confirmation, planning (case avant la pause, Encaissé direct en multi-jours, collaborateurs partis, retour de date) ; (-11) : planning, vue plusieurs jours = mêmes RDV que la vue 1 jour (encaissements directs, anciens collaborateurs) + case de grille dans une pause = heure exacte de la pause (couche données inchangée). 02/11 (-10) : planning, pause des forfaits touchable aussi en vue plusieurs jours (couche données inchangée). 02/11 (-9) : conformité (slugs cgu/dpa réservés, message refus offres SMS, commentaires anonymisés). 02/11 (-8) : planning, retour après création client depuis Nouveau RDV sur le bon collaborateur (contre-audit I1), libellés échappés (couche données inchangée). // 02/11 (-7) : 02/11 (-6) : planning, heures de chaque étape d un forfait + pause touchable (couche données inchangée). // 02/11 (-4) : réservations en ligne déjà au planning recalculées en entier au chargement (si étapes automatiques). // 02/11 (-3) : planning, réservation en ligne multi-prestations reprise en entier (couche données inchangée). // 02/11 (-2) : médiateur de la consommation (config_json.mediateur) relu. // 02/11 (-1) : offres refusées par le client (compte en ligne) lues (smsPub / emPub) et exclues des envois publicitaires. // 01/11 (-2) : annulation refusée par le serveur relue depuis meta (lxAnnulRefusee), lien de modification. // 01/11 (-1) : champs saisis par les clients sans < > " (audit global, lot S1). // 31/10 (-14) : vue établissement, garde-fou de navigation (window.open, liens et formulaires externes bloqués). // 31/10 (-13) : vue établissement, secrets jamais lus (vues lxv_*), opérateurs non chargés, ancienne vue luxyra.fr supprimée. // 31/10 (-12) : vue établissement sur vue.luxyra.fr (jeton de lecture 15 min, relais /sb, plus jamais la session admin). // 31/10 (-11) : vue admin, /api/stripe/fees retiré de la liste de lecture (refusé par le serveur). // 31/10 (-10) : factures Luxyra rendues par le serveur (FR complet). // 31/10 (-9) : e-mails en série espacés + nouvelle tentative, limite du jour affichée (couche données inchangée). Précédent -8 : // 31/10 (-8) : bons cadeaux, palettes + e-carte en caisse + formats A4. // 31/10 (-7) : tarif Fondateur sur l écran fin d essai. // 31/10 (-6) : bons cadeaux, échappement des champs acheteur (H1) + réserves R1-R7. // 2026-10-31 (-5) : modele des bons cadeaux (config_json.bonModele) lu au chargement. Precedent : "20261031-4"
 // (historique) "20261028-3"; // 2026-10-28 (-3, Luxyra 6.8.1 : version de l'application transmise dans chaque ticket (raw_data.lxVersion, contrôlée par le serveur), série de n° imprimés propre au serveur (meta.tkNumServeur), copies serveur jamais réécrites, refus LX_APP_OBSOLETE / LX_TKNUM_SERIE_SERVEUR / LX_CC_DEJA_EN_CAISSE)
 // (historique) "20261028-2"; // 2026-10-28 (-2, Luxyra 6.8.0 : recettes en ligne enregistrées en caisse par le serveur — champs meta serveur / recetteKey…, refus définitif LX_CC_DEJA_EN_CAISSE)
 // (historique) "20261028-1"; // 2026-10-28 (-1 : bons cadeaux à usage unique / multiple — qualification TVA du bon (usage_tva, qualif_tva, repli historique), ticket v2 HT/TVA par ventilation de l'app, taux_tva 0 pour une vente de BUM seule, bonsUtil conservé dans appointments.meta) ; 2026-10-27 (-3 : rapport du mois en vrai PDF + correctifs d’exports comptables, app.html seulement ; -2 : envoi au comptable — FEC + pack Excel + rapport par défaut, ZIP en option, app.html seulement ; -1 : envoi automatique au comptable — changement dans app.html seulement, couche données inchangée) ; 2026-10-17 (-2 : audit réglages — taux TVA produits brut (tvaProduitsColonne), familles produit sans produit (pcats), ancien saveSalonConfig renommé ; -1 : retour / remboursement partiel — champs du ticket de retour conservés dans appointments.meta, refus définitif LX_RETOUR_REFUSE jamais rejoué, ticket de retour refusé au rejeu écarté de la caisse) ; 2026-10-16 (-1 : incident Z n°128 — 1 réservation en ligne = 1 entrée, Z refusée par la base si différente du journal, annotations correctives) ; 2026-10-15 (-3 : multi-appareils, champs modifiés seulement + lignes supprimées ailleurs jamais recréées ; -2 : plus aucun enregistrement muet, lxEcritureVerifiee ; -1 : « Prix à partir de » + sur devis sur les forfaits) ; 2026-10-14 (-8 : correctifs revue d intégration) intégration des audits (données, sécurité, planning, clients, caisse, site, réglages)
@@ -579,7 +579,10 @@ async function _walResync(walId, force){
       } catch (_eMk) {}
       return { ok: true, deja: !!(r && typeof r === "object" && r.deja) }; // deja : transmise entre-temps par une sauvegarde normale
     }
-    if (_walResultatDoublonPermanent(r)) {
+    // 04/11/2026 (NF525, réserve a) : pour une CLÔTURE Z, un 23505 n'est JAMAIS « doublon » à lui seul : saveCloture a déjà
+    // vérifié en base (même id ou même jour) et renvoyé { ok: true, deja: true } dans ce cas ; sinon la Z reste en file (alerte).
+    // (un refus DÉFINITIF de la Z par le contrôle du journal — refuseeJournal — sort de la file comme avant : journée rouverte)
+    if ((entry.type !== "cloture" && _walResultatDoublonPermanent(r)) || (entry.type === "cloture" && r && r.refuseeJournal === true)) {
       // déjà en base : équivalent synchronisé (aucune perte, évite un rejeu à chaque démarrage)
       _walMarkSynced(walId);
       return { ok: true, doublon: true };
@@ -4696,6 +4699,54 @@ async function lxChargerAnnotationsZ() {
 }
 if (typeof window !== "undefined") window.lxChargerAnnotationsZ = lxChargerAnnotationsZ;
 
+// 04/11/2026 (NF525, réserve b) : date AAAA-MM-JJ -> JJ/MM/AAAA (messages)
+function _lxDateFr(d){ var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d || "")); return m ? (m[3] + "/" + m[2] + "/" + m[1]) : String(d || ""); }
+// 04/11/2026 (NF525, réserve b) : met à jour la copie de la Z en file de secours (même id) et en mémoire (window.CLOTURES)
+function _lxZPropager(clot){
+  try { (window.CLOTURES || []).forEach(function(c){ if (c && c.id === clot.id && c !== clot) { c.num = clot.num; c.hash = clot.hash; c.numInitial = clot.numInitial; c.hashInitial = clot.hashInitial; c.renumeroteeLe = clot.renumeroteeLe; } }); } catch (_eC) {}
+}
+function _walMajCloture(clot, synced){
+  try {
+    var wal = JSON.parse(localStorage.getItem(_WAL_KEY) || "[]"), ch = false;
+    for (var i = 0; i < wal.length; i++) {
+      var e = wal[i];
+      if (e && e.type === "cloture" && e.salon_id === _salonId && e.data && e.data.id === clot.id) {
+        var d = JSON.parse(JSON.stringify(clot)); try { delete d._lxRecalEnCours; } catch (_eD) {}
+        e.data = d; if (synced) { e.synced = true; e.syncedAt = new Date().toISOString(); } ch = true;
+      }
+    }
+    if (ch) localStorage.setItem(_WAL_KEY, JSON.stringify(wal));
+  } catch (_e) {}
+}
+// Recalage du numéro d'une Z refusée (LX_Z_NUM_IMPOSE). Renvoie { recale: true } si la Z a été renumérotée en mémoire.
+async function _lxZRecaler(clot){
+  try {
+    if (!clot || !clot.id || !clot.date || !_sb || !_salonId) return { recale: false, raison: "donnees" };
+    // 1) une Z ANTÉRIEURE de cet appareil attend encore : elle passe d'abord (pas de recalage)
+    var _w = (typeof window._walGetAll === "function") ? window._walGetAll() : [];
+    var _avant = _w.filter(function(e){ return e && !e.synced && e.type === "cloture" && e.salon_id === _salonId && e.data && e.data.id !== clot.id && String(e.data.date || "") < String(clot.date); });
+    if (_avant.length) return { recale: false, raison: "Z antérieure en attente" };
+    // 2) chaînage mémorisé à la création (Luxyra ≥ 20261104-10) : sans lui, l'empreinte ne peut pas être recalculée -> pas de recalage
+    var zc = clot.zChaine;
+    if (!zc || zc.tk == null || zc.siret == null || typeof window.sha256Sync !== "function") return { recale: false, raison: "chaînage absent" };
+    var f = function(n){ return "Z|" + n + "|" + clot.date + "|" + Number(clot.totalCA).toFixed(2) + "|" + Number(clot.totalHT).toFixed(2) + "|" + clot.nbTickets + "|" + clot.nbAnnul + "|" + zc.tk + "|" + zc.siret; };
+    // 3) l'empreinte d'origine doit se recalculer à l'identique (sinon : aucune modification)
+    if (window.sha256Sync(f(clot.num)) !== clot.hash) return { recale: false, raison: "empreinte d'origine non reproductible" };
+    // 4) dernier n° en base
+    var q = await _sb.from("clotures").select("num").eq("salon_id", _salonId).order("num", { ascending: false }).limit(1);
+    if (!q || q.error) return { recale: false, raison: "lecture impossible" };
+    var nouv = ((q.data && q.data[0] && Number(q.data[0].num)) || 0) + 1;
+    if (!(nouv > 0) || nouv === Number(clot.num)) return { recale: false, raison: "numéro inchangé" };
+    var ancNum = clot.num, ancHash = clot.hash;
+    if (clot.numInitial == null) { clot.numInitial = ancNum; clot.hashInitial = ancHash; }
+    clot.num = nouv; clot.hash = window.sha256Sync(f(nouv)); clot.renumeroteeLe = new Date().toISOString();
+    _lxZPropager(clot); _walMajCloture(clot, false);
+    try { if (typeof saveAuditEntry === "function") saveAuditEntry("Z_RENUMEROTEE", JSON.stringify({ cloture_id: clot.id, cloture_date: clot.date, ancien_num: ancNum, nouveau_num: nouv, ancien_hash: ancHash, nouveau_hash: clot.hash, motif: "numéro déjà attribué en base (LX_Z_NUM_IMPOSE), aucune Z de ce jour en base" }).slice(0, 2000)); } catch (_eA) {}
+    return { recale: true, ancien: ancNum, nouveau: nouv };
+  } catch (e) { return { recale: false, raison: String(e && e.message || e) }; }
+}
+if (typeof window !== "undefined") window._lxZRecaler = _lxZRecaler;
+
 async function saveCloture(clot) {
   if (!_isOnline || !_salonId) return { ok: false, skipped: true }; // 2026-10-14 audit : résultat explicite
   if (_lxEcrituresBloquees()) return { ok: false, skipped: true, reason: "lecture seule" }; // 2026-10-14 audit
@@ -4706,7 +4757,7 @@ async function saveCloture(clot) {
   var raw = {};
   try {
     for (var k in clot) {
-      if (Object.prototype.hasOwnProperty.call(clot, k) && k !== "id") {
+      if (Object.prototype.hasOwnProperty.call(clot, k) && k !== "id" && k.indexOf("_lx") !== 0) { // 04/11 (réserve b) : marqueurs internes _lx* jamais écrits
         var v = clot[k];
         if (typeof v !== "function" && typeof v !== "undefined") raw[k] = v;
       }
@@ -4771,11 +4822,37 @@ async function saveCloture(clot) {
   }
   // Vrai refus de NUMÉRO (aucune Z de ce jour en base) : la Z n'est JAMAIS retirée de la file ni la journée rouverte :
   // une Z antérieure de cet appareil est en attente de transmission. Elle reste en file (nouvel essai) + alerte.
+  // 04/11/2026 (NF525, réserve b) : refus de NUMÉRO sans Z de ce jour en base et sans Z antérieure de cet appareil en attente
+  // -> la Z est RENUMÉROTÉE proprement (n° = dernier n° en base + 1) : empreinte recalculée exactement comme à sa création
+  // (même formule, même chaînage de tickets et SIRET mémorisés sur la Z), contrôlée d'abord en recalculant l'empreinte
+  // d'origine (si elle ne correspond pas : aucune modification, Z gardée en file). Ancien n° / ancienne empreinte conservés
+  // dans raw_data (numInitial / hashInitial) + trace Z_RENUMEROTEE. Un seul recalage par envoi (pas de boucle).
+  var _rec = null;
+  if (res.error && /LX_Z_NUM_IMPOSE/.test(String(res.error.message || "")) && !clot._lxRecalEnCours) {
+    _rec = await _lxZRecaler(clot);
+    if (_rec && _rec.recale) {
+      var _pbR = window._walBypass; window._walBypass = true; clot._lxRecalEnCours = true;
+      var _resR;
+      try { _resR = saveCloture(clot); } finally { window._walBypass = _pbR; }
+      _resR = await _resR; try { delete clot._lxRecalEnCours; } catch (_eDl) {}
+      if (_resR && _resR.ok) {
+        _walMarkSynced(_walId); _walMajCloture(clot, true);
+        if (typeof toast === "function") toast("✓ Clôture Z du " + _lxDateFr(clot.date) + " transmise sous le n°" + clot.num + " (n°" + clot.numInitial + " déjà attribué). Le duplicata porte désormais le n°" + clot.num + ".", "success");
+        return { ok: true, renumerotee: true, ancienNum: clot.numInitial, num: clot.num };
+      }
+      if (_resR && _resR.refuseeJournal) { _walMarkSynced(_walId); _walMajCloture(clot, true); return _resR; } // refus définitif traité comme à un 1er envoi
+      if (typeof toast === "function") toast("⚠️ Clôture Z du " + _lxDateFr(clot.date) + " renumérotée n°" + clot.num + " mais pas encore acceptée par le serveur. Elle reste conservée sur cet appareil et sera renvoyée automatiquement ; le support est alerté.", "error");
+      return _resR || { ok: false, error: res.error, numeroEnAttente: true };
+    }
+  }
   if (res.error && /LX_Z_NUM_IMPOSE/.test(String(res.error.message || ""))) {
     console.error("[saveCloture] Z refusée (numéro hors séquence), conservée en file :", res.error.message);
     try { if (typeof saveAuditEntry === "function") saveAuditEntry("Z_REFUSEE_NUMERO", JSON.stringify({ cloture_num: clot.num || null, cloture_date: clot.date || null, total: clot.totalCA, nb: clot.nbTickets, conservee_en_file: true, msg: String(res.error.message || "").slice(0, 400) }).slice(0, 2000)); } catch (_eA) {}
     try { if (typeof saveAuditEntry === "function") saveAuditEntry("DB_ERROR", JSON.stringify({ fn: "saveCloture", code: "LX_Z_NUM_IMPOSE", cloture_num: clot.num || null, cloture_date: clot.date || null, severity: "critical" }).slice(0, 2000)); } catch (_eB) {}
-    if (typeof toast === "function") toast("⚠️ Clôture Z n°" + (clot.num || "?") + " en attente : une clôture précédente doit d'abord être transmise. Elle reste sur cet appareil et sera renvoyée automatiquement.", "error");
+    if (typeof toast === "function" && !clot._lxRecalEnCours) {
+      if (_rec && _rec.raison === "Z antérieure en attente") toast("⚠️ Clôture Z du " + _lxDateFr(clot.date) + " en attente : une clôture précédente de cet appareil doit d'abord être transmise. Elle reste sur cet appareil et sera renvoyée automatiquement.", "error");
+      else toast("⚠️ Clôture Z du " + _lxDateFr(clot.date) + " (n°" + (clot.num || "?") + ") refusée : ce numéro est déjà attribué et elle ne peut pas être renumérotée automatiquement (" + ((_rec && _rec.raison) || "raison inconnue") + "). Elle reste conservée sur cet appareil ; le support est alerté.", "error");
+    }
     return { ok: false, error: res.error, numeroEnAttente: true };
   }
   if (res.error && /LX_Z_ECART_JOURNAL|LX_Z_ECART_TVA|LX_Z_VENTES_NON_TRANSMISES|LX_Z_JOURNEE_ANTERIEURE_OUVERTE|LX_Z_NUM_IMPOSE|LX_Z_REPARTITION/.test(String(res.error.message || ""))) {
