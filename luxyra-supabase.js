@@ -431,6 +431,8 @@ function _walNoterEssai(walId, okOuErreur, reseau){
     for (var i=0; i<wal.length; i++) {
       if (wal[i].id === walId) {
         wal[i].tries = (Number(wal[i].tries)||0) + 1;
+        // 04/11 (contre-audit I2) : refus de contrôle (règlement / TVA) = définitif tel quel -> listé tout de suite à la Z (Signaler / Forcer)
+        if (!wal[i].bloque && /LX_TICKET_REGLEMENT|LX_TICKET_TVA/.test(String(okOuErreur || ""))) { wal[i].bloque = true; wal[i].bloqueAt = new Date().toISOString(); }
         if (!reseau) {
           wal[i].echecsServeur = (Number(wal[i].echecsServeur)||0) + 1;
           if (wal[i].echecsServeur >= _WAL_BLOQUE_ESSAIS && !wal[i].bloque) { wal[i].bloque = true; wal[i].bloqueAt = new Date().toISOString(); }
@@ -4362,6 +4364,21 @@ async function saveTicketToDb(tk) {
       var _rep = await _lxTicketReporter(tk, data, dateStr, timeStr, res.error, _walId);
       if (_rep && _rep.data) return _rep.data;
       if (_rep && _rep.error) res = { error: _rep.error };
+    }
+    // 04/11/2026 (contre-audit ef9c175, I2) : refus de CONTRÔLE (règlement ≠ total, HT/TVA incohérents) : le ticket n'est jamais
+    // perdu (il reste dans la file de secours, la Z du jour le signale avec Signaler / Forcer), mais le message dit la vérité :
+    // il ne repartira pas tel quel ; une seule alerte support critique par ticket.
+    if (res.error && /LX_TICKET_REGLEMENT|LX_TICKET_TVA/.test(String(res.error.message || ""))) {
+      var _ctlCode = /LX_TICKET_TVA/.test(String(res.error.message || "")) ? "LX_TICKET_TVA" : "LX_TICKET_REGLEMENT";
+      try { tk._dbError = { at: new Date().toISOString(), msg: String(res.error.message || ""), code: _ctlCode, controle: true }; } catch(_eK0){}
+      var _ctlK = "lx_ctl_signale_" + (_salonId || "") + "_" + (tk.id || tk.tkNum || ""), _ctlDeja = false;
+      try { _ctlDeja = !!localStorage.getItem(_ctlK); } catch(_eK9){}
+      if (!tk._lxCtlSignale && !_ctlDeja) {
+        try { tk._lxCtlSignale = true; localStorage.setItem(_ctlK, "1"); } catch(_eK1){}
+        try { if (typeof toast === "function") toast("Ticket #" + (tk.tkNum || "?") + " refusé par le contrôle du serveur (" + (_ctlCode === "LX_TICKET_TVA" ? "TVA / HT incohérents" : "règlement différent du total") + "). Il est conservé sur cet appareil et le support est prévenu : il apparaîtra à la clôture Z (Signaler / Forcer).", "error"); } catch(_eK2){}
+        try { if (typeof saveAuditEntry === "function") saveAuditEntry("DB_ERROR", JSON.stringify({ fn: "saveTicketToDb", gravite: "critical", code: _ctlCode, msg: String(res.error.message || "").slice(0, 400), tk_num: tk.tkNum || null, tk_id: tk.id || null, tk_total: tk.pr || null }).slice(0, 2000)); } catch(_eK3){}
+      }
+      return null;
     }
     if (res.error) {
       console.warn("[saveTicketToDb] insert error", res.error);
