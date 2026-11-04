@@ -422,12 +422,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261104-4"></script>
+<script src="luxyra-supabase.js?v=20261104-5"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261104-4";
+  var attendu="20261104-5";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -15442,7 +15442,19 @@ function _lxAnnulFileRejouer(){
         if(res&&!res.error){ try{ var g=JSON.parse(localStorage.getItem(_lxAnnulFileCle())||"[]").filter(function(y){ return y&&y.id!==x.id; }); localStorage.setItem(_lxAnnulFileCle(),JSON.stringify(g)); }catch(_e2){}
           if(res.data&&res.data.length){ try{ toast("Annulation envoy\u00e9e (rendez-vous en ligne)","success"); }catch(_t){}
             // 04/11/2026 (contre-audit final) : au renvoi, mêmes suites qu'une annulation directe (client prévenu, no-show)
-            try{ var _su=x.suite||{}; _lxAnnulApres(_su.by||(x.upd&&x.upd.cancelled_by)||"salon", _su.prevenir!==false, _su.ro||null, _su.motif||""); }catch(_eSu){} } }
+            try{ var _su=x.suite||{}; _lxAnnulApres(_su.by||(x.upd&&x.upd.cancelled_by)||"salon", _su.prevenir!==false, _su.ro||null, _su.motif||""); }catch(_eSu){} }
+          else {
+            // 04/11/2026 (vérif. 833b957) : aucune ligne modifiée -> l'annulation est peut-être DÉJÀ arrivée au premier envoi
+            // (réponse perdue). Si la base montre NOTRE annulation (même auteur, même motif), on applique les suites une seule fois.
+            _sb.from("rdv_online").select("status,cancelled_by,cancel_reason").eq("id",x.id).eq("salon_id",window._salonId).maybeSingle().then(function(r2){
+              try{
+                var row=r2&&!r2.error?r2.data:null;
+                if(row && row.status==="cancelled" && row.cancelled_by===(x.upd&&x.upd.cancelled_by) && String(row.cancel_reason||"")===String((x.upd&&x.upd.cancel_reason)||"")){
+                  var _su2=x.suite||{}; _lxAnnulApres(_su2.by||x.upd.cancelled_by||"salon", _su2.prevenir!==false, _su2.ro||null, _su2.motif||"");
+                }
+              }catch(_eR2){}
+            },function(){});
+          } }
       },function(){});
     });
   }catch(_e){}
@@ -37381,7 +37393,14 @@ function _lxCaisseFusion(base, loc, db){
   });
   return out;
 }
-async function saveCaisseData(){
+// 04/11/2026 (vérif. 833b957) : enregistrements de la caisse SÉRIALISÉS sur ce poste (une fusion/écriture à la fois)
+var _lxCaisseFile = Promise.resolve();
+function saveCaisseData(){
+  var p = _lxCaisseFile.then(_lxSaveCaisseDataImpl, _lxSaveCaisseDataImpl);
+  _lxCaisseFile = p.then(function(){}, function(){});
+  return p;
+}
+async function _lxSaveCaisseDataImpl(){
   try{
     if(typeof _sb==="undefined" || !_sb || typeof _salonId==="undefined" || !_salonId) return {ok:false,error:"hors ligne"};
     if(!window.CAISSE_DATA || typeof window.CAISSE_DATA!=="object") return {ok:false,error:"aucune donnee"};
@@ -37404,7 +37423,8 @@ async function saveCaisseData(){
     var v = { caisse_data: JSON.parse(JSON.stringify(window.CAISSE_DATA)) };
     if(typeof window.CAISSE_DATA.fond !== "undefined") v.fond_caisse = window.CAISSE_DATA.fond;
     var ok = await lxCfgEcrireSections(v);
-    if(ok){ try{ window._lxCaisseBase = JSON.parse(JSON.stringify(window.CAISSE_DATA)); }catch(_eB){} }
+    // 04/11/2026 (vérif. 833b957) : référence = ce qui a été ÉCRIT (pas la mémoire, qui a pu changer pendant l'écriture)
+    if(ok){ try{ window._lxCaisseBase = JSON.parse(JSON.stringify(v.caisse_data)); }catch(_eB){} }
     return ok ? {ok:true} : {ok:false,error:"enregistrement de la configuration impossible"};
   }catch(e){ return {ok:false,error:(e&&e.message)||"erreur"}; }
 }
@@ -37454,9 +37474,11 @@ function doRemiseBanque(){
   if(val<=0){cM();return;}
   window.CAISSE_DATA.remisesBanque.push({id:"rb-"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),date:TD,type:type,montant:val}); // 04/11/2026 : identifiant (fusion entre postes)
   auditLog("REMISE_BANQUE",type+" "+val.toFixed(2)+"E");
-  if(type==="Ch\u00e8ques")window.CAISSE_DATA.coffreChq=Math.max(0,window.CAISSE_DATA.coffreChq-val);
-  else if(type==="Esp\u00e8ces")window.CAISSE_DATA.coffreEsp=Math.max(0,window.CAISSE_DATA.coffreEsp-val);
-  else{var hf=val/2;window.CAISSE_DATA.coffreEsp=Math.max(0,window.CAISSE_DATA.coffreEsp-hf);window.CAISSE_DATA.coffreChq=Math.max(0,window.CAISSE_DATA.coffreChq-(val-hf));}
+  // 04/11/2026 (vérif. 833b957) : plus de plancher à 0 -> la différence exacte (-val) est fusionnée entre postes même si ce poste avait un coffre périmé
+  var _r2=function(x){return Math.round(x*100)/100;};
+  if(type==="Ch\u00e8ques")window.CAISSE_DATA.coffreChq=_r2((Number(window.CAISSE_DATA.coffreChq)||0)-val);
+  else if(type==="Esp\u00e8ces")window.CAISSE_DATA.coffreEsp=_r2((Number(window.CAISSE_DATA.coffreEsp)||0)-val);
+  else{var hf=val/2;window.CAISSE_DATA.coffreEsp=_r2((Number(window.CAISSE_DATA.coffreEsp)||0)-hf);window.CAISSE_DATA.coffreChq=_r2((Number(window.CAISSE_DATA.coffreChq)||0)-(val-hf));}
   _lxCaisseSaveEtAlerte("La remise en banque"); // FIX 2026-08-31 : ecriture dediee de la caisse
   cM();go("caisseGestion");
 }
