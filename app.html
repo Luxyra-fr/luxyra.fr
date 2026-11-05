@@ -422,12 +422,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261105-8"></script>
+<script src="luxyra-supabase.js?v=20261105-9"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261105-8";
+  var attendu="20261105-9";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -28999,9 +28999,11 @@ async function reprintClotureZ(idx){
   var copie=null, err=null;
   try{
     var _op=(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR)?((CURRENT_OPERATOR.prenom||"")+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:"")).trim():"";
+    // 2026-11-05 (6.8.10) : clé idempotente reprise à la relance : le serveur ne crée qu'une ligne (un seul JET 901) par demande
+    var _cleDup=(window.crypto&&crypto.randomUUID)?crypto.randomUUID():("dz-"+Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,10));
     for(var essai=1;essai<=2;essai++){
-      // 2026-11-05 (6.8.10, contre-audit d3f72dd I3) : délai maximum de 6 s par essai (8 s au plus en pratique hors attente), verrou toujours libéré
-      var r=null; try{ r=await Promise.race([ _sb.rpc("nf525_duplicata_z",{p_salon:_salonId,p_cloture_num:Number(c.num)||null,p_date:c.date||null,p_operateur:_op||null}),
+      // 2026-11-05 (6.8.10, contre-audit d3f72dd I3) : délai maximum de 4 s par essai (2 essais : 8 s au plus), verrou toujours libéré
+      var r=null; try{ r=await Promise.race([ _sb.rpc("nf525_duplicata_z",{p_salon:_salonId,p_cloture_num:Number(c.num)||null,p_date:c.date||null,p_operateur:_op||null,p_cle:_cleDup}),
         new Promise(function(res){ setTimeout(function(){ res({error:{message:"le serveur ne r\u00e9pond pas (d\u00e9lai d\u00e9pass\u00e9)"}}); }, essai===1?4000:4000); }) ]); }catch(_eR){ r={error:_eR}; }
       if(r&&!r.error&&r.data){ copie=r.data.copie||null; err=null; break; }
       var msg=String((r&&r.error&&(r.error.message||r.error.code))||"erreur");
@@ -36885,7 +36887,10 @@ function _lxProvEcrire(l){ try{
 // et les mises à jour (trace, n° légal) sont FUSIONNÉES par id sur la liste relue au moment d'écrire : un ticket noté pendant
 // un envoi n'est jamais écrasé par une ancienne copie de la liste.
 var _lxProvQ=Promise.resolve();
-function _lxProvSerie(fn){ var p=_lxProvQ.then(fn,fn); _lxProvQ=p.catch(function(){}); return p; }
+// 2026-11-05 (6.8.10, vérification 1c0e569) : verrou COMMUN aux onglets du même poste (Web Locks, nom propre à l'établissement) ;
+// repli sans Web Locks : file de l'onglet + relecture-fusion juste avant chaque écriture (comportement précédent).
+function _lxProvVerrou(nom, fn, opts){ try{ if(typeof navigator!=="undefined"&&navigator.locks&&typeof navigator.locks.request==="function"){ return opts?navigator.locks.request(nom, opts, fn):navigator.locks.request(nom, fn); } }catch(_eL){} return Promise.resolve().then(function(){ return fn({}); }); }
+function _lxProvSerie(fn){ var run=function(){ return _lxProvVerrou(_lxProvCle(), function(){ return fn(); }); }; var p=_lxProvQ.then(run,run); _lxProvQ=p.catch(function(){}); return p; }
 function _lxProvFusion(maj){ var l=lxProvListe(), n=0; l.forEach(function(e){ if(e&&maj[e.id]){ for(var k in maj[e.id]) e[k]=maj[e.id][k]; n++; } }); if(n) _lxProvEcrire(l); return n; }
 function lxProvNoter(apId){ return _lxProvSerie(function(){ return _lxProvNoterImpl(apId); }); }
 async function _lxProvNoterImpl(apId){
@@ -36904,6 +36909,12 @@ async function lxProvTracer(){
   if(window._lxDemo||_lxProvTrEnCours) return;
   if(typeof _sb==="undefined"||!_sb||!_salonId||navigator.onLine===false) return;
   _lxProvTrEnCours=true;
+  // 2026-11-05 (6.8.10) : un seul onglet du poste envoie les traces à la fois (verrou Web Locks « ifAvailable » : un autre onglet
+  // déjà en train d'envoyer -> on n'attend pas, il s'en charge) ; repli : contrôle « déjà tracé » côté serveur avant insertion.
+  try{ await _lxProvVerrou(_lxProvCle()+"_tr", function(lock){ if(lock===null) return; return _lxProvTracerImpl(); }, {ifAvailable:true}); }
+  finally{ _lxProvTrEnCours=false; }
+}
+async function _lxProvTracerImpl(){
   try{
     var l=lxProvListe(), maj={};
     for(var i=0;i<l.length;i++){ var e=l[i]; if(e.tr!==false) continue;
@@ -36919,7 +36930,7 @@ async function lxProvTracer(){
       }catch(_eT){ break; }
     }
     if(Object.keys(maj).length) await _lxProvSerie(function(){ return _lxProvFusion(maj); });
-  }finally{ _lxProvTrEnCours=false; }
+  }catch(_eTi){}
 }
 async function lxProvVerifier(){
   if(window._lxDemo) return;
