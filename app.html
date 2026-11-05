@@ -422,12 +422,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261105-4"></script>
+<script src="luxyra-supabase.js?v=20261105-5"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261105-4";
+  var attendu="20261105-5";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -18945,6 +18945,7 @@ function saveTVA(){
 // 05/11/2026 : application d'un taux (même chemin pour « Je sors de la franchise ») ; onOk appelé seulement si la base a accepté
 function _lxTvaAppliquer(val, onOk){
   var _tvaAvant=SALON_CONFIG.tauxTVA; // 2026-10-15 : remis si la base refuse (tickets toujours au taux enregistre)
+  window._lxTvaEnCours=Date.now(); // 05/11/2026 : la synchro du taux distant (_lxColsComparer) attend la fin de cette écriture
   SALON_CONFIG.tauxTVA=val;
   if(window.SALON)window.SALON.tauxTVA=val;
   if(typeof saveSalonConfig==="function")saveSalonConfig();
@@ -18953,7 +18954,7 @@ function _lxTvaAppliquer(val, onOk){
   // fiscal direct sur les tickets et bandes Z suivants). `val` est deja validee (0-30) :
   // on ecrit la valeur SAISIE, jamais une valeur reconstruite depuis la memoire.
   // 2026-10-15 : « Taux de TVA modifie » seulement apres confirmation de la base (l'echec est signale par lxSaveSalonColumns)
-  Promise.resolve(typeof window.lxSaveSalonColumns==="function"?window.lxSaveSalonColumns({taux_tva:val}):{ok:false}).then(function(_rT){ if(!(_rT&&_rT.ok)){ SALON_CONFIG.tauxTVA=_tvaAvant; if(window.SALON) window.SALON.tauxTVA=_tvaAvant; return; }
+  Promise.resolve(typeof window.lxSaveSalonColumns==="function"?window.lxSaveSalonColumns({taux_tva:val}):{ok:false}).then(function(_rT){ if(!(_rT&&_rT.ok)){ window._lxTvaEnCours=0; SALON_CONFIG.tauxTVA=_tvaAvant; if(window.SALON) window.SALON.tauxTVA=_tvaAvant; return; }
   // 2026-10-17 audit réglages (#11) : taux PRODUITS mis à jour tout de suite, avec la même règle que le chargement
   // (luxyra-supabase.js : colonne taux_tva_produits sinon taux des prestations ; franchise 0 % -> 0). Avant : l'ancien
   // taux restait affiché / utilisé jusqu'au rechargement de la page.
@@ -18964,6 +18965,7 @@ function _lxTvaAppliquer(val, onOk){
     else if(SALON_CONFIG.tvaProduits==null || Number(SALON_CONFIG.tvaProduits)===Number(_tvaAvant) || Number(_tvaAvant)===0) SALON_CONFIG.tvaProduits=val;
     if(window.SALON) window.SALON.tvaProduits=SALON_CONFIG.tvaProduits;
   }catch(_eTp){}
+  window._lxTvaEnCours=0;
   auditLog("CONFIG_TVA","Taux TVA modifie: "+val+"%");
   try{ if(Number(val)>0 && SALON_CONFIG.franchiseFin){ SALON_CONFIG.franchiseFin.appliqueLe=(typeof TD==="string"?TD:""); } }catch(_eFf){}
   if(typeof onOk==="function") onOk();
@@ -26619,9 +26621,23 @@ function _lxFrAnnee(year, S){
   return { services:Math.round(cs*100)/100, total:Math.round(ct*100)/100, dSv:dSv, dVt:dVt, dSvMax:dSvMax, dVtMax:dVtMax, mixte:(ct-cs)>0.004 && cs>0.004 };
 }
 function _lxFrMin(a,b){ if(!a) return b; if(!b) return a; return a<b?a:b; }
-// Sortie de franchise prévue / enregistrée (config_json.franchiseFin = {date, taux, cas, decideLe}).
+// Sortie de franchise prévue / enregistrée. 05/11/2026 : la source de vérité est la base (lx_prive.franchise_sorties, lue par
+// public.lx_franchise_programmee) : le serveur applique lui-même le taux à la date d'effet. config_json.franchiseFin n'est plus
+// qu'un repli d'affichage (anciennes versions / hors ligne).
+window.lxFranchiseChargerServeur=async function(){
+  try{
+    if(window._lxDemo || window._lxVueAdmin || typeof _sb==="undefined" || !_sb || !_salonId) return;
+    if(typeof _lxContratEstProprio==="function" && !_lxContratEstProprio()) return;
+    var r=await _sb.rpc("lx_franchise_programmee",{p_salon:_salonId});
+    if(r && !r.error && r.data && r.data.ok){
+      var sv=r.data.sortie;
+      window._lxFrServeur = (sv && !sv.appliqueLe) ? {date:String(sv.date).slice(0,10), taux:Number(sv.taux), decideLe:String(sv.programmeLe||"").slice(0,10), serveur:true, rappelEnvoyeLe:sv.rappelEnvoyeLe||null} : null;
+    }
+  }catch(_e){}
+};
 function lxFranchiseFin(){
   try{
+    if(window._lxFrServeur!==undefined) return window._lxFrServeur; // base = vérité (null : rien de programmé)
     if(typeof SALON_CONFIG!=="undefined" && SALON_CONFIG && SALON_CONFIG.franchiseFin===undefined){ var j=window._SALON_CONFIG_JSON; if(j && j.franchiseFin && typeof j.franchiseFin==="object") SALON_CONFIG.franchiseFin=j.franchiseFin; }
     var f=SALON_CONFIG&&SALON_CONFIG.franchiseFin; return (f && typeof f==="object" && /^\d{4}-\d{2}-\d{2}$/.test(String(f.date||""))) ? f : null;
   }catch(_e){ return null; }
@@ -26658,9 +26674,10 @@ function _lxFranchiseBandeau(){
   try{
     if(window._lxVueAdmin || (typeof _lxContratEstProprio==="function" && !_lxContratEstProprio())) return "";
     if(typeof lxFranchiseTVA!=="function" || !lxFranchiseTVA()) return "";
+    if(window._lxFrServeur===undefined && !window._lxFrChargement){ window._lxFrChargement=true; Promise.resolve(window.lxFranchiseChargerServeur()).then(function(){ window._lxFrChargement=false; try{ if(window._currentPage==="home" && typeof go==="function") go("home"); }catch(_e){} }); }
     var td=(typeof TD==="string"&&TD)?TD:"", F=lxFranchiseFin(), E=lxFranchiseEtat();
     if(F && F.date && td && F.date<=td){
-      return '<div style="display:flex;align-items:center;gap:10px;background:#1d1408;border:1.5px solid rgba(255,152,0,.7);box-shadow:0 4px 18px rgba(0,0,0,.5);border-radius:14px;padding:12px 14px;margin-bottom:12px"><div style="font-size:26px">🧾</div><div style="flex:1;cursor:pointer" onclick="lxSortieFranchise()"><div style="font-weight:800;color:#ffb74d">Sortie de franchise de TVA : c\'est le '+_lxFrDateFr(F.date)+'</div><div style="font-size:12px;color:var(--text2)">Appliquer la TVA à '+_lxEsc(String(F.taux))+' % sur vos prochains tickets →</div></div></div>';
+      return '<div style="display:flex;align-items:center;gap:10px;background:#1d1408;border:1.5px solid rgba(255,152,0,.7);box-shadow:0 4px 18px rgba(0,0,0,.5);border-radius:14px;padding:12px 14px;margin-bottom:12px"><div style="font-size:26px">🧾</div><div style="flex:1;cursor:pointer" onclick="lxSortieFranchise()"><div style="font-weight:800;color:#ffb74d">Sortie de franchise de TVA : c\'est le '+_lxFrDateFr(F.date)+'</div><div style="font-size:12px;color:var(--text2)">'+(F.serveur?'La TVA à '+_lxEsc(String(F.taux).replace(".",","))+' % est appliquée automatiquement par Luxyra (dans l\'heure). Vous pouvez aussi l\'appliquer maintenant →':'Appliquer la TVA à '+_lxEsc(String(F.taux))+' % sur vos prochains tickets →')+'</div></div></div>';
     }
     if(F) return "";
     if(!E.applicable || (E.cas!=="termine" && E.cas!=="fin31dec" && E.cas!=="anneePrec")) return "";
@@ -26691,7 +26708,8 @@ function lxSortieFranchise(){
   h+='• À partir de la date choisie, vos tickets affichent la TVA. Vos prix restent les mêmes en TTC : pensez à les revoir si vous voulez garder la même marge.<br>';
   h+='• Votre caisse devient soumise à l\'obligation de logiciel sécurisé : votre attestation éditeur vous sera proposée à la signature.<br>';
   h+='• <b>Si la date est déjà passée</b>, la TVA est appliquée aux prochains tickets ; la régularisation des ventes faites depuis cette date se fait avec votre comptable (déclaration de TVA). Luxyra ne modifie aucun ticket passé.<br>';
-  h+='• <b>Si la date est à venir</b>, rien ne change avant : Luxyra vous le rappellera ce jour-là pour appliquer le taux.</div>';
+  h+='• <b>Si la date est à venir</b>, rien ne change avant. Le jour venu, Luxyra applique automatiquement le taux à minuit (heure de Paris), sur tous vos postes, même si l\'application est fermée. Vous recevez un e-mail de rappel la veille, et vous pouvez annuler ou modifier d\'ici là.</div>';
+  if(F && F.serveur) h+='<div style="font-size:12.5px;color:#ffb74d;margin-top:10px">Déjà programmé : TVA à '+_lxEsc(String(F.taux).replace(".",","))+' % le '+_lxFrDateFr(F.date)+'. <button type="button" class="btn bs" style="padding:4px 10px;font-size:12px;margin-left:6px" onclick="lxSortieFranchiseAnnuler()">Annuler cette sortie</button></div>';
   h+='<div style="font-size:11px;color:var(--text3);margin-top:8px;line-height:1.5">Références : art. 293 B et 293 F du CGI (transférés au code des impositions sur les biens et services au 01/01/2027). En cas de doute sur la date, demandez à votre comptable.</div>';
   h+='<button class="btn bg bk" style="width:100%;padding:12px;margin-top:14px" onclick="lxSortieFranchiseValider()">Valider</button>';
   h+='</div></div>';
@@ -26703,14 +26721,25 @@ function lxSortieFranchiseValider(){
   if(!/^\d{4}-\d{2}-\d{2}$/.test(d)){ showAlert("Choisissez une date","warning"); return; }
   if(!(t>0 && t<=30)){ showAlert("Taux invalide","warning"); return; }
   if(window._lxDemo){ cM(); if(typeof toast==="function") toast("Mode démo : simulation, rien n'est enregistré","info"); return; }
-  SALON_CONFIG.franchiseFin={date:d, taux:t, decideLe:td, cas:(lxFranchiseEtat().cas||"option")};
   if(d>td){
-    if(typeof saveSalonConfig==="function") saveSalonConfig();
-    if(typeof auditLog==="function") auditLog("CONFIG_TVA","Sortie de franchise prevue le "+d+" (taux "+t+"%)");
-    cM(); showAlert("C'est noté : TVA à "+String(t).replace(".",",")+" % à partir du "+_lxFrDateFr(d)+". Rien ne change d'ici là ; Luxyra vous le rappellera ce jour-là.","success");
-    try{ go("home"); }catch(_e){}
+    // 05/11/2026 : programmation enregistrée en BASE (le serveur applique le taux le jour J, à 00:05 heure de Paris, et envoie
+    // un rappel la veille). Plus de JET 270 ici : le taux ne change pas encore (trace « FRANCHISE_SORTIE_PROGRAMMEE », sans JET).
+    if(typeof _sb==="undefined" || !_sb || !navigator.onLine){ showAlert("Connexion nécessaire pour programmer la sortie de franchise.","warning"); return; }
+    _sb.rpc("lx_franchise_programmer",{p_salon:_salonId, p_date:d, p_taux:t}).then(function(r){
+      var ok=r && !r.error && r.data && r.data.ok;
+      if(!ok){
+        var c=(r&&r.data&&r.data.code)||(r&&r.error&&r.error.message)||"erreur";
+        var msg={deja_assujetti:"Votre établissement applique déjà la TVA.", date_non_future:"La date doit être après aujourd'hui (pour aujourd'hui ou une date passée, le taux s'applique tout de suite).", date_trop_lointaine:"Date trop lointaine (plus d'un an).", taux_invalide:"Taux invalide.", deja_appliquee:"Cette sortie a déjà été appliquée."}[c] || ("Programmation impossible : "+c);
+        showAlert(msg,"warning"); return;
+      }
+      window._lxFrServeur={date:d, taux:t, decideLe:td, serveur:true, rappelEnvoyeLe:null};
+      try{ SALON_CONFIG.franchiseFin={date:d, taux:t, decideLe:td, cas:(lxFranchiseEtat().cas||"option")}; if(typeof saveSalonConfig==="function") saveSalonConfig(); }catch(_eM){}
+      cM(); showAlert("C'est programmé : TVA à "+String(t).replace(".",",")+" % à partir du "+_lxFrDateFr(d)+". Rien ne change d'ici là. Ce jour-là, Luxyra applique automatiquement le taux à minuit sur tous vos postes ; vous recevrez un e-mail de rappel la veille.","success");
+      try{ go("home"); }catch(_e){}
+    }).catch(function(e){ showAlert("Programmation impossible : "+((e&&e.message)||e),"warning"); });
     return;
   }
+  SALON_CONFIG.franchiseFin={date:d, taux:t, decideLe:td, cas:(lxFranchiseEtat().cas||"option")};
   // date passée ou aujourd'hui : taux appliqué maintenant, par le chemin habituel (taux_tva -> JET 270 CONFIG_TVA)
   _lxTvaAppliquer(t, function(){
     try{ if(typeof saveSalonConfig==="function") saveSalonConfig(); }catch(_e){}
@@ -26721,6 +26750,17 @@ function lxSortieFranchiseValider(){
   });
 }
 
+// 05/11/2026 : annulation d'une sortie programmée (avant la date d'effet ; tracée « FRANCHISE_SORTIE_ANNULEE »)
+function lxSortieFranchiseAnnuler(){
+  if(typeof _sb==="undefined" || !_sb){ return; }
+  _sb.rpc("lx_franchise_annuler",{p_salon:_salonId}).then(function(r){
+    if(r && !r.error && r.data && r.data.ok){
+      window._lxFrServeur=null;
+      try{ SALON_CONFIG.franchiseFin=null; if(typeof saveSalonConfig==="function") saveSalonConfig(); }catch(_e){}
+      cM(); showAlert("Sortie de franchise programmée annulée : vous restez en franchise de TVA.","success"); try{ go("home"); }catch(_e2){}
+    } else showAlert("Annulation impossible"+(r&&r.data&&r.data.code==="deja_appliquee"?" : la sortie a déjà été appliquée.":"."),"warning");
+  });
+}
 // =====================================================================
 // EXPORT 7 : D\u00c9CLARATION URSSAF (auto-entrepreneur uniquement)
 // =====================================================================
@@ -33627,6 +33667,20 @@ async function _lxColsComparer(row){
     if(window._lxLogoCache===undefined) return; // logo pas encore lu : comparaison au prochain passage (jamais de fausse alerte)
     var _ci={}; LX_COLS_IDENTITE.split(",").forEach(function(k){ if(k!=="updated_at") _ci[k]=row[k]===undefined?null:row[k]; });
     _ci.logo = (window._lxLogoCache===undefined) ? null : window._lxLogoCache;
+    // 05/11/2026 : taux de TVA changé en base (sortie de franchise appliquée par le serveur à 00:05, ou autre poste) -> repris
+    // tout de suite en mémoire (les tickets suivants partent au bon taux), sans attendre une actualisation.
+    try{
+      var _tdb=(row.taux_tva===null||row.taux_tva===undefined||row.taux_tva==="")?null:Number(row.taux_tva);
+      if(_tdb!==null && isFinite(_tdb) && Number(SALON_CONFIG.tauxTVA)!==_tdb && !(window._lxTvaEnCours && Date.now()-window._lxTvaEnCours<15000)){
+        var _avTx=Number(SALON_CONFIG.tauxTVA);
+        SALON_CONFIG.tauxTVA=_tdb; if(window.SALON) window.SALON.tauxTVA=_tdb;
+        var _cp=(row.taux_tva_produits!=null && isFinite(Number(row.taux_tva_produits)))?Number(row.taux_tva_produits):null;
+        SALON_CONFIG.tvaProduitsColonne=_cp; SALON_CONFIG.tvaProduits=(_tdb===0)?0:(_cp!=null?_cp:_tdb); if(window.SALON) window.SALON.tvaProduits=SALON_CONFIG.tvaProduits;
+        if(_avTx===0 && _tdb>0){ window._lxFrServeur=null; }
+        if(typeof toast==="function") toast("TVA à "+String(_tdb).replace(".",",")+" % appliquée sur ce poste"+(_avTx===0?" (sortie de franchise)":""),"info");
+        window._lxColsRebase=true;
+      }
+    }catch(_eTx){}
     var _cs=JSON.stringify(_ci);
     if(window._lxColsBase===undefined || window._lxColsRebase){ window._lxColsBase=_cs; window._lxColsRebase=false; }
     else if(_cs!==window._lxColsBase){ window._lxColsBase=_cs; _lxBandeauColsDistantes(); }

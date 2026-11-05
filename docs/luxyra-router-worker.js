@@ -369,6 +369,7 @@ async function __wrappedApiHandler(request, url, env) {
       if (url.pathname === "/api/rdv-demande/notifier" && request.method === "POST") return await handleRdvDemandeNotifier(request, env);
       // 03/11/2026 (conformité L221-13) : e-mail de confirmation automatique d'une réservation en ligne confirmée sans action de l'établissement (appel interne de la base)
       if (url.pathname === "/api/rdv-online/confirmation-auto" && request.method === "POST") return await handleRdvOnlineConfirmationAuto(request, env);
+      if (url.pathname === "/api/franchise/rappel" && request.method === "POST") return await handleFranchiseRappel(request, env);
       if (url.pathname === "/api/rdv-demande/salon-action" && request.method === "POST") return await handleRdvDemandeSalonAction(request, env);
       // 2026-10-30 (contre-audit, a) : retour depuis Stripe / autre choix / refus -> session de paiement ouverte expirée tout de suite
       if (url.pathname === "/api/rdv-demande/liberer-paiement" && request.method === "POST") return await handleRdvDemandeLibererPaiement(request, env);
@@ -4800,6 +4801,63 @@ async function lxConfAutoEnvoyer(env, rdvId, opts) {
   await lxEmailLiberer(env, resa.cle);
   await reportWorkerError(env, "worker:confirmation-auto", new Error("E-mail de confirmation automatique refusé par Brevo"), { rdv_online_id: r.id, reponse: JSON.stringify(envoi || {}).slice(0, 200) }, "warning");
   return { ok: false, email: "echec" };
+}
+// ============================================================
+// 05/11/2026 — Sortie de franchise de TVA programmée : e-mail de rappel la veille au titulaire du compte.
+// Appelé par la base (lx_prive.franchise_sorties_traiter, tâche horaire « franchise-sorties », en-tête x-lx-internal).
+// Une seule fois par établissement et par date d'effet (clé messaging_log `${salon}|franchise_rappel|${date}`).
+// Le taux est appliqué AUTOMATIQUEMENT par le serveur le jour J (00:05, heure de Paris) : l'e-mail est une information.
+// ============================================================
+function lxFranchiseRappelMessage(salon, d) {
+  const taux = String(Number(d.taux) || 0).replace(".", ",");
+  const quand = lxSmDateFr(d.date_effet, false);
+  const corps = `<p style="font-weight:700;margin:0 0 10px">Bonjour,</p>`
+    + `<p>Comme vous l’avez programmé${d.programme_le ? " le " + ccEsc(d.programme_le) : ""}, <b>${ccEsc(salon.nom || "votre établissement")}</b> sort de la franchise de TVA <b>demain, ${ccEsc(quand)}</b>.</p>`
+    + `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:14px;border:1px solid #e6dcc3;border-radius:12px;padding:8px 16px;background:#fbf9f4">`
+    + `<tr><td style="padding:6px 0;color:#777">Date d’effet</td><td style="padding:6px 0;text-align:right;font-weight:600">${ccEsc(quand)}</td></tr>`
+    + `<tr><td style="padding:6px 0;color:#777">Taux de TVA appliqué</td><td style="padding:6px 0;text-align:right;font-weight:600">${ccEsc(taux)} %</td></tr></table>`
+    + `<p><b>Vous n’avez rien à faire :</b> Luxyra appliquera automatiquement ce taux à minuit, sur tous vos postes. Vos tickets afficheront la TVA à partir de demain ; les tickets déjà encaissés restent tels quels (sans TVA, mention art. 293 B).</p>`
+    + `<p>Pensez à revoir vos prix TTC si vous voulez garder la même marge, et à signer votre <b>attestation de conformité de la caisse</b> dans Réglages, qui vous sera proposée dans l’application.</p>`
+    + `<p style="font-size:13px;color:#777">Une erreur de date ou de taux ? Vous pouvez encore annuler ou modifier cette sortie aujourd’hui : Réglages › Caisse › « Je sors de la franchise ». En cas de doute, demandez à votre comptable.</p>`
+    + lxMailBouton("Ouvrir Luxyra", "https://luxyra.fr/app");
+  return {
+    sujet: `Demain : TVA à ${taux} % pour ${String(salon.nom || "votre établissement").slice(0, 60)}`,
+    html: lxMailLayout(corps, { titre: "Sortie de franchise de TVA" }),
+    texte: `Bonjour,\n\n${salon.nom || "Votre établissement"} sort de la franchise de TVA demain (${quand}). Luxyra appliquera automatiquement la TVA à ${taux} % à minuit, sur tous vos postes. Les tickets déjà encaissés ne changent pas.\nPensez à revoir vos prix TTC et à signer votre attestation de caisse dans Réglages.\nUne erreur ? Vous pouvez encore annuler ou modifier aujourd'hui (Réglages › Caisse).\n\nLuxyra`
+  };
+}
+async function handleFranchiseRappel(request, env) {
+  if (!(await lxIsInternal(request, env))) return jsonResponse({ error: "Accès refusé" }, 403);
+  const d = await readJsonBody(request);
+  if (!/^[0-9a-f-]{36}$/i.test(String(d.salon_id || "")) || !/^\d{4}-\d{2}-\d{2}$/.test(String(d.date_effet || ""))
+      || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(d.to || "")) || !(Number(d.taux) > 0 && Number(d.taux) <= 30)) {
+    return jsonResponse({ error: "Paramètres invalides" }, 400);
+  }
+  try {
+    const salon = await supabaseGet(env, String(d.salon_id));
+    if (!salon || salon.ferme_le) return jsonResponse({ ok: true, ignore: "établissement indisponible" });
+    const m = lxFranchiseRappelMessage(salon, d);
+    if (d.apercu === true) return jsonResponse({ ok: true, apercu: m });
+    const to = String(d.to).trim();
+    const cle = `${salon.id}|franchise_rappel|${d.date_effet}`;
+    const resa = await lxEmailReserver(env, { salonId: salon.id, to, subject: m.sujet, html: m.html, dedupKey: cle });
+    if (resa.doublon) return jsonResponse({ ok: true, email: "deja" });
+    if (!resa.cle) return jsonResponse({ ok: false, erreur: "réservation anti-doublon impossible" }, 500);
+    let envoi = null;
+    try { envoi = await brevoSendEmail(env, { to, senderName: "Luxyra", subject: m.sujet, htmlContent: m.html, textContent: m.texte }); }
+    catch (e) { envoi = { code: "exception", message: String((e && e.message) || e) }; }
+    if (envoi && envoi.messageId) return jsonResponse({ ok: true, email: "envoye" });
+    if (!envoi || envoi.code === "exception" || !envoi.code) {
+      await reportWorkerError(env, "worker:franchise-rappel", new Error("Rappel de sortie de franchise : réponse Brevo incertaine (verrou gardé)"), { salon_id: salon.id }, "warning");
+      return jsonResponse({ ok: false, email: "incertain" });
+    }
+    await lxEmailLiberer(env, resa.cle);
+    await reportWorkerError(env, "worker:franchise-rappel", new Error("Rappel de sortie de franchise refusé par Brevo"), { salon_id: salon.id, reponse: JSON.stringify(envoi || {}).slice(0, 200) }, "warning");
+    return jsonResponse({ ok: false, email: "echec" });
+  } catch (e) {
+    await reportWorkerError(env, "worker:franchise-rappel", e, { salon_id: d.salon_id }, "error");
+    return jsonResponse({ ok: false, error: "Envoi impossible" }, 500);
+  }
 }
 async function handleRdvOnlineConfirmationAuto(request, env) {
   if (!(await lxIsInternal(request, env))) return jsonResponse({ error: "Accès refusé" }, 403);
