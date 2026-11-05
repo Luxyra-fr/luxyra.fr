@@ -3794,7 +3794,7 @@ async function handlePixelOuverture(request, env, url) {
 // - Métadonnées salon (nom, SIRET, période)
 // Format : JSON pur exploitable Excel/comptable
 // Version du logiciel en service (aligner sur LX_VERSION d'app.html à chaque version)
-const LX_VERSION_LOGICIEL = "6.8.8";
+const LX_VERSION_LOGICIEL = "6.8.9";
 async function handleExportNF525(request, env) {
   try {
     const { salon_id, date_from, date_to, jwt } = await request.json();
