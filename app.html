@@ -422,12 +422,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261105-2"></script>
+<script src="luxyra-supabase.js?v=20261105-3"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261105-2";
+  var attendu="20261105-3";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -5854,7 +5854,7 @@ function buildTicketText(appt){
   var t=_riT?"RETOUR / REMBOURSEMENT N°"+lxNumAff(appt)+"\n":"TICKET DE CAISSE N°"+lxNumAff(appt)+"\n"; // 2026-11-05 : n° légal
   t+=""+SALON_CONFIG.nomComplet()+"\n";
   t+=""+SALON_CONFIG.adresseComplete()+"\n\n";
-  if(_riT) t+="Ticket d'origine n°"+_lxOrigLib(_riT)+" du "+(_riT.refDate?_lxJJMMAAAA(_riT.refDate):"--")+"\nMotif : "+(_riT.motif||"")+"\n";
+  if(_riT) t+="Ticket d'origine "+_lxOrigLibN(_riT)+" du "+(_riT.refDate?_lxJJMMAAAA(_riT.refDate):"--")+"\nMotif : "+(_riT.motif||"")+"\n";
   t+="Date: "+fmt(appt.date)+" a "+appt.time+"\n";
   t+="Client: "+apptClientLabel(appt)+"\n"; // 2026-10-17 : variable corrigée (« a » n'existait pas ici)
   t+="Collaborateur: "+(sty?sty.n:"")+"\n\n";
@@ -5910,7 +5910,7 @@ function buildClotureText(c){
   t+="Edite le: "+new Date().toLocaleString("fr-FR")+"\n";
   t+="\n--- SYNTHESE GENERALE ---\n";
   t+="Nb tickets:         "+c.nbTickets+"\n";
-  (function(){ var _pz=_lxZPlage(c," a "); if(_pz.legal) t+="Tickets "+_pz.legal+"\n"; if(_pz.app) t+="("+_pz.app+")\n"; })();
+  (function(){ var _pz=_lxZPlage(c," a "); if(_pz.legal) t+="Tickets "+_pz.legal+"\n"; if(_pz.app) t+=(_pz.legal?"("+_pz.app+")":"Tickets "+_pz.app)+"\n"; })();
   if(c.tkSrvMin)t+="Paiements en ligne #"+c.tkSrvMin+" a #"+c.tkSrvMax+"\n";
   t+="Premier ticket:     "+(c.hPremier||"--:--")+"\n";
   t+="Dernier ticket:     "+(c.hDernier||"--:--")+"\n";
@@ -6654,6 +6654,8 @@ function _lxOrigLib(ri){
   var n=_lxOrigNumLegal(ri.refId, ri.refNum);
   return n ? (String(n)+(ri.refTk!=null?" (r\u00e9f. appareil "+ri.refTk+")":"")) : ("r\u00e9f. appareil "+(ri.refTk!=null?ri.refTk:"--"));
 }
+// 2026-11-05 : « n° 777 (réf. appareil 12) » si le n° légal est connu, sinon « réf. appareil 12 » (sans « n° »)
+function _lxOrigLibN(ri){ var l=_lxOrigLib(ri); return /^\d/.test(l) ? ("n\u00b0"+l) : l; }
 // Libellé d'export d'un ticket de retour
 function _lxRetourLibelle(a){
   var ri=_lxRetourInfo(a)||{}; var d=String(ri.refDate||"").slice(0,10);
@@ -7218,7 +7220,7 @@ function printClotureZ(){
   h+="<h2>1. Synth\u00e8se g\u00e9n\u00e9rale</h2>";
   h+="<table>";
   h+="<tr><td>Nombre de tickets</td><td class=\"tr tb\">"+c.nbTickets+"</td></tr>";
-  (function(){ var _pz=_lxZPlage(c," au "); if(_pz.legal) h+="<tr><td>Tickets du "+_pz.legal+"</td><td></td></tr>"; if(_pz.app) h+="<tr><td style=\"font-size:10px\">("+_pz.app+")</td><td></td></tr>"; })();
+  (function(){ var _pz=_lxZPlage(c," au "); if(_pz.legal) h+="<tr><td>Tickets du "+_pz.legal+"</td><td></td></tr>"; if(_pz.app) h+=(_pz.legal?"<tr><td style=\"font-size:10px\">("+_pz.app+")</td><td></td></tr>":"<tr><td>Tickets "+_pz.app+"</td><td></td></tr>"); })();
   if(c.tkSrvMin)h+="<tr><td>Paiements en ligne (serveur) : n\u00b0"+c.tkSrvMin+" au n\u00b0"+c.tkSrvMax+"</td><td></td></tr>"; // 2026-10-28 (-3)
   h+="<tr><td>Heure premier ticket</td><td class=\"tr\">"+(c.hPremier||"--:--")+"</td></tr>";
   h+="<tr><td>Heure dernier ticket</td><td class=\"tr\">"+(c.hDernier||"--:--")+"</td></tr>";
@@ -36729,7 +36731,7 @@ function buildTicketHTML(a, isDuplicate){
   h+=_lxNumSousH;
   h+="<div style=\"font-size:12px\">"+fmt(a.date)+" \u00e0 "+(a.heureEncaiss||a.time)+"</div>";
   if(_ri){
-    h+="<div style=\"font-size:12px;font-weight:700\">Ticket d'origine n\u00b0"+escapeHtml(_lxOrigLib(_ri))+" du "+(_ri.refDate?_lxJJMMAAAA(_ri.refDate):"--")+"</div>";
+    h+="<div style=\"font-size:12px;font-weight:700\">Ticket d'origine "+escapeHtml(_lxOrigLibN(_ri))+" du "+(_ri.refDate?_lxJJMMAAAA(_ri.refDate):"--")+"</div>";
     if(_ri.motif) h+="<div style=\"font-size:11px\">Motif : "+escapeHtml(String(_ri.motif))+"</div>";
   }
   h+="<div style=\"font-size:12px\">Collaborateur: "+(sty?sty.n:"")+"</div>";
