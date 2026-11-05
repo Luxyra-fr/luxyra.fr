@@ -3793,7 +3793,7 @@ async function handlePixelOuverture(request, env, url) {
 // - Métadonnées salon (nom, SIRET, période)
 // Format : JSON pur exploitable Excel/comptable
 // Version du logiciel en service (aligner sur LX_VERSION d'app.html à chaque version)
-const LX_VERSION_LOGICIEL = "6.8.7";
+const LX_VERSION_LOGICIEL = "6.8.8";
 async function handleExportNF525(request, env) {
   try {
     const { salon_id, date_from, date_to, jwt } = await request.json();
@@ -3858,8 +3858,15 @@ async function handleExportNF525(request, env) {
     let versionLogiciel = LX_VERSION_LOGICIEL;
     for (const t of tickets) { const v = t.raw_data && t.raw_data.lxVersion; if (v && /^\d+\.\d+\.\d+$/.test(v) && lxVerSup(v, versionLogiciel)) versionLogiciel = v; }
 
+    // 05/11/2026 (audit NF525, BOI § 230) : notice explicative en français jointe à l'export
+    let noticeFr = null;
+    try {
+      const nr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/nf525_notice_archive_texte`, { method: "POST", headers: { "apikey": sbKey, "Authorization": "Bearer " + sbKey, "Content-Type": "application/json" }, body: "{}" });
+      if (nr.ok) noticeFr = await nr.json();
+    } catch (_eNo) {}
     const exportData = {
       norme: "NF525",
+      notice: noticeFr || "Notice explicative : https://luxyra.fr/app (Paramètres → Caisse → Conformité → Notice explicative des archives).",
       version_logiciel: "Luxyra " + versionLogiciel,
       export_timestamp: new Date().toISOString(),
       salon: {
