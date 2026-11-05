@@ -171,10 +171,48 @@ var fmt=new Intl.DateTimeFormat("fr-FR",{timeZone:"Europe/Paris",year:"numeric",
 function ts(iso){ if(!iso) return ""; var d=new Date(iso); if(isNaN(d.getTime())) return ""; var p={}; fmt.formatToParts(d).forEach(function(x){p[x.type]=x.value;}); return p.year+p.month+p.day+(p.hour==="24"?"00":p.hour)+p.minute+p.second; }
 function m2(n){ return (Math.round((Number(n)||0)*100)/100).toFixed(2); }
 function lire(f){ var r=new FileReader(); r.onload=function(){ verifier(r.result).catch(function(e){ out.innerHTML='<div class="v-res ko">Fichier illisible : '+esc(e.message||e)+'</div>'; }); }; r.readAsText(f); }
+// Archive annuelle (format 1.1) : l'empreinte est le SHA-256 du texte canonique PostgreSQL (jsonb::text) du contenu.
+// Parseur qui CONSERVE l'écriture exacte des nombres (12.50 reste 12.50), puis sérialisation jsonb :
+// clés triées par longueur (octets UTF-8) puis par octets, séparateurs « ", " » et « ": ».
+function pgParse(t){ var i=0;
+  function ws(){ while(i<t.length && /[\s]/.test(t[i])) i++; }
+  function val(){ ws(); var c=t[i];
+    if(c==="{"){ i++; var o=[]; ws(); if(t[i]==="}"){ i++; return {o:o}; } while(true){ ws(); var k=str(); ws(); i++; var v=val(); o.push([k,v]); ws(); if(t[i]===","){ i++; continue; } i++; return {o:o}; } }
+    if(c==="["){ i++; var a=[]; ws(); if(t[i]==="]"){ i++; return {a:a}; } while(true){ a.push(val()); ws(); if(t[i]===","){ i++; continue; } i++; return {a:a}; } }
+    if(c==='"') return {s:str()};
+    var m=/^(-?\d+(\.\d+)?([eE][+-]?\d+)?|true|false|null)/.exec(t.slice(i,i+400)); if(!m) throw new Error("JSON illisible"); i+=m[0].length; return {n:m[0]}; }
+  function str(){ var j=i; i++; while(t[i]!=='"'){ if(t[i]==="\\") i++; i++; } i++; return JSON.parse(t.slice(j,i)); }
+  var r=val(); return r; }
+function pgStr(s){ var o='"'; for(var k=0;k<s.length;k++){ var c=s[k], n=c.charCodeAt(0);
+    if(c==='"') o+='\\"'; else if(c==="\\") o+="\\\\"; else if(c==="\b") o+="\\b"; else if(c==="\f") o+="\\f"; else if(c==="\n") o+="\\n"; else if(c==="\r") o+="\\r"; else if(c==="\t") o+="\\t";
+    else if(n<0x20) o+="\\u"+("000"+n.toString(16)).slice(-4); else o+=c; } return o+'"'; }
+function pgCmp(a,b){ var ea=new TextEncoder().encode(a), eb=new TextEncoder().encode(b); if(ea.length!==eb.length) return ea.length-eb.length; for(var k=0;k<ea.length;k++){ if(ea[k]!==eb[k]) return ea[k]-eb[k]; } return 0; }
+function pgText(v){ if(v.n!==undefined) return v.n; if(v.s!==undefined) return pgStr(v.s);
+  if(v.a) return "["+v.a.map(pgText).join(", ")+"]";
+  var m={}; v.o.forEach(function(p){ m[p[0]]=p[1]; }); var ks=Object.keys(m).sort(pgCmp);
+  return "{"+ks.map(function(k){ return pgStr(k)+": "+pgText(m[k]); }).join(", ")+"}"; }
+async function verifierAnnuelle(txt, A){
+  var brut=pgParse(txt), contenu=brut, hashAttendu=null;
+  if(A.contenu){ brut.o.forEach(function(p){ if(p[0]==="contenu") contenu=p[1]; if(p[0]==="hash"&&p[1].s) hashAttendu=p[1].s; }); }
+  var C=A.contenu||A, emp=(await sha(pgText(contenu))).toLowerCase(), pb=[];
+  var notice=!!(C.notice&&String(C.notice).length>=200); if(!notice) pb.push("Notice explicative absente de l'archive annuelle");
+  var hashOk=hashAttendu?(String(hashAttendu).toLowerCase()===emp):null; if(hashOk===false) pb.push("Empreinte recalculée différente de l'empreinte enregistrée");
+  var h='<div class="v-res"><div style="font-size:18px" class="'+(pb.length?"ko":"ok")+'">'+(pb.length?"⚠️ Anomalies détectées":"✅ Archive annuelle lisible et cohérente")+'</div>';
+  h+='<div>Format : archive annuelle '+esc(C.format_version)+' — année '+esc(C.annee)+' — établissement : <strong>'+esc(C.salon&&C.salon.nom)+'</strong> (SIRET '+esc(C.salon&&C.salon.siret)+')</div>';
+  h+='<div>Notice explicative : <span class="'+(notice?"ok":"ko")+'">'+(notice?"incluse":"absente")+'</span></div>';
+  h+='<div>Empreinte SHA-256 recalculée : <code>'+esc(emp)+'</code>'+(hashOk===null?' — à comparer avec l\'empreinte enregistrée et signée (chaîne AR, voir l\'archive signée de la même période)':' — <span class="'+(hashOk?"ok":"ko")+'">'+(hashOk?"identique à l'empreinte enregistrée":"DIFFÉRENTE")+'</span>')+'</div>';
+  h+='<div>Tickets : '+esc((C.statistiques&&C.statistiques.nb_tickets)||((C.tickets||[]).length))+' — clôtures journalières : '+esc((C.clotures_journalieres||[]).length)+'</div>';
+  if(pb.length) h+='<div style="margin-top:10px"><strong>Détail</strong><br>'+pb.map(esc).join("<br>")+'</div>';
+  out.innerHTML=h+'</div>';
+}
 async function verifier(txt){
   out.innerHTML='<div class="v-res">Vérification en cours…</div>';
   var A=JSON.parse(txt), pb=[];
-  if(A.format!=="LUXYRA-NF525-ARCHIVE-1") throw new Error("format inconnu");
+  // 05/11/2026 (6.8.8) : archive annuelle serveur (format 1.1, contenu brut ou enveloppe {contenu, hash})
+  if(A && (A.format_version || (A.contenu && A.contenu.format_version))){ return verifierAnnuelle(txt, A); }
+  // ARCHIVE-1 (avant 6.8.8) et ARCHIVE-2 (6.8.8 : même calcul d'empreinte, notice explicative incluse)
+  if(A.format!=="LUXYRA-NF525-ARCHIVE-1" && A.format!=="LUXYRA-NF525-ARCHIVE-2") throw new Error("format inconnu ("+String(A.format||"?")+")");
+  if(A.format==="LUXYRA-NF525-ARCHIVE-2" && !(A.notice && String(A.notice).length>=200)) pb.push("Notice explicative absente de l'archive (format ARCHIVE-2)");
   var emp=A.empreinte_sha256; var copie=JSON.parse(txt); delete copie.empreinte_sha256; delete copie.signature_archive;
   var empOk=(await sha(JSON.stringify(copie)))===emp;
   var cles={}; for(var i=0;i<(A.cles_publiques||[]).length;i++){ var k=A.cles_publiques[i]; var j=Object.assign({},k.public_jwk); delete j.key_ops; delete j.ext; cles[k.key_id]=await crypto.subtle.importKey("jwk",j,{name:"ECDSA",namedCurve:"P-256"},false,["verify"]); }
@@ -216,6 +254,7 @@ async function verifier(txt){
   var h='<div class="v-res"><div style="font-size:18px" class="'+(tout?"ok":"ko")+'">'+(tout?"✅ Archive intègre : aucune anomalie":"⚠️ Anomalies détectées")+'</div>';
   h+='<div>Établissement : <strong>'+esc(A.etablissement&&A.etablissement.nom)+'</strong> — SIRET '+esc(A.etablissement&&A.etablissement.siret)+' — période du '+esc(A.periode.du)+' au '+esc(A.periode.au)+'</div>';
   h+='<div>Logiciel : '+esc(A.logiciel.nom)+' v'+esc(A.logiciel.version)+' — généré le '+esc(new Date(A.genere_le).toLocaleString("fr-FR"))+'</div>';
+  h+='<div>Format : '+esc(A.format)+(A.format==="LUXYRA-NF525-ARCHIVE-2"?' — notice explicative : <span class="'+((A.notice&&String(A.notice).length>=200)?'ok">incluse':'ko">absente')+'</span>':'')+'</div>';
   h+='<div>Empreinte de l\'archive : <span class="'+(empOk?"ok":"ko")+'">'+(empOk?"conforme":"NON conforme (fichier modifié)")+'</span> <code>'+esc(emp)+'</code></div>';
   h+='<div>Signature électronique de l\'archive : <span class="'+(arcSig.ok?"ok":"ko")+'">'+esc(arcSig.etat)+'</span></div>';
   h+='<div>Signatures valides : <span class="'+(nKo?"ko":"ok")+'">'+nOk+' / '+(nOk+nKo)+'</span> — tickets recalculés : <span class="'+(recalcKo?"ko":"ok")+'">'+(recalc-recalcKo)+' / '+recalc+'</span> — tickets sans signature : <span class="'+(nonSignes.length?"ko":"ok")+'">'+nonSignes.length+'</span></div>';

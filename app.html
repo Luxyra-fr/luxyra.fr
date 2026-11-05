@@ -422,12 +422,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261105-1"></script>
+<script src="luxyra-supabase.js?v=20261105-2"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261105-1";
+  var attendu="20261105-2";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -5854,7 +5854,7 @@ function buildTicketText(appt){
   var t=_riT?"RETOUR / REMBOURSEMENT N°"+lxNumAff(appt)+"\n":"TICKET DE CAISSE N°"+lxNumAff(appt)+"\n"; // 2026-11-05 : n° légal
   t+=""+SALON_CONFIG.nomComplet()+"\n";
   t+=""+SALON_CONFIG.adresseComplete()+"\n\n";
-  if(_riT) t+="Ticket d'origine n°"+(_riT.refTk||"--")+" du "+(_riT.refDate?_lxJJMMAAAA(_riT.refDate):"--")+"\nMotif : "+(_riT.motif||"")+"\n";
+  if(_riT) t+="Ticket d'origine n°"+_lxOrigLib(_riT)+" du "+(_riT.refDate?_lxJJMMAAAA(_riT.refDate):"--")+"\nMotif : "+(_riT.motif||"")+"\n";
   t+="Date: "+fmt(appt.date)+" a "+appt.time+"\n";
   t+="Client: "+apptClientLabel(appt)+"\n"; // 2026-10-17 : variable corrigée (« a » n'existait pas ici)
   t+="Collaborateur: "+(sty?sty.n:"")+"\n\n";
@@ -5910,7 +5910,7 @@ function buildClotureText(c){
   t+="Edite le: "+new Date().toLocaleString("fr-FR")+"\n";
   t+="\n--- SYNTHESE GENERALE ---\n";
   t+="Nb tickets:         "+c.nbTickets+"\n";
-  if(c.tkMin)t+="Ticket #"+c.tkMin+" a #"+c.tkMax+"\n";
+  (function(){ var _pz=_lxZPlage(c," a "); if(_pz.legal) t+="Tickets "+_pz.legal+"\n"; if(_pz.app) t+="("+_pz.app+")\n"; })();
   if(c.tkSrvMin)t+="Paiements en ligne #"+c.tkSrvMin+" a #"+c.tkSrvMax+"\n";
   t+="Premier ticket:     "+(c.hPremier||"--:--")+"\n";
   t+="Dernier ticket:     "+(c.hDernier||"--:--")+"\n";
@@ -6618,8 +6618,41 @@ function _lxRetourInfo(a){
     return { refId:(a.retourRefId||(it0&&it0.retourRefId)||null),
       refTk:(a.retourRefTk!=null?a.retourRefTk:(it0&&it0.retourRefTk!=null?it0.retourRefTk:null)),
       refDate:(a.retourRefDate||(it0&&it0.retourRefDate)||null),
-      motif:(a.retourMotif||(it0&&it0.retourMotif)||"") };
+      motif:(a.retourMotif||(it0&&it0.retourMotif)||""),
+      refNum:(a.retourRefNum!=null?a.retourRefNum:(it0&&it0.retourRefNum!=null?it0.retourRefNum:null)) };
   }catch(_e){ return null; }
+}
+// 2026-11-05 (contre-audit 6.8.8) : plage de tickets d'une Z — n° LÉGAUX (nouvelles Z), réf. appareil en second.
+// Ancienne Z (avant 6.8.8, sans bornes légales) : seule la plage de l'appareil existe, affichée comme « réf. appareil ».
+function _lxZPlage(c, sep){
+  sep=sep||" au ";
+  var app=(c&&c.tkMin)?("r\u00e9f. appareil #"+c.tkMin+sep+"#"+c.tkMax):"";
+  if(c&&Number(c.numLegalMin)>0){
+    var t="n\u00b0 l\u00e9gal "+c.numLegalMin+sep+"n\u00b0 "+c.numLegalMax;
+    if(Number(c.nbSansNumLegal)>0) t+=" (+ "+c.nbSansNumLegal+" en attente de transmission)";
+    return {legal:t, app:app};
+  }
+  return {legal:"", app:app};
+}
+// 2026-11-05 (contre-audit 6.8.8, B2) : libellé du ticket d'ORIGINE avec son n° LÉGAL (serveur) et la réf. appareil en second.
+// Affichage uniquement : le contrôle base (tickets_retour_controle) continue de comparer retourRefTk = tkNum de l'appareil.
+function _lxOrigNumLegal(refId, refNum){
+  if(Number(refNum)>0) return Number(refNum);
+  try{ var o=(refId&&typeof AP!=="undefined"&&Array.isArray(AP))?AP.find(function(x){return x&&String(x.id)===String(refId);}):null;
+    var n=lxNumLegal(o||(refId?{id:refId}:null)); if(n) return n; }catch(_e){}
+  return null;
+}
+// Libellé des lignes d'un NOUVEAU contre-ticket : n° légal de l'origine + réf. appareil ; hors ligne sans n° légal connu :
+// réf. appareil + début de l'identifiant (le lien fiscal reste cancelRef / parent, contrôlés par la base).
+function _lxAnnulLib(orig){
+  var n=_lxOrigNumLegal(orig&&orig.id, null);
+  if(n) return "ANNULATION #"+n+" (r\u00e9f. appareil "+((orig&&orig.tkNum)||"--")+")";
+  return "ANNULATION r\u00e9f. appareil "+((orig&&orig.tkNum)||"--")+" (id "+String((orig&&orig.id)||"").slice(0,8)+")";
+}
+function _lxOrigLib(ri){
+  if(!ri) return "--";
+  var n=_lxOrigNumLegal(ri.refId, ri.refNum);
+  return n ? (String(n)+(ri.refTk!=null?" (r\u00e9f. appareil "+ri.refTk+")":"")) : ("r\u00e9f. appareil "+(ri.refTk!=null?ri.refTk:"--"));
 }
 // Libellé d'export d'un ticket de retour
 function _lxRetourLibelle(a){
@@ -6997,7 +7030,7 @@ function _lxZFinaliser(opts){
   h+='<div style="display:flex;justify-content:space-between"><span>Total HT</span><span>'+c.totalHT.toFixed(2)+' \u20ac</span></div>';
   _lxZTvaLignes(c).forEach(function(x){ if(x.sub) return; h+='<div style="display:flex;justify-content:space-between"><span>'+(Array.isArray(c.tvaParTaux)?x.lib:'TVA '+(c.txTVA!=null&&!isNaN(c.txTVA)?c.txTVA:lxTauxTVA())+'%'+(/Produits/.test(x.lib)?' (produits)':''))+'</span><span>'+x.tva.toFixed(2)+' \u20ac</span></div>'; }); // 2026-10-28 (6.8.5) : une ligne par taux
   if(c.panierMoyen)h+='<div style="display:flex;justify-content:space-between"><span>Panier moyen</span><span>'+c.panierMoyen.toFixed(2)+' \u20ac</span></div>';
-  if(c.tkMin)h+='<div style="display:flex;justify-content:space-between"><span>Tickets</span><span>#'+c.tkMin+' \u00e0 #'+c.tkMax+'</span></div>';
+  (function(){ var _pz=_lxZPlage(c," \u00e0 "); if(_pz.legal) h+='<div style="display:flex;justify-content:space-between"><span>Tickets</span><span>'+_pz.legal+'</span></div>'; if(_pz.app) h+='<div style="display:flex;justify-content:space-between;font-size:11px;opacity:.75"><span>'+(_pz.legal?'':'Tickets')+'</span><span>'+_pz.app+'</span></div>'; })();
   if(c.tkSrvMin)h+='<div style="display:flex;justify-content:space-between"><span>Paiements en ligne (serveur)</span><span>#'+c.tkSrvMin+' \u00e0 #'+c.tkSrvMax+'</span></div>'; // 2026-10-28 (-3)
   if(c.totalRemises>0)h+='<div style="display:flex;justify-content:space-between;color:#c00"><span>Remises</span><span>-'+c.totalRemises.toFixed(2)+' \u20ac</span></div>';
   if(c.totalBonsUtilises>0)h+='<div style="display:flex;justify-content:space-between;font-size:11px"><span>dont bons cadeaux utilis\u00e9s (d\u00e9j\u00e0 encaiss\u00e9s)</span><span>'+c.totalBonsUtilises.toFixed(2)+' \u20ac</span></div>';
@@ -7185,7 +7218,7 @@ function printClotureZ(){
   h+="<h2>1. Synth\u00e8se g\u00e9n\u00e9rale</h2>";
   h+="<table>";
   h+="<tr><td>Nombre de tickets</td><td class=\"tr tb\">"+c.nbTickets+"</td></tr>";
-  if(c.tkMin)h+="<tr><td>Du ticket n\u00b0"+c.tkMin+" au n\u00b0"+c.tkMax+"</td><td></td></tr>";
+  (function(){ var _pz=_lxZPlage(c," au "); if(_pz.legal) h+="<tr><td>Tickets du "+_pz.legal+"</td><td></td></tr>"; if(_pz.app) h+="<tr><td style=\"font-size:10px\">("+_pz.app+")</td><td></td></tr>"; })();
   if(c.tkSrvMin)h+="<tr><td>Paiements en ligne (serveur) : n\u00b0"+c.tkSrvMin+" au n\u00b0"+c.tkSrvMax+"</td><td></td></tr>"; // 2026-10-28 (-3)
   h+="<tr><td>Heure premier ticket</td><td class=\"tr\">"+(c.hPremier||"--:--")+"</td></tr>";
   h+="<tr><td>Heure dernier ticket</td><td class=\"tr\">"+(c.hDernier||"--:--")+"</td></tr>";
@@ -36593,7 +36626,12 @@ function lxNumAff(a){ var n=lxNumLegal(a); return n?String(n):("r\u00e9f. "+((a&
 async function lxNumRemplir(doc, apId, maxMs){
   var fin=Date.now()+(maxMs||3500), n=null;
   try{ var a0=(typeof AP!=="undefined"&&Array.isArray(AP))?AP.find(function(x){return x&&x.id===apId;}):null; n=lxNumLegal(a0); }catch(_e){}
-  while(!n&&Date.now()<fin){ n=await lxNumTicket(apId); if(!n) await new Promise(function(r){setTimeout(r,700);}); }
+  // 2026-11-05 (contre-audit 6.8.8, B1) : chaque lecture est BORNÉE par le temps restant — un serveur muet ne bloque jamais l'impression.
+  while(!n&&Date.now()<fin){
+    var _reste=fin-Date.now(); if(_reste<=0) break;
+    n=await Promise.race([lxNumTicket(apId).catch(function(){return null;}), new Promise(function(r){setTimeout(function(){r(null);},_reste);})]);
+    if(!n&&Date.now()<fin) await new Promise(function(r){setTimeout(r,Math.min(700,Math.max(0,fin-Date.now())));});
+  }
   try{
     if(n){
       try{ var a1=(typeof AP!=="undefined"&&Array.isArray(AP))?AP.find(function(x){return x&&x.id===apId;}):null; if(a1) a1.numLegal=n; }catch(_e2){}
@@ -36639,7 +36677,7 @@ async function lxSigRemplir(doc, apId, maxMs){
   var t=new Promise(function(r){ setTimeout(r, maxMs||3500); });
   await Promise.race([p,t]);
   if(!fini){ try{ doc.querySelectorAll(".lxSig").forEach(function(e){ if(e.textContent==="…") e.textContent="en cours (voir duplicata)"; }); }catch(_e){} }
-  try{ await _pNum; }catch(_eN){}
+  try{ await Promise.race([_pNum, new Promise(function(r){ setTimeout(r, 200); })]); }catch(_eN){} // borné : _pNum lui-même s'arrête à maxMs
 }
 function lxRetirerLigne(idx){
   try{ var it=_tk&&_tk.items&&_tk.items[idx]; if(it&&!it.isSep&&!it.isAcompteData&&typeof auditLog==="function") auditLog("ANNULATION_LIGNE",(it.name||"Ligne")+" — "+((Number(it.price)||0)*(Number(it.qty)||1)).toFixed(2)+" € (avant encaissement)"); }catch(_e){}
@@ -36691,7 +36729,7 @@ function buildTicketHTML(a, isDuplicate){
   h+=_lxNumSousH;
   h+="<div style=\"font-size:12px\">"+fmt(a.date)+" \u00e0 "+(a.heureEncaiss||a.time)+"</div>";
   if(_ri){
-    h+="<div style=\"font-size:12px;font-weight:700\">Ticket d'origine n\u00b0"+escapeHtml(String(_ri.refTk!=null?_ri.refTk:"--"))+" du "+(_ri.refDate?_lxJJMMAAAA(_ri.refDate):"--")+"</div>";
+    h+="<div style=\"font-size:12px;font-weight:700\">Ticket d'origine n\u00b0"+escapeHtml(_lxOrigLib(_ri))+" du "+(_ri.refDate?_lxJJMMAAAA(_ri.refDate):"--")+"</div>";
     if(_ri.motif) h+="<div style=\"font-size:11px\">Motif : "+escapeHtml(String(_ri.motif))+"</div>";
   }
   h+="<div style=\"font-size:12px\">Collaborateur: "+(sty?sty.n:"")+"</div>";
@@ -40436,7 +40474,12 @@ async function lxArchiveSignee(){
       var fin=Date.now()+8000, sa=null;
       while(Date.now()<fin&&!sa){ try{ await _lxSignerMaintenant(); }catch(_e){} var q=await _sb.from("nf525_signatures").select("seq,data_to_sign,signature,prev_signature,algo,key_id,signed_at").eq("salon_id",_salonId).eq("type","AR").eq("source_num",reg.data.seq).limit(1); if(q.data&&q.data[0]) sa=q.data[0]; else await new Promise(function(r){ setTimeout(r,800); }); }
       arc.signature_archive=sa||{seq:reg.data.seq,statut:"enregistr\u00e9e, signature en cours (sous 2 min)"};
-    }catch(_eAr){ arc.signature_archive={statut:"non sign\u00e9e : "+(_eAr.message||_eAr)}; }
+    }catch(_eAr){
+      // 2026-11-05 (contre-audit 6.8.8) : période incluant aujourd'hui et vente enregistrée entre-temps sur un autre poste -> message clair, pas de fichier non signé
+      var _mAr=String((_eAr&&_eAr.message)||_eAr||"");
+      if(_mAr.indexOf("LX_ARCHIVE_DONNEES")>=0 && au>=TD){ toast("\u26a0\ufe0f Une vente vient d\u2019\u00eatre enregistr\u00e9e pendant la pr\u00e9paration de l\u2019archive (autre poste ?). R\u00e9essayez dans un instant, ou choisissez une p\u00e9riode qui s\u2019arr\u00eate hier.","warning",9000); return; }
+      arc.signature_archive={statut:"non sign\u00e9e : "+_mAr};
+    }
     var blob=new Blob([JSON.stringify(arc,null,1)],{type:"application/json"});
     var url=URL.createObjectURL(blob), a=document.createElement("a");
     a.href=url; a.download="archive-nf525-"+(SALON_CONFIG.siret||"salon")+"-"+du+"_"+au+".json"; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function(){ URL.revokeObjectURL(url); },3000);
@@ -41282,7 +41325,7 @@ async function _cancelSecureTicketDoUneFois(id,motif){
     pr:-(orig.pr||0),brutTotal:-(orig.brutTotal||orig.pr),remise:0,
     items:(function(){
       // 2026-10-11 : ventilation prestations / produits de l'original (TVA et comptes 706/707 corrects)
-      try{ var _so=_splitPrestProd(orig), _n="ANNULATION #"+(orig.tkNum||"--"), L=[];
+      try{ var _so=_splitPrestProd(orig), _n=_lxAnnulLib(orig), L=[];
         // 2026-10-28 (v6.7.0) : ticket d'origine contenant la vente d'un bon à usage multiple -> la ligne d'annulation du bon reste
         // hors chiffre d'affaires (même qualification), prestations / produits annulés comme l'original.
         if(Math.abs(Number(_so.horsCa)||0)>=0.005){
@@ -41295,7 +41338,7 @@ async function _cancelSecureTicketDoUneFois(id,motif){
           if(Math.abs(Number(_so.prest)||0)>=0.005) L.push({name:_n+" - prestations",price:-Math.round(_so.prest*100)/100,qty:1,remise:0});
           L.push({name:_n+" - produits",price:-Math.round(_so.prod*100)/100,qty:1,remise:0,isProd:true});
           return L; } }catch(_eS){}
-      return [{name:"ANNULATION #"+(orig.tkNum||"--"),price:-(orig.pr||0),qty:1,remise:0}];
+      return [{name:_lxAnnulLib(orig),price:-(orig.pr||0),qty:1,remise:0}];
     })(),
     // 2026-10-11 : remboursement sur les MÊMES modes de règlement que l'original (mixte, en ligne)
     payments:(function(){
@@ -42125,7 +42168,7 @@ async function _lxRetourValiderUneFois(ctx){
   var refTk=(_row.tk!=null&&_row.tk!=="")?(isNaN(Number(_row.tk))?_row.tk:Number(_row.tk)):orig.tkNum, refDate=_row.date_ticket?String(_row.date_ticket).slice(0,10):orig.date;
   var tkNumR=nextTicketNum();
   var lignes=sel.lignes.map(function(s,ix){
-    var it={name:s.l.name, price:-s.m, qty:1, remise:0, isRetour:true, retourRefId:refId, retourRefTk:refTk, retourRefDate:refDate, retourIdx:s.l.idx};
+    var it={name:s.l.name, price:-s.m, qty:1, remise:0, isRetour:true, retourRefId:refId, retourRefTk:refTk, retourRefNum:_lxOrigNumLegal(refId,null), retourRefDate:refDate, retourIdx:s.l.idx};
     if(s.l.isProd){ it.isProd=true; it.retourQty=s.q; if(s.l.prodId) it.prodId=s.l.prodId; it.restock=!!(s.stock&&s.l.prodId); }
     if(s.l.sId) it.sId=s.l.sId;
     if(s.l.tauxPropre||dual) it.tvaTaux=s.l.taux; // HT / TVA ligne à ligne (même taux que la ligne d'origine)
@@ -42136,7 +42179,7 @@ async function _lxRetourValiderUneFois(ctx){
     date:TD, time:now.toTimeString().slice(0,5), ts:now.toISOString(),
     pr:-sel.total, brutTotal:-sel.total, remise:0, items:lignes,
     payments:[{method:mode, amount:-sel.total}], st:"done", met:mode, tkNum:tkNumR,
-    isRetour:true, retourRefId:refId, retourRefTk:refTk, retourRefDate:refDate, retourMotif:motif,
+    isRetour:true, retourRefId:refId, retourRefTk:refTk, retourRefNum:_lxOrigNumLegal(refId,null), retourRefDate:refDate, retourMotif:motif,
     lxEffetsRetour:plan, aPhases:[], fromCaisse:true,
     comment:"Retour / remboursement partiel du ticket n°"+refTk+" du "+_lxJJMMAAAA(refDate)+" — "+motif };
   if(orig.clientNom) tk.clientNom=orig.clientNom; if(orig.clientPrenom) tk.clientPrenom=orig.clientPrenom;
@@ -42694,6 +42737,8 @@ function cloturerJournee(opts){
   var tkNums=done.filter(function(a){return !(a.serveur===true||Number(a.tkNum)>900000);}).map(function(a){return a.tkNum||0;}).filter(function(n){return n>0;});
   var tkSrv=done.filter(function(a){return a.serveur===true||Number(a.tkNum)>900000;}).map(function(a){return Number(a.tkNum)||0;}).filter(function(n){return n>0;});
   var tkMin=tkNums.length?Math.min.apply(null,tkNums):0;
+  var _lxZNumL=(function(){ var L=[], m=0; done.forEach(function(a){ var n=(typeof lxNumLegal==="function")?lxNumLegal(a):null; if(n>0) L.push(n); else m++; });
+    return {min:(L.length?Math.min.apply(null,L):0), max:(L.length?Math.max.apply(null,L):0), manque:m}; })();
   var tkMax=tkNums.length?Math.max.apply(null,tkNums):0;
   // Heure premier/dernier ticket — essaie ts (ISO) puis time ("HH:MM") en fallback.
   // Les tickets sans ts (vieux passages, créations manuelles) ont au moins `time`.
@@ -42747,6 +42792,8 @@ function cloturerJournee(opts){
   var c={id:U(),date:TD,ts:new Date().toISOString(),num:_nextClotureNum,
     nbTickets:nbTicketsNum,nbAnnul:annul.length,totalAnnul:totalAnnul,
     tkMin:tkMin,tkMax:tkMax,hPremier:hPremier,hDernier:hDernier,
+    // 2026-11-05 (contre-audit 6.8.8) : bornes du n° LÉGAL (serveur) des tickets du jour — raw_data, hors empreinte ; nbSansNumLegal = tickets encore sans n° légal (hors ligne)
+    numLegalMin:_lxZNumL.min, numLegalMax:_lxZNumL.max, nbSansNumLegal:_lxZNumL.manque,
     tkSrvMin:(tkSrv.length?Math.min.apply(null,tkSrv):0),tkSrvMax:(tkSrv.length?Math.max.apply(null,tkSrv):0),
     totalCA:totalCA,totalPrest:totalPrest,totalProd:totalProd,
     totalHT:totalHT,totalTVA:totalTVA,txTVA:txTVA,

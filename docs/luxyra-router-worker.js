@@ -3864,9 +3864,19 @@ async function handleExportNF525(request, env) {
       const nr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/nf525_notice_archive_texte`, { method: "POST", headers: { "apikey": sbKey, "Authorization": "Bearer " + sbKey, "Content-Type": "application/json" }, body: "{}" });
       if (nr.ok) noticeFr = await nr.json();
     } catch (_eNo) {}
+    // 05/11/2026 (contre-audit 6.8.8) : un export de contrôle ne part JAMAIS sans sa notice (BOI § 230) — nouvel essai, puis refus explicite.
+    if (!noticeFr || String(noticeFr).length < 200) {
+      try {
+        const nr2 = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/nf525_notice_archive_texte`, { method: "POST", headers: { "apikey": sbKey, "Authorization": "Bearer " + sbKey, "Content-Type": "application/json" }, body: "{}" });
+        if (nr2.ok) noticeFr = await nr2.json();
+      } catch (_eNo2) {}
+    }
+    if (!noticeFr || String(noticeFr).length < 200) {
+      return jsonResponse({ error: "Notice explicative indisponible : l'export de contrôle n'a pas été produit. Réessayez dans un instant.", code: "LX_NOTICE_INDISPONIBLE" }, 503);
+    }
     const exportData = {
       norme: "NF525",
-      notice: noticeFr || "Notice explicative : https://luxyra.fr/app (Paramètres → Caisse → Conformité → Notice explicative des archives).",
+      notice: noticeFr,
       version_logiciel: "Luxyra " + versionLogiciel,
       export_timestamp: new Date().toISOString(),
       salon: {
