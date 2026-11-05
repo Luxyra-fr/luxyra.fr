@@ -2067,15 +2067,18 @@ async function lxConfigNombre(env, cle, defaut) {
 // plafond quotidien persistant par établissement ; anti-doublon (1 envoi / bon / adresse / jour, clé hachée).
 // Présentation uniquement : aucun montant, code, ticket ni TVA n'est modifié.
 // ============================================================
-function lxBonMentionTvaCaisse(b) {
+function lxBonMentionTvaCaisse(b, tauxEtab) {
   // identique à _lxBonMentionTva (app.html) avec le chargement du bon (luxyra-supabase.js : tvaRate BUM = 0, sinon tva_rate || 0,20)
   const u = (b && (b.usage_tva || (b.qualif_tva && b.qualif_tva.usage))) || null;
   const _r = b ? b.tva_rate : null; // 2026-11-05 (6.8.10, audit D11) : un taux 0 (franchise, bon offert) reste 0 (avant « || 0,20 »)
-  const rate = (u === "BUM") ? 0 : ((_r !== null && _r !== undefined && _r !== "" && isFinite(Number(_r))) ? Number(_r) : 0.20);
+  // 2026-11-05 (6.8.10, contre-audit d3f72dd) : bon sans taux -> taux de l'établissement (plus de 20 % en dur)
+  const _te = (tauxEtab !== null && tauxEtab !== undefined && tauxEtab !== "" && isFinite(Number(tauxEtab))) ? Number(tauxEtab) / 100 : 0.20;
+  const rate = (u === "BUM") ? 0 : ((_r !== null && _r !== undefined && _r !== "" && isFinite(Number(_r))) ? Number(_r) : _te);
   const tx = rate * 100;
   let t = (tx <= 0) ? "TVA non applicable, art. 293 B du CGI" : ("TVA " + String(Math.round(tx * 10) / 10).replace(".", ",") + " % incluse");
   if (u === "BUM") t = "Bon \u00e0 usage multiple \u2013 TVA exigible \u00e0 l\u2019utilisation (CGI art. 256 ter)";
-  if (b && (b.is_offert === true || b.pay_method === "Offert")) t = "Bon offert \u00e0 titre gracieux \u00b7 " + t;
+  // bon OFFERT : « 293 B » seulement si l'établissement est en franchise ; sinon mention neutre (aucune TVA collectée à l'émission)
+  if (b && (b.is_offert === true || b.pay_method === "Offert")) t = (_te <= 0) ? "Bon offert \u00e0 titre gracieux \u00b7 TVA non applicable, art. 293 B du CGI" : "Bon offert \u00e0 titre gracieux \u2013 sans contrepartie";
   return t;
 }
 // ============================================================
@@ -2351,7 +2354,7 @@ async function handleBonEcarte(request, env) {
       nom: sal.nom || "", sous: sal.sous_titre || "", logo: (/^https:\/\/[^\s"'<>]+$/i.test(String(sal.logo || "")) ? sal.logo : ""),
       occasion: (LXB.occasionDepuisTheme && bon.theme_id) ? (LXB.occasionDepuisTheme(bon.theme_id) || "") : "",
       pour: bon.pour || "", de: bon.de || "", msg: (bon.message && bon.message !== "Bon offert") ? bon.message : "", valeur: Number(bon.valeur) || 0, code: bon.code,
-      dateExp, perimetre, mentionTva: lxBonMentionTvaCaisse(bon), tkNum: bon.tk_num || null,
+      dateExp, perimetre, mentionTva: lxBonMentionTvaCaisse(bon, sal.taux_tva), tkNum: bon.tk_num || null,
       couleur: sal.couleur_primaire || "#c8a84e", palette: (LXB.paletteValide ? LXB.paletteValide(cfg && cfg.bonPalette) : ""),
       adresse: [sal.adresse, [sal.cp, sal.ville].filter(Boolean).join(" ")].filter(Boolean).join(" "), tel: sal.tel || "", siret: sal.siret || "",
       intro: "Bonjour,\nvoici votre carte cadeau " + (sal.nom || "") + ". Présentez-la sur place, sur papier ou sur votre téléphone.",

@@ -422,12 +422,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261105-7"></script>
+<script src="luxyra-supabase.js?v=20261105-8"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261105-7";
+  var attendu="20261105-8";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -24550,8 +24550,14 @@ function _lxBonMentionTva(g){
   var _txB=(g&&g.tvaRate!=null&&!isNaN(Number(g.tvaRate)))?Number(g.tvaRate)*100:lxTauxTVA();
   var t=(_txB<=0)?"TVA non applicable, art. 293 B du CGI":("TVA "+(Math.round(_txB*10)/10).toString().replace(".",",")+" % incluse");
   if(g && lxBonUsage(g)==="BUM") t="Bon \u00e0 usage multiple \u2013 TVA exigible \u00e0 l\u2019utilisation (CGI art. 256 ter)"; // 31/10 (R3) : libellé identique à printGiftThemed
-  if(g && (g.isOffert||g.payMethod==="Offert")) t="Bon offert \u00e0 titre gracieux \u00b7 "+t; // 31/10 (R2)
+  if(g && (g.isOffert||g.payMethod==="Offert")) t=lxBonOffertMention(); // 2026-11-05 (6.8.10, contre-audit d3f72dd I1) : jamais « 293 B » chez un assujetti
   return t;
+}
+// 2026-11-05 (6.8.10) : bon OFFERT (gratuit, sans contrepartie, aucune TVA collectée à l'émission). La mention « art. 293 B »
+// n'apparaît que si l'établissement est en franchise de TVA ; sinon mention neutre. Règle appliquée à la LECTURE (bons existants compris).
+function lxBonOffertMention(){
+  var fr=(typeof lxTauxTVA==="function")?(Number(lxTauxTVA())<=0):false;
+  return fr?"Bon offert \u00e0 titre gracieux \u00b7 TVA non applicable, art. 293 B du CGI":"Bon offert \u00e0 titre gracieux \u2013 sans contrepartie";
 }
 function _lxBonPourRendu(g){
   var scope=!g.scope||g.scope==="tout"?"Prestations et produits":(g.scope==="prestations"?"Prestations uniquement":"Produits uniquement");
@@ -25050,6 +25056,7 @@ function printGiftThemed(gcId,themeId){
   var _txB=(g.tvaRate!=null&&!isNaN(Number(g.tvaRate)))?Number(g.tvaRate)*100:lxTauxTVA();
   var tvaLine=(_txB<=0)?"TVA non applicable, art. 293 B du CGI":("TVA "+(Math.round(_txB*10)/10).toString().replace(".",",")+" % incluse");
   if(lxBonUsage(g)==="BUM") tvaLine="Bon \u00e0 usage multiple \u2013 TVA exigible \u00e0 l\u2019utilisation (CGI art. 256 ter)"; // 2026-10-28 (v6.7.0)
+  if(isOff) tvaLine=((typeof lxTauxTVA==="function"&&Number(lxTauxTVA())<=0)?"TVA non applicable, art. 293 B du CGI":"Sans contrepartie"); // 2026-11-05 (6.8.10) : bon offert (libellé « offert » imprimé juste au-dessus), jamais « 293 B » chez un assujetti
   
   // Theme colors [bg, accent, text, textSoft, border, bodyBg, footBg, footTxt, labelFont, msgFont, decoChar, decoCol, headerLabel]
   var themes={
@@ -28993,12 +29000,14 @@ async function reprintClotureZ(idx){
   try{
     var _op=(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR)?((CURRENT_OPERATOR.prenom||"")+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:"")).trim():"";
     for(var essai=1;essai<=2;essai++){
-      var r=null; try{ r=await _sb.rpc("nf525_duplicata_z",{p_salon:_salonId,p_cloture_num:Number(c.num)||null,p_date:c.date||null,p_operateur:_op||null}); }catch(_eR){ r={error:_eR}; }
+      // 2026-11-05 (6.8.10, contre-audit d3f72dd I3) : délai maximum de 6 s par essai (8 s au plus en pratique hors attente), verrou toujours libéré
+      var r=null; try{ r=await Promise.race([ _sb.rpc("nf525_duplicata_z",{p_salon:_salonId,p_cloture_num:Number(c.num)||null,p_date:c.date||null,p_operateur:_op||null}),
+        new Promise(function(res){ setTimeout(function(){ res({error:{message:"le serveur ne r\u00e9pond pas (d\u00e9lai d\u00e9pass\u00e9)"}}); }, essai===1?4000:4000); }) ]); }catch(_eR){ r={error:_eR}; }
       if(r&&!r.error&&r.data){ copie=r.data.copie||null; err=null; break; }
       var msg=String((r&&r.error&&(r.error.message||r.error.code))||"erreur");
       // 2026-11-05 (6.8.10, audit C2) : plus de chemin dégradé (la fonction serveur est en place) : comme le duplicata de ticket,
       // un duplicata de Z non enregistré par le serveur n'est JAMAIS imprimé.
-      err=msg; if(essai<2) await new Promise(function(res){ setTimeout(res,1200); });
+      err=msg; if(essai<2&&!/d\u00e9lai/.test(msg)) await new Promise(function(res){ setTimeout(res,600); });
     }
   } finally { window._lxZDupEnCours=false; }
   if(err){ showAlert("Duplicata de la cl\u00f4ture Z n\u00b0"+(c.num||"?")+" non enregistr\u00e9 ("+err+") : impression bloqu\u00e9e. R\u00e9essayez une fois la connexion r\u00e9tablie.","warning"); return; }
@@ -36872,14 +36881,21 @@ function _lxProvEcrire(l){ try{
     for(var i=0;i<l.length;i++){ var e=l[i]; if(aRetirer>0&&e.num&&e.tr!==false){ ancre=e.h||ancre; aRetirer--; continue; } garde.push(e); }
     if(ancre&&garde.length) garde[0].ancre=ancre; l=garde; }
   localStorage.setItem(_lxProvCle(), JSON.stringify(l)); }catch(_e){} }
-async function lxProvNoter(apId){
+// 2026-11-05 (6.8.10, contre-audit d3f72dd I2) : toutes les écritures du registre local sont SÉRIALISÉES (file de promesses)
+// et les mises à jour (trace, n° légal) sont FUSIONNÉES par id sur la liste relue au moment d'écrire : un ticket noté pendant
+// un envoi n'est jamais écrasé par une ancienne copie de la liste.
+var _lxProvQ=Promise.resolve();
+function _lxProvSerie(fn){ var p=_lxProvQ.then(fn,fn); _lxProvQ=p.catch(function(){}); return p; }
+function _lxProvFusion(maj){ var l=lxProvListe(), n=0; l.forEach(function(e){ if(e&&maj[e.id]){ for(var k in maj[e.id]) e[k]=maj[e.id][k]; n++; } }); if(n) _lxProvEcrire(l); return n; }
+function lxProvNoter(apId){ return _lxProvSerie(function(){ return _lxProvNoterImpl(apId); }); }
+async function _lxProvNoterImpl(apId){
   if(!apId||window._lxDemo||apId==="temp") return;
   var l=lxProvListe(); if(l.some(function(e){ return e.id===apId; })) return;
   var a=(typeof AP!=="undefined"&&Array.isArray(AP))?AP.find(function(x){return x&&x.id===apId;}):null;
   var prev=l.length?(l[l.length-1].h||""):"", e={id:apId, ref:a?String(a.tkNum||""):"", date:a?String(a.date||""):"", ttc:a?Number(a.pr)||0:0, at:new Date().toISOString(), num:null, vu:false};
   try{ var buf=new TextEncoder().encode(prev+"|"+e.id+"|"+e.ref+"|"+e.date+"|"+e.ttc.toFixed(2)+"|"+e.at); var d=await crypto.subtle.digest("SHA-256",buf); e.h=Array.from(new Uint8Array(d)).map(function(b){return b.toString(16).padStart(2,"0");}).join(""); }catch(_eH){ e.h=""; }
-  e.tr=false; l.push(e); _lxProvEcrire(l);
-  try{ lxProvTracer(); }catch(_eA){}
+  e.tr=false; l=lxProvListe(); if(!l.some(function(x){ return x.id===apId; })){ l.push(e); _lxProvEcrire(l); } // relu juste avant d'écrire
+  setTimeout(function(){ try{ lxProvTracer(); }catch(_eA){} },0);
 }
 // 2026-11-05 (contre-audit 6.8.9, IMPORTANT 1) : la trace serveur TICKET_IMPRIME_PROVISOIRE (JET 125) est gardée dans le
 // registre local (e.tr) et renvoyée au retour du réseau ; idempotente (marqueur « prov:<id> » recherché avant insertion).
@@ -36889,7 +36905,7 @@ async function lxProvTracer(){
   if(typeof _sb==="undefined"||!_sb||!_salonId||navigator.onLine===false) return;
   _lxProvTrEnCours=true;
   try{
-    var l=lxProvListe(), modif=false;
+    var l=lxProvListe(), maj={};
     for(var i=0;i<l.length;i++){ var e=l[i]; if(e.tr!==false) continue;
       var mq="prov:"+e.id;
       try{
@@ -36899,21 +36915,21 @@ async function lxProvTracer(){
           var ok=await saveAuditEntry("TICKET_IMPRIME_PROVISOIRE","R\u00e9f. appareil "+(e.ref||"--")+" du "+(e.date||"--")+" ("+(Number(e.ttc)||0).toFixed(2)+" \u20ac), imprim\u00e9 le "+(e.at||"--")+" : n\u00b0 l\u00e9gal attribu\u00e9 \u00e0 la transmission ; empreinte locale "+(e.h||"").slice(0,16)+" ["+mq+"]");
           if(!ok) break;
         }
-        e.tr=true; modif=true;
+        maj[e.id]={tr:true};
       }catch(_eT){ break; }
     }
-    if(modif) _lxProvEcrire(l);
+    if(Object.keys(maj).length) await _lxProvSerie(function(){ return _lxProvFusion(maj); });
   }finally{ _lxProvTrEnCours=false; }
 }
 async function lxProvVerifier(){
   if(window._lxDemo) return;
   try{ await lxProvTracer(); }catch(_eTr){}
   var l=lxProvListe(); if(!l.length) return;
-  var nouveaux=[];
+  var nouveaux=[], majN={};
   for(var i=0;i<l.length;i++){ var e=l[i]; if(e.num) continue;
     var n=null; try{ n=await lxNumTicket(e.id); }catch(_e){}
-    if(n){ e.num=n; e.numLe=new Date().toISOString(); nouveaux.push(e); } }
-  if(nouveaux.length){ _lxProvEcrire(l);
+    if(n){ e.num=n; e.numLe=new Date().toISOString(); majN[e.id]={num:e.num,numLe:e.numLe}; nouveaux.push(e); } }
+  if(nouveaux.length){ await _lxProvSerie(function(){ return _lxProvFusion(majN); });
     try{ if(typeof addNotif==="function") addNotif("info","\ud83e\uddfe "+nouveaux.length+" ticket(s) provisoire(s) ont re\u00e7u leur n\u00b0 l\u00e9gal","R\u00e9f. appareil "+nouveaux.map(function(e){return e.ref+" \u2192 n\u00b0"+e.num;}).join(", ")+". Vous pouvez remettre le duplicata au client ou le lui envoyer par e-mail : Caisse \u203a Tickets provisoires.",{type:"tickets_provisoires"}); }catch(_eN){}
     try{ if(typeof toast==="function") toast("\ud83e\uddfe "+nouveaux.length+" ticket(s) provisoire(s) : n\u00b0 l\u00e9gal attribu\u00e9 \u2014 duplicata disponible","info"); }catch(_eT){}
   }
