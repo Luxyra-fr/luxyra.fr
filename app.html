@@ -422,12 +422,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261105-3"></script>
+<script src="luxyra-supabase.js?v=20261105-4"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261105-3";
+  var attendu="20261105-4";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -12226,6 +12226,8 @@ function rHome(){
   // 03/11/2026 : contrat d'abonnement à valider (propriétaire seulement, non bloquant, masquable pour la session)
   // M3 (03/11) : affiché même si un bandeau prioritaire est présent (empilé) ; ne compte pas dans la limite des bandeaux d'information
   try{ if(window._lxContratAsigner && !window._lxContratMasque && !window._lxVueAdmin && !window._lxDemo && _lxContratEstProprio() && window.LX_CONTRAT_VERSION){ h+=_lxContratBandeau(); } }catch(_eCt){}
+  // 05/11/2026 : seuil de franchise de TVA dépassé / sortie prévue arrivée à échéance (propriétaire, empilé, non bloquant)
+  try{ if(typeof _lxFranchiseBandeau==="function"){ var _frH=_lxFranchiseBandeau(); if(_frH) h+=_frH; } }catch(_eFr){}
   // 2026-10-27 : envoi au comptable en attente / bloqué (mois précédent non clôturé, écart, échec) — rien si tout va bien
   try{ if(!_lxNbBandeaux && typeof _lxEcCarteAccueil==="function"){ var _ecH=_lxEcCarteAccueil(); if(_ecH){ _lxNbBandeaux++; h+=_ecH; } } }catch(_eEc){}
   // 2026-10-10 : attestation de conformité de la caisse à signer (volet 2) — rappel sur l'accueil, masquable 7 jours
@@ -18861,6 +18863,8 @@ function rSettings(){
     h+='<div style="font-size:10px;color:var(--text3);margin-top:4px">M\u00e9tropole: 20% | Micro: 0%</div>';
     h+='<div style="flex:1"></div>'; // spacer
     h+='<button class="btn bg" style="width:100%;margin-top:8px;padding:10px;font-weight:700;font-size:12px" onclick="saveTVA()">Valider</button>';
+    // 05/11/2026 : sortie de franchise guidée (date d'effet, explications, attestation)
+    try{ if(typeof lxFranchiseTVA==="function" && lxFranchiseTVA() && (typeof _lxContratEstProprio!=="function" || _lxContratEstProprio())){ var _frF=lxFranchiseFin(); h+='<button class="btn bs" style="width:100%;margin-top:6px;padding:9px;font-size:12px" onclick="lxSortieFranchise()">\ud83e\uddfe Je sors de la franchise'+(_frF?' (pr\u00e9vue le '+_lxFrDateFr(_frF.date)+')':'')+'</button>'; } }catch(_eFrB){}
     h+='</div></div>';
     // TVA sur tickets
     h+='<div class="card" style="margin-top:10px">';
@@ -18927,6 +18931,19 @@ function saveFondCaisse(){
 function saveTVA(){
   var val=parseFloat(document.getElementById("tvaInput").value);
   if(isNaN(val)||val<0||val>30){showAlert("Taux invalide","warning");return;}
+  _lxTvaAppliquer(val, function(){
+  var h2='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">';
+  h2+='<div style="font-size:36px;margin-bottom:10px">\u2705</div>';
+  h2+='<h2>Taux de TVA modifi\u00e9</h2>';
+  h2+='<div style="font-size:18px;font-weight:800;color:var(--gold);margin-bottom:14px">'+val+'%</div>';
+  h2+='<div style="font-size:13px;color:var(--text3);margin-bottom:14px">Appliqu\u00e9 sur les prochains tickets et bandes Z</div>';
+  h2+='<button class="btn bg bk" style="padding:12px;width:100%" onclick="cM()">OK</button>';
+  h2+='</div></div>';
+  document.getElementById("modal").innerHTML=h2;
+  });
+}
+// 05/11/2026 : application d'un taux (même chemin pour « Je sors de la franchise ») ; onOk appelé seulement si la base a accepté
+function _lxTvaAppliquer(val, onOk){
   var _tvaAvant=SALON_CONFIG.tauxTVA; // 2026-10-15 : remis si la base refuse (tickets toujours au taux enregistre)
   SALON_CONFIG.tauxTVA=val;
   if(window.SALON)window.SALON.tauxTVA=val;
@@ -18948,14 +18965,8 @@ function saveTVA(){
     if(window.SALON) window.SALON.tvaProduits=SALON_CONFIG.tvaProduits;
   }catch(_eTp){}
   auditLog("CONFIG_TVA","Taux TVA modifie: "+val+"%");
-  var h2='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">';
-  h2+='<div style="font-size:36px;margin-bottom:10px">\u2705</div>';
-  h2+='<h2>Taux de TVA modifi\u00e9</h2>';
-  h2+='<div style="font-size:18px;font-weight:800;color:var(--gold);margin-bottom:14px">'+val+'%</div>';
-  h2+='<div style="font-size:13px;color:var(--text3);margin-bottom:14px">Appliqu\u00e9 sur les prochains tickets et bandes Z</div>';
-  h2+='<button class="btn bg bk" style="padding:12px;width:100%" onclick="cM()">OK</button>';
-  h2+='</div></div>';
-  document.getElementById("modal").innerHTML=h2;
+  try{ if(Number(val)>0 && SALON_CONFIG.franchiseFin){ SALON_CONFIG.franchiseFin.appliqueLe=(typeof TD==="string"?TD:""); } }catch(_eFf){}
+  if(typeof onOk==="function") onOk();
   });
 }
 
@@ -26547,12 +26558,11 @@ function getMicroSeuilsStatus(){
   var ratioTva = ca.services / MICRO_SEUILS.tva_services;
   var status = "ok";
   var alerts = [];
-  if(ratioTva >= 1){
-    status = "danger";
-    alerts.push("Seuil TVA d\u00e9pass\u00e9 ("+ca.services.toFixed(0)+"\u20ac \u2265 "+MICRO_SEUILS.tva_services+"\u20ac) \u2014 vous devez collecter la TVA");
-  } else if(ratioTva >= 0.85){
-    status = "warning";
-    alerts.push("Vous approchez le seuil TVA ("+(ratioTva*100).toFixed(0)+"%) \u2014 bascule \u00e0 "+MICRO_SEUILS.tva_services+"\u20ac");
+  // 05/11/2026 : seuils de franchise de TVA exacts (art. 293 B CGI) — date d'effet selon le cas (lxFranchiseEtat)
+  var _fe = (typeof lxFranchiseEtat==="function") ? lxFranchiseEtat() : null;
+  if(_fe && _fe.applicable && _fe.alerts.length){
+    _fe.alerts.forEach(function(t){ alerts.push(t); });
+    status = (_fe.cas==="approche") ? "warning" : "danger";
   }
   if(ratioCa >= 1){
     status = "danger";
@@ -26562,6 +26572,153 @@ function getMicroSeuilsStatus(){
     alerts.push("Vous approchez le seuil micro ("+(ratioCa*100).toFixed(0)+"%) \u2014 bascule \u00e0 "+MICRO_SEUILS.ca_services+"\u20ac");
   }
   return { ca: ca, status: status, alerts: alerts, ratioCa: ratioCa, ratioTva: ratioTva };
+}
+
+// =====================================================================
+// 05/11/2026 : FRANCHISE EN BASE DE TVA — seuils, date d'effet, sortie guidée
+// Règles (art. 293 B CGI ; BOI-TVA-DECLA-40-10-10 ; ces articles passent au CIBS au 01/01/2027) :
+//  - prestations de services : seuil 37 500 €, seuil majoré 41 250 € ; ventes : 85 000 € / 93 500 € ;
+//  - activité mixte : le CA GLOBAL ne doit pas dépasser le seuil « ventes » ET la part « services » le seuil « services » ;
+//  - CA de l'année civile > seuil majoré : franchise perdue à compter de la date du dépassement ;
+//  - CA de l'année > seuil de base (sans franchir le majoré) : franchise jusqu'au 31/12, TVA au 1er janvier suivant ;
+//  - CA de l'année précédente > seuil de base : TVA due depuis le 1er janvier de l'année en cours ;
+//  - option volontaire (art. 293 F) : 1er jour du mois de l'option.
+// CA = recettes encaissées de l'année civile (même calcul que getCAYearToDate). Les tickets déjà scellés ne sont JAMAIS modifiés.
+// =====================================================================
+function _lxFrSeuils(){
+  var C=window.LX_CONFIG||{}, M=(typeof MICRO_SEUILS!=="undefined")?MICRO_SEUILS:{};
+  var sv=Number(C.micro_seuil_tva_services)||Number(M.tva_services)||37500, vt=Number(C.micro_seuil_tva_ventes)||Number(M.tva_ventes)||85000;
+  return { sv:sv, svMax:Number(C.micro_seuil_tva_services_max)||Number(M.tva_services_max)||41250, vt:vt, vtMax:Number(C.micro_seuil_tva_ventes_max)||Number(M.tva_ventes_max)||93500 };
+}
+function _lxFrDateFr(d){ d=String(d||""); return d.length>=10 ? d.slice(8,10)+"/"+d.slice(5,7)+"/"+d.slice(0,4) : d; }
+function _lxFrEur(n){ return (Math.round(Number(n)||0)).toLocaleString("fr-FR")+" €"; }
+// Mouvements (date, services, ventes) de l'année civile donnée, triés par date.
+function _lxFrMouvements(year){
+  var prefix=year+"-", L=[];
+  try{
+    (typeof AP!=="undefined"?AP:[]).filter(function(a){return a && a.st==="done" && _lxCaOk(a) && _lxDJ(a).indexOf(prefix)===0;}).forEach(function(a){
+      var sp=_splitPrestProd(a), sv=Number(sp.prest)||0, pr=Number(sp.prod)||0;
+      try{ var mb=_lxRecetteMicroBum(a); sv+=Number(mb.svc)||0; pr+=Number(mb.prod)||0; }catch(_e){}
+      L.push({d:_lxDJ(a).slice(0,10), s:sv, v:pr});
+    });
+    (typeof PS!=="undefined"?PS:[]).filter(function(p){return p && String(p.date||"").indexOf(prefix)===0;}).forEach(function(p){ L.push({d:String(p.date).slice(0,10), s:0, v:Number(p.pr)||0}); });
+  }catch(_e){}
+  L.sort(function(x,y){ return x.d<y.d?-1:(x.d>y.d?1:0); });
+  return L;
+}
+// Cumuls d'une année + date du premier dépassement de chaque seuil (null si non franchi).
+function _lxFrAnnee(year, S){
+  var L=_lxFrMouvements(year), cs=0, ct=0, dSv=null, dVt=null, dSvMax=null, dVtMax=null;
+  L.forEach(function(m){
+    cs+=m.s; ct+=m.s+m.v;
+    if(dSv===null && cs>S.sv+0.004) dSv=m.d;
+    if(dVt===null && ct>S.vt+0.004) dVt=m.d;
+    if(dSvMax===null && cs>S.svMax+0.004) dSvMax=m.d;
+    if(dVtMax===null && ct>S.vtMax+0.004) dVtMax=m.d;
+  });
+  return { services:Math.round(cs*100)/100, total:Math.round(ct*100)/100, dSv:dSv, dVt:dVt, dSvMax:dSvMax, dVtMax:dVtMax, mixte:(ct-cs)>0.004 && cs>0.004 };
+}
+function _lxFrMin(a,b){ if(!a) return b; if(!b) return a; return a<b?a:b; }
+// Sortie de franchise prévue / enregistrée (config_json.franchiseFin = {date, taux, cas, decideLe}).
+function lxFranchiseFin(){
+  try{
+    if(typeof SALON_CONFIG!=="undefined" && SALON_CONFIG && SALON_CONFIG.franchiseFin===undefined){ var j=window._SALON_CONFIG_JSON; if(j && j.franchiseFin && typeof j.franchiseFin==="object") SALON_CONFIG.franchiseFin=j.franchiseFin; }
+    var f=SALON_CONFIG&&SALON_CONFIG.franchiseFin; return (f && typeof f==="object" && /^\d{4}-\d{2}-\d{2}$/.test(String(f.date||""))) ? f : null;
+  }catch(_e){ return null; }
+}
+// État de la franchise : cas "ok" | "approche" | "fin31dec" | "termine" | "anneePrec"
+function lxFranchiseEtat(){
+  var res={applicable:false, cas:"ok", dateEffet:null, alerts:[], seuils:null};
+  try{
+    if(typeof lxFranchiseTVA!=="function" || !lxFranchiseTVA()) return res; // assujetti : rien à surveiller ici
+    var S=_lxFrSeuils(), td=(typeof TD==="string"&&TD)?TD:new Date().toISOString().slice(0,10), y=Number(td.slice(0,4));
+    var A=_lxFrAnnee(y,S), P=_lxFrAnnee(y-1,S);
+    res.applicable=true; res.seuils=S; res.annee=A; res.anneePrec=P; res.mixte=A.mixte;
+    var dMax=_lxFrMin(A.dSvMax, A.dVtMax);
+    if(P.dSv || P.dVt){
+      res.cas="anneePrec"; res.dateEffet=_lxFrMin(_lxFrMin(P.dSvMax,P.dVtMax), y+"-01-01");
+      res.alerts.push("Franchise de TVA terminée : le chiffre d'affaires "+(y-1)+" a dépassé le seuil ("+(P.dSv?_lxFrEur(P.services)+" de prestations > "+_lxFrEur(S.sv):_lxFrEur(P.total)+" au total > "+_lxFrEur(S.vt))+"). La TVA est due depuis le "+_lxFrDateFr(res.dateEffet)+".");
+    } else if(dMax){
+      res.cas="termine"; res.dateEffet=dMax;
+      res.alerts.push("Franchise de TVA terminée depuis le "+_lxFrDateFr(dMax)+" : le seuil majoré a été dépassé ce jour-là ("+(A.dSvMax===dMax?_lxFrEur(S.svMax)+" de prestations":_lxFrEur(S.vtMax)+" au total")+"). La TVA est due à compter de cette date.");
+    } else if(A.dSv || A.dVt){
+      res.cas="fin31dec"; res.dateEffet=(y+1)+"-01-01";
+      res.alerts.push("Seuil de franchise dépassé ("+(A.dSv?_lxFrEur(A.services)+" de prestations > "+_lxFrEur(S.sv):_lxFrEur(A.total)+" au total > "+_lxFrEur(S.vt))+") : vous restez en franchise jusqu'au 31/12/"+y+", TVA à partir du 01/01/"+(y+1)+". Attention : au-delà de "+(A.dSv?_lxFrEur(S.svMax)+" de prestations":_lxFrEur(S.vtMax)+" au total")+" cette année, la franchise s'arrête immédiatement.");
+    } else if(A.services>=0.85*S.sv || A.total>=0.85*S.vt){
+      res.cas="approche";
+      var pS=Math.round(A.services/S.sv*100), pT=Math.round(A.total/S.vt*100);
+      res.alerts.push("Vous approchez du seuil de franchise de TVA ("+(pS>=pT?pS+" % de "+_lxFrEur(S.sv)+" pour les prestations":pT+" % de "+_lxFrEur(S.vt)+" au total")+").");
+    }
+    if(res.mixte && res.cas!=="ok") res.alerts.push("Activité mixte (prestations + ventes) : les deux seuils s'appliquent ; faites confirmer la date par votre comptable.");
+  }catch(_e){}
+  return res;
+}
+// Bandeau d'accueil (propriétaire) : seuil dépassé ou sortie prévue arrivée à échéance.
+function _lxFranchiseBandeau(){
+  try{
+    if(window._lxVueAdmin || (typeof _lxContratEstProprio==="function" && !_lxContratEstProprio())) return "";
+    if(typeof lxFranchiseTVA!=="function" || !lxFranchiseTVA()) return "";
+    var td=(typeof TD==="string"&&TD)?TD:"", F=lxFranchiseFin(), E=lxFranchiseEtat();
+    if(F && F.date && td && F.date<=td){
+      return '<div style="display:flex;align-items:center;gap:10px;background:#1d1408;border:1.5px solid rgba(255,152,0,.7);box-shadow:0 4px 18px rgba(0,0,0,.5);border-radius:14px;padding:12px 14px;margin-bottom:12px"><div style="font-size:26px">🧾</div><div style="flex:1;cursor:pointer" onclick="lxSortieFranchise()"><div style="font-weight:800;color:#ffb74d">Sortie de franchise de TVA : c\'est le '+_lxFrDateFr(F.date)+'</div><div style="font-size:12px;color:var(--text2)">Appliquer la TVA à '+_lxEsc(String(F.taux))+' % sur vos prochains tickets →</div></div></div>';
+    }
+    if(F) return "";
+    if(!E.applicable || (E.cas!=="termine" && E.cas!=="fin31dec" && E.cas!=="anneePrec")) return "";
+    if(Number(localStorage.getItem("lx_franchise_masque_jusqu")||0)>Date.now()) return "";
+    return '<div style="display:flex;align-items:center;gap:10px;background:#1d1408;border:1.5px solid rgba(255,152,0,.6);box-shadow:0 4px 18px rgba(0,0,0,.5);border-radius:14px;padding:12px 14px;margin-bottom:12px"><div style="font-size:26px">🧾</div><div style="flex:1;cursor:pointer" onclick="lxSortieFranchise()"><div style="font-weight:800;color:#ffb74d">'+(E.cas==="fin31dec"?"Seuil de franchise de TVA dépassé":"Franchise de TVA terminée")+'</div><div style="font-size:12px;color:var(--text2)">'+(E.cas==="fin31dec"?"TVA à partir du "+_lxFrDateFr(E.dateEffet):"TVA due depuis le "+_lxFrDateFr(E.dateEffet))+' — voir ce qui change →</div></div><button type="button" onclick="event.stopPropagation();try{localStorage.setItem(\'lx_franchise_masque_jusqu\',String(Date.now()+3*86400000))}catch(e){};rHome&&go(\'home\')" style="background:none;border:none;color:var(--text3);font-size:18px;cursor:pointer;padding:4px" aria-label="Masquer">×</button></div>';
+  }catch(_e){ return ""; }
+}
+// Fenêtre « Je sors de la franchise » (propriétaire)
+function lxSortieFranchise(){
+  if(typeof _lxContratEstProprio==="function" && !_lxContratEstProprio()){ if(typeof toast==="function") toast("Réservé au titulaire du compte","warning"); return; }
+  if(typeof lxFranchiseTVA!=="function" || !lxFranchiseTVA()){ if(typeof toast==="function") toast("Votre établissement applique déjà la TVA","info"); return; }
+  var td=(typeof TD==="string"&&TD)?TD:new Date().toISOString().slice(0,10), E=lxFranchiseEtat(), F=lxFranchiseFin();
+  var prop = (F&&F.date) || E.dateEffet || (td.slice(0,8)+"01");
+  var tx = (F&&F.taux) || 20;
+  var cause = E.alerts.length ? E.alerts[0] : "Option volontaire pour la TVA : elle prend effet le 1er jour du mois de l'option (art. 293 F du CGI).";
+  var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="max-width:520px;max-height:92vh;overflow-y:auto">';
+  h+='<button type="button" onclick="cM()" aria-label="Fermer" style="float:right;background:none;border:none;color:var(--text3);font-size:20px;cursor:pointer">✕</button>';
+  h+='<h2 style="margin-top:0">🧾 Sortir de la franchise de TVA</h2>';
+  h+='<div style="font-size:13px;color:#ffb74d;line-height:1.5;margin-bottom:12px">'+_lxEsc(cause)+'</div>';
+  h+='<label style="font-size:12px;color:var(--text3);font-weight:700">Date à partir de laquelle vous facturez la TVA</label>';
+  h+='<input id="lxFrDate" type="date" value="'+_lxEsc(prop)+'" style="width:100%;padding:11px;border-radius:10px;margin:6px 0 12px">';
+  h+='<label style="font-size:12px;color:var(--text3);font-weight:700">Taux de TVA de vos prestations</label>';
+  h+='<select id="lxFrTaux" style="width:100%;padding:11px;border-radius:10px;margin:6px 0 12px">';
+  [20,10,5.5].forEach(function(t){ h+='<option value="'+t+'"'+(Number(tx)===t?' selected':'')+'>'+String(t).replace(".",",")+' %'+(t===20?' (taux normal, cas général)':'')+'</option>'; });
+  h+='</select>';
+  h+='<div style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:12px;font-size:12.5px;color:var(--text2);line-height:1.6">';
+  h+='<b>Ce qui change :</b><br>• Les tickets déjà encaissés restent tels quels (sans TVA, mention art. 293 B) : un ticket scellé ne se modifie jamais.<br>';
+  h+='• À partir de la date choisie, vos tickets affichent la TVA. Vos prix restent les mêmes en TTC : pensez à les revoir si vous voulez garder la même marge.<br>';
+  h+='• Votre caisse devient soumise à l\'obligation de logiciel sécurisé : votre attestation éditeur vous sera proposée à la signature.<br>';
+  h+='• <b>Si la date est déjà passée</b>, la TVA est appliquée aux prochains tickets ; la régularisation des ventes faites depuis cette date se fait avec votre comptable (déclaration de TVA). Luxyra ne modifie aucun ticket passé.<br>';
+  h+='• <b>Si la date est à venir</b>, rien ne change avant : Luxyra vous le rappellera ce jour-là pour appliquer le taux.</div>';
+  h+='<div style="font-size:11px;color:var(--text3);margin-top:8px;line-height:1.5">Références : art. 293 B et 293 F du CGI (transférés au code des impositions sur les biens et services au 01/01/2027). En cas de doute sur la date, demandez à votre comptable.</div>';
+  h+='<button class="btn bg bk" style="width:100%;padding:12px;margin-top:14px" onclick="lxSortieFranchiseValider()">Valider</button>';
+  h+='</div></div>';
+  document.getElementById("modal").innerHTML=h;
+}
+function lxSortieFranchiseValider(){
+  var td=(typeof TD==="string"&&TD)?TD:new Date().toISOString().slice(0,10);
+  var d=String((document.getElementById("lxFrDate")||{}).value||""), t=Number((document.getElementById("lxFrTaux")||{}).value);
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(d)){ showAlert("Choisissez une date","warning"); return; }
+  if(!(t>0 && t<=30)){ showAlert("Taux invalide","warning"); return; }
+  if(window._lxDemo){ cM(); if(typeof toast==="function") toast("Mode démo : simulation, rien n'est enregistré","info"); return; }
+  SALON_CONFIG.franchiseFin={date:d, taux:t, decideLe:td, cas:(lxFranchiseEtat().cas||"option")};
+  if(d>td){
+    if(typeof saveSalonConfig==="function") saveSalonConfig();
+    if(typeof auditLog==="function") auditLog("CONFIG_TVA","Sortie de franchise prevue le "+d+" (taux "+t+"%)");
+    cM(); showAlert("C'est noté : TVA à "+String(t).replace(".",",")+" % à partir du "+_lxFrDateFr(d)+". Rien ne change d'ici là ; Luxyra vous le rappellera ce jour-là.","success");
+    try{ go("home"); }catch(_e){}
+    return;
+  }
+  // date passée ou aujourd'hui : taux appliqué maintenant, par le chemin habituel (taux_tva -> JET 270 CONFIG_TVA)
+  _lxTvaAppliquer(t, function(){
+    try{ if(typeof saveSalonConfig==="function") saveSalonConfig(); }catch(_e){}
+    if(typeof auditLog==="function") auditLog("CONFIG_TVA","Sortie de franchise : TVA "+t+"% (date d'effet "+d+")");
+    cM();
+    showAlert("TVA à "+String(t).replace(".",",")+" % appliquée à vos prochains tickets."+(d<td?" Date d'effet : "+_lxFrDateFr(d)+" — voyez avec votre comptable la régularisation des ventes faites depuis.":"")+" Votre attestation de conformité de la caisse va s'ouvrir.","success", function(){ try{ if(typeof lxAttestationNF525==="function") lxAttestationNF525(); }catch(_e){} });
+    try{ go("home"); }catch(_e2){}
+  });
 }
 
 // =====================================================================
@@ -33049,7 +33206,7 @@ var LX_CFG_SECTIONS = [
   {k:"bonModele", mem:function(){ return (SALON_CONFIG && typeof SALON_CONFIG.bonModele==="string") ? SALON_CONFIG.bonModele : undefined; }, set:function(v){ SALON_CONFIG.bonModele=(v==="maison"||v==="ecrin")?v:""; }},
   // 2026-10-31 (-2) : palette des bons cadeaux ("" = couleur de l'établissement ; sinon clé de LXBon.PALETTES)
   {k:"bonPalette", mem:function(){ return (SALON_CONFIG && typeof SALON_CONFIG.bonPalette==="string") ? SALON_CONFIG.bonPalette : undefined; }, set:function(v){ SALON_CONFIG.bonPalette=(typeof v==="string"&&/^[a-z_]{0,20}$/.test(v))?v:""; }}
-].concat(["metier","modeActivite","domicile","migrationStatus","migrationRequestedAt","migrationRequestId","migrationDataScope","migrationSourceSoftware","migrationRgpdSentAt","facebookUrl","instagramUrl","tiktokUrl","mediateur"].map(function(n){
+].concat(["metier","modeActivite","domicile","migrationStatus","migrationRequestedAt","migrationRequestId","migrationDataScope","migrationSourceSoftware","migrationRgpdSentAt","facebookUrl","instagramUrl","tiktokUrl","mediateur","franchiseFin"].map(function(n){
   var _vide=/Url$/.test(n)||n==="mediateur"; // 2026-10-11 : un lien de réseau social effacé ("") doit rester effacé (02/11 : idem médiateur)
   return {k:n, mem:function(){ return (SALON_CONFIG && SALON_CONFIG[n]!==undefined && SALON_CONFIG[n]!==null && (_vide || SALON_CONFIG[n]!=="")) ? SALON_CONFIG[n] : undefined; },
           set:function(v){ SALON_CONFIG[n]=v; }};
@@ -40516,7 +40673,7 @@ async function lxAttestationNF525(){
   if (!window.lxAtt || !window.LX_ATT) { toast("Module d'attestation indisponible, rechargez la page", "warning"); return; }
   if (typeof _sb === "undefined" || !_sb || !window._salonId) { toast("Connexion nécessaire pour l'attestation", "warning"); return; }
   var E = lxAtt.esc;
-  if (!lxAttConcerne()) { _lxAttModal('<h3 style="color:var(--gold);margin:0 0 10px">📄 Attestation de conformité</h3><p style="font-size:13px;color:var(--text2);line-height:1.6">Votre établissement est en franchise de TVA (art. 293 B du CGI) : l’obligation de caisse sécurisée et d’attestation ne s’applique pas à vous. Si vous passez un jour au régime de TVA, l’attestation vous sera proposée automatiquement.</p><button class="btn bs" style="width:100%;margin-top:10px" onclick="_lxAttFermer()">Fermer</button>'); return; }
+  if (!lxAttConcerne()) { _lxAttModal('<h3 style="color:var(--gold);margin:0 0 10px">📄 Attestation de conformité</h3><p style="font-size:13px;color:var(--text2);line-height:1.6">Votre établissement est en franchise de TVA (art. 293 B du CGI) : l’obligation de caisse sécurisée et d’attestation ne s’applique pas à vous (art. 286 II-2 du CGI). Si vous passez un jour au régime de TVA, l’attestation vous sera proposée automatiquement.'+((function(){try{var F=(typeof lxFranchiseFin==="function")?lxFranchiseFin():null;return F?'<br><b>Concerné à partir du '+_lxFrDateFr(F.date)+'</b> (sortie de franchise prévue).':'';}catch(e){return '';}})())+'</p><button class="btn bs" style="width:100%;margin-top:6px" onclick="_lxAttFermer();lxSortieFranchise()">Je sors de la franchise de TVA</button><button class="btn bs" style="width:100%;margin-top:10px" onclick="_lxAttFermer()">Fermer</button>'); return; }
   _lxAttModal('<div style="text-align:center;padding:20px">Chargement de l’attestation…</div>');
   try {
     var r1 = await _sb.from("nf525_attestation_editeur").select("*").eq("version_majeure", LX_ATT.versionMajeure).maybeSingle();
