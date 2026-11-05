@@ -3731,6 +3731,9 @@ async function runAttestationRelanceJob(env) {
   const salons = sr.ok ? await sr.json() : [];
   const ar = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/nf525_attestations?select=salon_id&version_majeure=eq.${encodeURIComponent(ed.version_majeure)}`, { headers: _sbHeaders(env) });
   const signes = new Set((ar.ok ? await ar.json() : []).map((x) => x.salon_id));
+  // 05/11/2026 (7.0.0) : établissements ayant déjà signé une version antérieure -> e-mail « mise à jour de version »
+  const pr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/nf525_attestations?select=salon_id,version_majeure&version_majeure=neq.${encodeURIComponent(ed.version_majeure)}`, { headers: _sbHeaders(env) });
+  const anciens = new Map((pr.ok ? await pr.json() : []).map((x) => [x.salon_id, x.version_majeure]));
   const hier = Date.now() - 86400000;
   for (const s of salons) {
     if (!s.email || signes.has(s.id)) continue;
@@ -3745,9 +3748,14 @@ async function runAttestationRelanceJob(env) {
     const row = Array.isArray(rowA) ? rowA[0] : null;
     if (!row) continue; // déjà envoyé une fois : jamais de second email
     const prenom = s.gerant_prenom ? String(s.gerant_prenom).trim() : "";
-    const sujet = `${s.nom} : votre attestation de conformité de caisse à signer`;
+    const vAnc = anciens.get(s.id);
+    const majV = vAnc != null;
+    const sujet = majV ? `${s.nom} : mise à jour de votre attestation de caisse (version ${ed.version_majeure})` : `${s.nom} : votre attestation de conformité de caisse à signer`;
+    const intro = majV
+      ? `<p>Luxyra est passé en <b>version ${ccEsc(String(ed.version_majeure))}</b> : il s'agit d'une version majeure (renforcement des protections de la caisse). La loi demande une <b>nouvelle attestation</b> pour chaque version majeure. Votre attestation version ${ccEsc(String(vAnc))} reste archivée et consultable dans l'application ; il reste à signer la mise à jour pour <b>${ccEsc(s.nom)}</b>.</p>`
+      : `<p>Merci pour votre confiance. Il reste une petite formalité légale pour que <b>${ccEsc(s.nom)}</b> soit parfaitement en règle : <b>signer l'attestation de conformité de votre caisse</b>.</p>`;
     const corps = `<p>Bonjour${prenom ? " " + ccEsc(prenom) : ""},</p>
-      <p>Merci pour votre confiance. Il reste une petite formalité légale pour que <b>${ccEsc(s.nom)}</b> soit parfaitement en règle : <b>signer l'attestation de conformité de votre caisse</b>.</p>
+      ${intro}
       <h3 style="font-family:Georgia,serif;font-weight:400;font-size:17px;color:#b8922e;margin:22px 0 6px">Pourquoi ?</h3>
       <p style="margin-top:0">Depuis 2018, tout professionnel assujetti à la TVA qui encaisse des particuliers doit utiliser une caisse sécurisée et pouvoir le <b>prouver en cas de contrôle fiscal</b> (article 286, I, 3° bis du code général des impôts). Sans justificatif, l'amende est de <b>7 500 € par caisse</b> (article 1770 duodecies du même code).</p>
       <p>Ce justificatif est l'<b>attestation individuelle</b>, établie selon le <b>modèle officiel de l'administration fiscale</b> (BOI-LETTRE-000242). Elle comporte deux volets :</p>
@@ -3879,9 +3887,20 @@ async function handleExportNF525(request, env) {
     if (!noticeFr || String(noticeFr).length < 200) {
       return jsonResponse({ error: "Notice explicative indisponible : l'export de contrôle n'a pas été produit. Réessayez dans un instant.", code: "LX_NOTICE_INDISPONIBLE" }, 503);
     }
+    // 05/11/2026 (7.0.0, contre-audit) : toutes les attestations signées de l'établissement (volets 1 et 2, toutes versions)
+    let attestations = [];
+    try {
+      const hd = { apikey: sbKey, Authorization: `Bearer ${sbKey}` };
+      const ra = await fetch(`${sbUrl}/rest/v1/nf525_attestations?salon_id=eq.${encodeURIComponent(salon_id)}&select=version_majeure,version_logiciel,representant,qualite,date_acquisition,date_debut_utilisation,ville_signature,texte,texte_sha256,methode,signe_le&order=signe_le.asc`, { headers: hd });
+      const la = ra.ok ? await ra.json() : [];
+      const re = await fetch(`${sbUrl}/rest/v1/nf525_attestation_editeur?select=version_majeure,mise_sur_marche,signataire,texte,texte_sha256,signe_le&order=version_majeure.asc`, { headers: hd });
+      const le = re.ok ? await re.json() : [];
+      attestations = (Array.isArray(la) ? la : []).map((a) => ({ version_majeure: a.version_majeure, volet2: a, volet1: (Array.isArray(le) ? le : []).find((e) => String(e.version_majeure) === String(a.version_majeure)) || null }));
+    } catch (_eAtt) {}
     const exportData = {
       norme: "NF525",
       notice: noticeFr,
+      attestations,
       version_logiciel: "Luxyra " + versionLogiciel,
       export_timestamp: new Date().toISOString(),
       salon: {

@@ -388,6 +388,9 @@ async function lxAttListeCharger(){
   var a=await _sb.from("nf525_attestations").select("salon_id,representant,signe_le").eq("version_majeure",LX_ATT.versionMajeure);
   var mails=await _sb.from("salon_emails_auto").select("salon_id,envoye_le,ouvert_le").eq("type","attestation_v"+LX_ATT.versionMajeure);
   var sig={}; (a.data||[]).forEach(function(x){sig[x.salon_id]=x;});
+  // 2026-11-05 (7.0.0) : dernière attestation signée d'une version antérieure (affichée tant que la version courante n'est pas signée)
+  var ant=await _sb.from("nf525_attestations").select("salon_id,version_majeure,signe_le").neq("version_majeure",LX_ATT.versionMajeure).order("signe_le",{ascending:false});
+  var prev={}; (ant.data||[]).forEach(function(x){ if(!prev[x.salon_id]) prev[x.salon_id]=x; });
   var tv=await saToutLire(function(a,b){ return _sb.from("salons").select("id,taux_tva,config_json").order("id").range(a,b); }); var nonC={}; (tv.data||[]).forEach(function(x){ var p=null; try{ var cj=typeof x.config_json==="string"?JSON.parse(x.config_json):x.config_json; p=cj&&cj.pays; }catch(e){} if(Number(x.taux_tva)<=0) nonC[x.id]="franchise de TVA"; else if(p&&!/^\s*france\s*$/i.test(p)) nonC[x.id]="hors de France"; });
   var em={}; (mails.data||[]).forEach(function(x){em[x.salon_id]=x;});
   var L=(SALONS||[]).filter(function(s){return s.status==="active"||s.status==="trial"||s.isFree;});
@@ -396,7 +399,7 @@ async function lxAttListeCharger(){
     '<button class="tb-btn'+(on?'':' primary')+'" data-lx-click="lxAttRelanceBasculer('+(!on)+')">'+(on?'⏸ Couper l’email de rappel':'✉️ Activer l’email de rappel (1 seul envoi)')+'</button></div>'+
     '<div style="font-size:12px;color:var(--text3);margin:6px 0 10px">Uniquement pour les abonnements payés (pas en essai) : bandeau sur l’accueil de l’application + un seul email, 1 jour après le paiement, s’il n’a pas signé. '+(on?'<b style="color:var(--green)">Activé</b>':'<b style="color:var(--orange)">Désactivé</b>')+'</div>';
   L.forEach(function(s){ var x=sig[s.id], m=em[s.id];
-    h+='<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-top:1px solid var(--border);font-size:13px"><span>'+saEsc(s.nom)+'</span><span>'+(x?'<span style="color:var(--green)">✅ signée le '+new Date(x.signe_le).toLocaleDateString("fr-FR")+' ('+saEsc(x.representant)+')</span>':(nonC[s.id]?'<span style="color:var(--text3)">non concerné ('+nonC[s.id]+')</span>':'<span style="color:var(--orange)">⏳ à signer</span>')+(m?' · <span style="color:var(--text3)">rappel envoyé le '+new Date(m.envoye_le).toLocaleDateString("fr-FR")+(m.ouvert_le?' (ouvert)':'')+'</span>':''))+'</span></div>'; });
+    h+='<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-top:1px solid var(--border);font-size:13px"><span>'+saEsc(s.nom)+'</span><span>'+(x?'<span style="color:var(--green)">✅ signée le '+new Date(x.signe_le).toLocaleDateString("fr-FR")+' ('+saEsc(x.representant)+')</span>':(nonC[s.id]?'<span style="color:var(--text3)">non concerné ('+nonC[s.id]+')</span>':'<span style="color:var(--orange)">⏳ à signer</span>'+(prev[s.id]?' <span style="color:var(--text3)">(v'+saEsc(prev[s.id].version_majeure)+' signée le '+new Date(prev[s.id].signe_le).toLocaleDateString("fr-FR")+' — mise à jour en cours)</span>':''))+(m?' · <span style="color:var(--text3)">rappel envoyé le '+new Date(m.envoye_le).toLocaleDateString("fr-FR")+(m.ouvert_le?' (ouvert)':'')+'</span>':''))+'</span></div>'; });
   el.innerHTML=h+'</div>';
 }
 async function lxAttRelanceBasculer(on){
