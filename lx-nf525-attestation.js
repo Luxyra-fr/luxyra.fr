@@ -5,13 +5,13 @@
  * Signature électronique simple (C. civ. art. 1366-1367, règlement eIDAS art. 25) : compte + ressaisie du mot de passe,
  * horodatage serveur, empreinte SHA-256 du texte signé, tables inaltérables (nf525_attestation_editeur / nf525_attestations).
  * ⚠ NE JAMAIS changer LX_ATT.versionMajeure sans faire signer une nouvelle attestation (nouvelle version majeure
- *   au sens du § 340 du BOI-TVA-DECLA-30-10-30). Les versions mineures 6.x.x restent couvertes.
+ *   au sens du § 340 du BOI-TVA-DECLA-30-10-30). Les versions mineures 7.x.x restent couvertes (la version 6 est archivée).
  */
 (function(){
   var LX_ATT = {
-    versionLogiciel: "6.3.0",
-    versionMajeure: "6",
-    miseSurMarche: "2026-05-11",
+    versionLogiciel: "7.0.0",
+    versionMajeure: "7", // 05/11/2026 : version majeure 7.0.0 (attestation 6 du 10/10/2026 archivée, tables inaltérables)
+    miseSurMarche: "2026-11-05",
     editeur: {
       representant: "Alexandre JENSEN",
       raison: "Alexandre JENSEN, entrepreneur individuel exerçant sous le nom commercial Luxyra",
