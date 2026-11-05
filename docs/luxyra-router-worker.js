@@ -2070,7 +2070,8 @@ async function lxConfigNombre(env, cle, defaut) {
 function lxBonMentionTvaCaisse(b) {
   // identique à _lxBonMentionTva (app.html) avec le chargement du bon (luxyra-supabase.js : tvaRate BUM = 0, sinon tva_rate || 0,20)
   const u = (b && (b.usage_tva || (b.qualif_tva && b.qualif_tva.usage))) || null;
-  const rate = (u === "BUM") ? 0 : (Number(b && b.tva_rate) || 0.20);
+  const _r = b ? b.tva_rate : null; // 2026-11-05 (6.8.10, audit D11) : un taux 0 (franchise, bon offert) reste 0 (avant « || 0,20 »)
+  const rate = (u === "BUM") ? 0 : ((_r !== null && _r !== undefined && _r !== "" && isFinite(Number(_r))) ? Number(_r) : 0.20);
   const tx = rate * 100;
   let t = (tx <= 0) ? "TVA non applicable, art. 293 B du CGI" : ("TVA " + String(Math.round(tx * 10) / 10).replace(".", ",") + " % incluse");
   if (u === "BUM") t = "Bon \u00e0 usage multiple \u2013 TVA exigible \u00e0 l\u2019utilisation (CGI art. 256 ter)";
@@ -3794,7 +3795,7 @@ async function handlePixelOuverture(request, env, url) {
 // - Métadonnées salon (nom, SIRET, période)
 // Format : JSON pur exploitable Excel/comptable
 // Version du logiciel en service (aligner sur LX_VERSION d'app.html à chaque version)
-const LX_VERSION_LOGICIEL = "6.8.9";
+const LX_VERSION_LOGICIEL = "6.8.10";
 async function handleExportNF525(request, env) {
   try {
     const { salon_id, date_from, date_to, jwt } = await request.json();
@@ -4840,13 +4841,15 @@ async function handleFranchiseRappel(request, env) {
     if (d.apercu === true) return jsonResponse({ ok: true, apercu: m });
     const to = String(d.to).trim();
     const cle = `${salon.id}|franchise_rappel|${d.date_effet}`;
+    // 2026-11-05 (6.8.10) : le serveur ne marque le rappel « envoyé » qu'après cette confirmation (sinon nouvel essai, 3 au plus)
+    const confirmer = async () => { try { await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/lx_franchise_rappel_confirme`, { method: "POST", headers: { ..._sbHeaders(env), "Content-Type": "application/json" }, body: JSON.stringify({ p_salon: salon.id, p_date: String(d.date_effet) }) }); } catch (_) {} };
     const resa = await lxEmailReserver(env, { salonId: salon.id, to, subject: m.sujet, html: m.html, dedupKey: cle });
-    if (resa.doublon) return jsonResponse({ ok: true, email: "deja" });
+    if (resa.doublon) { await confirmer(); return jsonResponse({ ok: true, email: "deja" }); }
     if (!resa.cle) return jsonResponse({ ok: false, erreur: "réservation anti-doublon impossible" }, 500);
     let envoi = null;
     try { envoi = await brevoSendEmail(env, { to, senderName: "Luxyra", subject: m.sujet, htmlContent: m.html, textContent: m.texte }); }
     catch (e) { envoi = { code: "exception", message: String((e && e.message) || e) }; }
-    if (envoi && envoi.messageId) return jsonResponse({ ok: true, email: "envoye" });
+    if (envoi && envoi.messageId) { await confirmer(); return jsonResponse({ ok: true, email: "envoye" }); }
     if (!envoi || envoi.code === "exception" || !envoi.code) {
       await reportWorkerError(env, "worker:franchise-rappel", new Error("Rappel de sortie de franchise : réponse Brevo incertaine (verrou gardé)"), { salon_id: salon.id }, "warning");
       return jsonResponse({ ok: false, email: "incertain" });
@@ -6930,10 +6933,20 @@ async function handleClientTickets(request, env) {
         if (!Array.isArray(appts)) continue;
         let salonNom = "";
         try { const s = await (await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salons?select=nom&id=eq.${cl.salon_id}&limit=1`, { headers })).json(); if (s?.[0]) salonNom = s[0].nom; } catch(e) {}
+        // 2026-11-05 (6.8.10, audit D3) : n° LÉGAL du journal (tickets.num), celui imprimé sur le ticket depuis la 6.8.8 ; le n° de l'appareil
+        // (appointments.ticket_num) n'est plus présenté comme « Ticket N° » ; historique importé (sans ticket au journal) = « réf. historique ».
+        const _numLegal = {};
+        try {
+          const _ids = appts.map(a => a.id).filter(x => /^[0-9a-f-]{36}$/i.test(String(x)));
+          if (_ids.length) {
+            const tk = await (await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/tickets?select=num,rid:raw_data->>id&salon_id=eq.${cl.salon_id}&raw_data->>id=in.(${_ids.join(",")})`, { headers })).json();
+            if (Array.isArray(tk)) tk.forEach(t => { if (t && t.rid && t.num != null) _numLegal[t.rid] = t.num; });
+          }
+        } catch(eNl) {}
         for (const a of appts) {
           let itemName = "Prestation";
           if (a.items?.length) { const names = a.items.filter(it => !it.isSep && it.name).map(it => it.name); if (names.length) itemName = names.join(", "); }
-          allTickets.push({ id: a.id, salon_id: cl.salon_id, salon_nom: salonNom, date_rdv: a.date_rdv, heure_rdv: a.heure, service_nom: itemName, service_prix: a.prix || 0, status: "done", items: a.items || [], ticket_num: a.ticket_num, _fromPOS: true, ticket_html: a.ticket_html || null });
+          allTickets.push({ id: a.id, salon_id: cl.salon_id, salon_nom: salonNom, date_rdv: a.date_rdv, heure_rdv: a.heure, service_nom: itemName, service_prix: a.prix || 0, status: "done", items: a.items || [], ticket_num: a.ticket_num, num_legal: (_numLegal[a.id] != null ? _numLegal[a.id] : null), _fromPOS: true, ticket_html: a.ticket_html || null });
         }
       } catch(e2) {}
     }
