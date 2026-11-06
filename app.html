@@ -31333,6 +31333,7 @@ async function aGi(){
   try{ Promise.resolve(_pGi).then(function(){ if(typeof saveGiftCard==="function") saveGiftCard(ng); },function(){ if(typeof saveGiftCard==="function") saveGiftCard(ng); }); }catch(_eTkG){}
   if(typeof saveAppointment==="function")saveAppointment(tk);
   if(typeof saveTicketToDb==="function")saveTicketToDb(tk); // NF525: table tickets DB avec hash chaîné
+  try{ lxTiroirSiEspeces(tk,"vente de bon cadeau"); }catch(_eTir){} // 2026-11-06 : tiroir-caisse si espèces
   var isMultiU=(!scope||scope==="tout");
   auditLog("VENTE_BON_CADEAU","Bon "+code+" N\u00b0"+gcNum+" - "+v.toFixed(2)+"E TTC"+" (HT:"+ht.toFixed(2)+"/TVA:"+tva.toFixed(2)+")"+" - "+pay+" - "+(_q&&_q.usage==="BUM"?"bon \u00e0 usage multiple : hors CA, TVA \u00e0 l'utilisation (CGI art. 256 ter)":(_q?"bon \u00e0 usage unique : CA et TVA \u00e0 la vente ("+_lxTauxTxt(_q.tauxBon)+")":"CA \u00e0 la vente (706)"))+" - De:"+f+(t?" Pour:"+t:""));
   // Success screen with print option
@@ -31465,6 +31466,7 @@ function annulerAcompte(apptId){
       AP.push(cancelTicket);
       if(typeof saveAppointment==="function")saveAppointment(cancelTicket);
       if(typeof saveTicketToDb==="function")saveTicketToDb(cancelTicket); // NF525
+      try{ lxTiroirSiEspeces(cancelTicket,"remboursement d’acompte"); }catch(_eTir){} // 2026-11-06 : tiroir-caisse si espèces
       auditLog("ANNUL_ACOMPTE","Annulation acompte "+oldAmount.toFixed(2)+"E pour RDV "+apptId+" - Ticket annulation #"+tkNum+" (ref #"+(origTkNum||"?")+")");
       
       // Clear acompte on the RDV
@@ -31590,6 +31592,7 @@ async function doSaveAcompte(apptId){
   AP.push(acompteTicket); window._lastSealedApptId=acompteTicket.id; // 2026-10-13 : 1re impression = original (pas un duplicata)
   if(typeof saveAppointment==="function")saveAppointment(acompteTicket);
   if(typeof saveTicketToDb==="function")saveTicketToDb(acompteTicket); // NF525
+  try{ lxTiroirSiEspeces(acompteTicket,"acompte"); }catch(_eTir){} // 2026-11-06 : tiroir-caisse si espèces
   // FIX 2026-07-11 : memorise le NUMERO du ticket d acompte sur le RDV (et dans l item
   // isAcompteData, seul support persiste en base) -> a l encaissement, la ligne de deduction
   // du ticket final peut citer « Acompte deja verse (ticket #X) » meme apres un rechargement.
@@ -36305,6 +36308,8 @@ function printTicketReceipt(){
   // showTicket depose desormais dans window._lastReceipt le HTML EXACT qu il affiche
   // (construit depuis la ligne scellee) -> imprime == ecran == duplicata.
   var R=(typeof window!=="undefined")?window._lastReceipt:null;
+  // 2026-11-06 (impression directe USB) : un envoi en cours -> 2e clic ignoré (ni second original, ni duplicata involontaire)
+  if(lxDirectOccupe()){ try{ if(typeof toast==="function") toast("Impression en cours\u2026","info"); }catch(_eOc){} return; }
   // 2026-11-06 (NF525, audit impression) : le ticket original ne sort qu'UNE fois. À partir du 2e clic sur « Imprimer »,
   // la copie passe par reprintTicket() = DUPLICATA numéroté et enregistré (nf525_duplicata), impression bloquée si
   // l'enregistrement échoue. Avant : chaque clic imprimait un nouvel original, sans trace.
@@ -36329,6 +36334,15 @@ function printTicketReceipt(){
   // Marquage « imprime » : semantique INCHANGEE (seul un RDV encaisse etait marque).
   // `printed` n est PAS un champ protege par appointments_nf525_protect.
   if(apptIdP){for(var pi2=0;pi2<AP.length;pi2++){if(AP[pi2].id===apptIdP){AP[pi2].printed=true;break;}}}
+  // 2026-11-06 (impression directe USB) : mêmes étapes (original compté, ligne marquée imprimée, n° légal + signature remplis avant
+  // l'envoi), puis envoi direct ; repli sur la fenêtre si rien n'est sorti. Mode direct inactif : rien ne change (fenêtre ci-dessous).
+  if(lxDirectPret()){
+    if(R){ R.nbImpr=(R.nbImpr||0)+1;
+      if(R.sid){ for(var _piD=0;_piD<AP.length;_piD++){ if(AP[_piD].id===R.sid){ AP[_piD].printed=true; break; } } } }
+    lxDirectTicket({corps:body, id:(apptIdP||(R&&R.sid)||null), titre:"Ticket #"+tkNumP, gabarit:"recu", original:true});
+    return;
+  }
+  lxDirectAvisRepli();
   var w=window.open("","_blank","width=380,height=650");if(!w)return;
   // 2026-11-06 : original émis -> les impressions suivantes seront des duplicatas (voir plus haut). La ligne scellée
   // (vente avec ou sans RDV) est marquée « imprimée » en mémoire, comme le fait reprintTicket : une réimpression
@@ -36421,6 +36435,7 @@ function showTicket(method,total){
     window._lastReceipt={html:ticketHtmlFull,tkNum:(recA.tkNum||tkN),apptId:(_tk.apptId||null),sid:(srcA?srcA.id:null),nbImpr:0,
       a:(function(){try{return JSON.parse(JSON.stringify(recA));}catch(_e){return recA;}})()};
   }catch(_eSnap){ window._lastReceipt=null; }
+  try{ lxTiroirSiEspeces(recA,"vente"); }catch(_eTir){} // 2026-11-06 : tiroir-caisse si espèces (asynchrone, jamais bloquant)
   
   var h='<div class="mbg"><div style="max-width:380px;margin:auto;max-height:95vh;overflow-y:auto" onclick="event.stopPropagation()">';
   h+='<div class="ticket-receipt" style="font-family:\'Courier New\',monospace;padding:20px;font-size:14px;line-height:1.5;border-radius:16px 16px 0 0">';
@@ -36837,7 +36852,7 @@ function exportTicketsCSV(){
 // (caractères 3, 7, 13 et 19 de la signature base64url), version du logiciel, nombre de lignes,
 // duplicatas numérotés. La signature est calculée côté serveur ; le ticket papier en reprend l'extrait.
 // =====================================================================
-var LX_VERSION="7.0.3", LX_CAISSE="C01"; // 2026-11-06 (7.0.3, MINEURE) : impression plus rapide — la signature n'est plus attendue 3,5 s (elle n'arrivait jamais à temps), le n° légal garde son attente ; contenu imprimé inchangé ; // 2026-11-06 (7.0.2, MINEURE) : réglages d'impression par appareil (A4 couleur / noir et blanc, ticket 80 / 58 mm, taille du texte, logo converti, aperçu Luxyra, format des Z, ticket d'essai sans valeur), rappel de la note de prestation dès 25 € ; MISE EN PAGE SEULEMENT, contenu du ticket inchangé (buildTicketHTML, classes CSS ajoutées), aucune donnée ni fonction NF525 modifiée ; // 2026-11-06 (7.0.1, MINEURE, accord d'Alexandre) : original imprimé une seule fois puis duplicata enregistré (reçu de fin d'encaissement), n° légal et signature aussi sur l'original d'une vente directe, « Conserver 6 ans » retiré du ticket client, commune d'une prestation à domicile ; aucun format d'empreinte, chaînage, signature, numérotation ni fonction serveur modifié ; // 2026-11-05 (7.0.0) : VERSION MAJEURE (BOI § 340) — requalification des évolutions de sécurisation 6.4 → 6.8.10, nouvelle attestation (racine 7), aucun changement fonctionnel de la caisse ; // 2026-11-05 (6.8.10) : contre-audits 6.8.9 / franchise et audit des problèmes anciens — trace serveur des tickets provisoires renvoyée (JET 125), liste des provisoires figée dans la Z, bons cadeaux à 0 % conservés, table unique des moyens de paiement, n° légal dans le compte client, duplicata de Z strict, PS retiré, config en objet. // 2026-11-05 (6.8.9) : audit v2 — trame « simulation » en mode test, prix unitaire, suivi des tickets provisoires, purge d'essai sans coupure de déclencheur. // 2026-11-05 (6.8.8) : n° légal imprimé, notice et contrôle serveur des archives (audit du 05/11). // 2026-10-29 (-9) : 6.8.7 = factures clients, réserves du contre-audit du lot 4 (lot 4b) : bon à usage unique = ligne « Bon cadeau … (réglé lors de l'achat du bon) » (jamais une remise, TVA acquittée à la vente du bon), remise de ligne détaillée (prix unitaire brut, remise, net) sur la facture et le XML EN 16931, numérotation F-/A- unique expliquée ; aucun calcul de caisse modifié (version MINEURE, dossier docs/dossier-attestation-version-mineure-6.8.7.md) ; 2026-10-28 (-8) : 6.8.6 = protections après enregistrement (lot 4 de l'audit indépendant : M4 colonnes figées des tickets, annulation = contre-ticket ; M10 bons cadeaux : solde dérivé des tickets, journal scellé ; M9 conditions des devis ; mineurs : FEC test, rapport / FEC, lien bon-ticket, Stripe, arrondis, factures clients). // 2026-10-28 : 6.8.5 = règle TVA UNIQUE dans tous les documents (lot 3 de l'audit indépendant, constats M1/M2/M3) : HT et TVA = somme, par taux, des montants enregistrés sur chaque ticket (Z, clôtures, rapport, Excel, ZIP, FEC, EBP / Quadratus, e-mail au comptable, statistiques) ; une ligne de TVA par taux sur le ticket imprimé et le duplicata ; ventilation figée dans le ticket (raw_data.lxTva, hors empreinte) ; documents d'une période passée calculés avec les valeurs ENREGISTRÉES (jamais au taux actuel). Formats d'empreinte, chaînage, signatures, numérotation et JET inchangés (BOI-TVA-DECLA-30-10-30 § 340 : version MINEURE). 2026-10-28 (-6) : 6.8.4 = corrections du contre-audit 3 (6.8.0 à 6.8.3 jamais publiées) : forçage de clôture soumis à un délai serveur de 5 minutes entre deux contrôles (contrôle refait au moment du forçage, heure possible affichée), journées retenues de plus de 60 jours signalées sur la carte « Caisse » (déblocage par l'administrateur Luxyra). 2026-10-28 (-5) : 6.8.3 = corrections du contre-audit final (6.8.0 à 6.8.2 jamais publiées) : journée retenue (ventes encaissées non transmises) -> Z refusée avec cause et marche à suivre, forçage tracé par un administrateur (lx_z_forcer), clôtures dans l'ordre des dates, carte « Caisse » de l'accueil ; date réelle d'une vente reportée SCELLÉE dans le ticket (items[0].lxRep, champ couvert par l'empreinte, format inchangé) ; exports à la date du journal avec la liste des ventes reportées ; seuil de version du serveur 6.8.3 (BOI-TVA-DECLA-30-10-30 § 340 : version MINEURE). 2026-10-28 (-4) : 6.8.2 = corrections du contre-audit (6.8.0 et 6.8.1 jamais publiées) : un ticket encaissé n'est plus jamais abandonné par la file de secours (vente d'une journée déjà close enregistrée sur la journée ouverte, date réelle de vente en mention ; clôture forcée = ticket gardé en file), seuil de version de référence du serveur ; formats de hash, chaînage, signatures et clôtures inchangés (BOI-TVA-DECLA-30-10-30 § 340 : version MINEURE). 2026-10-28 (-3) : 6.8.1 = corrections de l'audit de la 6.8.0 (jamais publiée) : version transmise dans chaque ticket (raw_data.lxVersion) et contrôlée par le serveur, série de n° imprimés propre au serveur (900001+) exclue du compteur des appareils ; formats de hash, chaînage et signatures inchangés (BOI-TVA-DECLA-30-10-30 § 340). 2026-10-28 (-2) : 6.8.0 = version MINEURE (recettes encaissées en ligne enregistrées par le serveur au paiement confirmé, avec la MÊME chaîne de numérotation, empreinte, sceau et signature ; BOI-TVA-DECLA-30-10-30 § 340 : aucune fonction d'inaltérabilité, de sécurisation, de conservation ou d'archivage modifiée). 6.7.0 = version MINEURE (bons cadeaux à usage unique / multiple, CGI art. 256 ter) : formats de hash, chaînage et signatures inchangés (BOI-TVA-DECLA-30-10-30 § 340)
+var LX_VERSION="7.0.3", LX_CAISSE="C01"; // 2026-11-06 (impression directe USB ESC/POS + tiroir-caisse sélectif, branche « impression-directe ») : numéro de version à fixer à la publication ; mode désactivé par défaut = impression inchangée ; contenu du ticket inchangé (texte tiré de buildTicketHTML après n° légal / signature / enregistrement du duplicata) ; 2026-11-06 (7.0.3, MINEURE) : impression plus rapide — la signature n'est plus attendue 3,5 s (elle n'arrivait jamais à temps), le n° légal garde son attente ; contenu imprimé inchangé ; // 2026-11-06 (7.0.2, MINEURE) : réglages d'impression par appareil (A4 couleur / noir et blanc, ticket 80 / 58 mm, taille du texte, logo converti, aperçu Luxyra, format des Z, ticket d'essai sans valeur), rappel de la note de prestation dès 25 € ; MISE EN PAGE SEULEMENT, contenu du ticket inchangé (buildTicketHTML, classes CSS ajoutées), aucune donnée ni fonction NF525 modifiée ; // 2026-11-06 (7.0.1, MINEURE, accord d'Alexandre) : original imprimé une seule fois puis duplicata enregistré (reçu de fin d'encaissement), n° légal et signature aussi sur l'original d'une vente directe, « Conserver 6 ans » retiré du ticket client, commune d'une prestation à domicile ; aucun format d'empreinte, chaînage, signature, numérotation ni fonction serveur modifié ; // 2026-11-05 (7.0.0) : VERSION MAJEURE (BOI § 340) — requalification des évolutions de sécurisation 6.4 → 6.8.10, nouvelle attestation (racine 7), aucun changement fonctionnel de la caisse ; // 2026-11-05 (6.8.10) : contre-audits 6.8.9 / franchise et audit des problèmes anciens — trace serveur des tickets provisoires renvoyée (JET 125), liste des provisoires figée dans la Z, bons cadeaux à 0 % conservés, table unique des moyens de paiement, n° légal dans le compte client, duplicata de Z strict, PS retiré, config en objet. // 2026-11-05 (6.8.9) : audit v2 — trame « simulation » en mode test, prix unitaire, suivi des tickets provisoires, purge d'essai sans coupure de déclencheur. // 2026-11-05 (6.8.8) : n° légal imprimé, notice et contrôle serveur des archives (audit du 05/11). // 2026-10-29 (-9) : 6.8.7 = factures clients, réserves du contre-audit du lot 4 (lot 4b) : bon à usage unique = ligne « Bon cadeau … (réglé lors de l'achat du bon) » (jamais une remise, TVA acquittée à la vente du bon), remise de ligne détaillée (prix unitaire brut, remise, net) sur la facture et le XML EN 16931, numérotation F-/A- unique expliquée ; aucun calcul de caisse modifié (version MINEURE, dossier docs/dossier-attestation-version-mineure-6.8.7.md) ; 2026-10-28 (-8) : 6.8.6 = protections après enregistrement (lot 4 de l'audit indépendant : M4 colonnes figées des tickets, annulation = contre-ticket ; M10 bons cadeaux : solde dérivé des tickets, journal scellé ; M9 conditions des devis ; mineurs : FEC test, rapport / FEC, lien bon-ticket, Stripe, arrondis, factures clients). // 2026-10-28 : 6.8.5 = règle TVA UNIQUE dans tous les documents (lot 3 de l'audit indépendant, constats M1/M2/M3) : HT et TVA = somme, par taux, des montants enregistrés sur chaque ticket (Z, clôtures, rapport, Excel, ZIP, FEC, EBP / Quadratus, e-mail au comptable, statistiques) ; une ligne de TVA par taux sur le ticket imprimé et le duplicata ; ventilation figée dans le ticket (raw_data.lxTva, hors empreinte) ; documents d'une période passée calculés avec les valeurs ENREGISTRÉES (jamais au taux actuel). Formats d'empreinte, chaînage, signatures, numérotation et JET inchangés (BOI-TVA-DECLA-30-10-30 § 340 : version MINEURE). 2026-10-28 (-6) : 6.8.4 = corrections du contre-audit 3 (6.8.0 à 6.8.3 jamais publiées) : forçage de clôture soumis à un délai serveur de 5 minutes entre deux contrôles (contrôle refait au moment du forçage, heure possible affichée), journées retenues de plus de 60 jours signalées sur la carte « Caisse » (déblocage par l'administrateur Luxyra). 2026-10-28 (-5) : 6.8.3 = corrections du contre-audit final (6.8.0 à 6.8.2 jamais publiées) : journée retenue (ventes encaissées non transmises) -> Z refusée avec cause et marche à suivre, forçage tracé par un administrateur (lx_z_forcer), clôtures dans l'ordre des dates, carte « Caisse » de l'accueil ; date réelle d'une vente reportée SCELLÉE dans le ticket (items[0].lxRep, champ couvert par l'empreinte, format inchangé) ; exports à la date du journal avec la liste des ventes reportées ; seuil de version du serveur 6.8.3 (BOI-TVA-DECLA-30-10-30 § 340 : version MINEURE). 2026-10-28 (-4) : 6.8.2 = corrections du contre-audit (6.8.0 et 6.8.1 jamais publiées) : un ticket encaissé n'est plus jamais abandonné par la file de secours (vente d'une journée déjà close enregistrée sur la journée ouverte, date réelle de vente en mention ; clôture forcée = ticket gardé en file), seuil de version de référence du serveur ; formats de hash, chaînage, signatures et clôtures inchangés (BOI-TVA-DECLA-30-10-30 § 340 : version MINEURE). 2026-10-28 (-3) : 6.8.1 = corrections de l'audit de la 6.8.0 (jamais publiée) : version transmise dans chaque ticket (raw_data.lxVersion) et contrôlée par le serveur, série de n° imprimés propre au serveur (900001+) exclue du compteur des appareils ; formats de hash, chaînage et signatures inchangés (BOI-TVA-DECLA-30-10-30 § 340). 2026-10-28 (-2) : 6.8.0 = version MINEURE (recettes encaissées en ligne enregistrées par le serveur au paiement confirmé, avec la MÊME chaîne de numérotation, empreinte, sceau et signature ; BOI-TVA-DECLA-30-10-30 § 340 : aucune fonction d'inaltérabilité, de sécurisation, de conservation ou d'archivage modifiée). 6.7.0 = version MINEURE (bons cadeaux à usage unique / multiple, CGI art. 256 ter) : formats de hash, chaînage et signatures inchangés (BOI-TVA-DECLA-30-10-30 § 340)
 window.LX_SIG_CACHE=window.LX_SIG_CACHE||{};
 function _lxSigExtrait(sg){ sg=String(sg||""); return [3,7,13,19].map(function(i){ return sg.charAt(i-1)||""; }).join(""); }
 async function _lxSignerMaintenant(){
@@ -37364,12 +37379,14 @@ async function lxDupSigRemplir(doc, seq, maxMs){
 // propre à chaque appareil. Format « std » (par défaut, tant que l'établissement n'a rien choisi) = impression
 // EXACTEMENT comme avant la 7.0.2.
 // =====================================================================
-var LX_IMPR_DEF={fmt:"std",col:"c",sz:"n",logo:true,apercu:false,z:"m",larg:"auto",fort:true,esp:"n"};
+var LX_IMPR_DEF={fmt:"std",col:"c",sz:"n",logo:true,apercu:false,z:"m",larg:"auto",fort:true,esp:"n",
+  // 2026-11-06 (impression directe USB) : désactivée par défaut ; tiroir pour les espèces, coupe, largeur, logo, colonnes, jeu de caractères, broche du tiroir, imprimante mémorisée
+  direct:false,tiroir:true,coupe:true,dlarg:"80",dlogo:true,dcol:"48",dcp:"858",dpin:"2",dvid:null,dpid:null,dsn:"",dnom:""};
 function lxImprCfg(){
   var c={}; try{ c=JSON.parse(localStorage.getItem("lx_impr_v1")||"{}")||{}; }catch(_e){ c={}; }
   var o={}; for(var k in LX_IMPR_DEF){ if(Object.prototype.hasOwnProperty.call(LX_IMPR_DEF,k)) o[k]=(c[k]!==undefined&&c[k]!==null)?c[k]:LX_IMPR_DEF[k]; }
   if(["std","a4","t80","t58"].indexOf(o.fmt)<0) o.fmt="std";
-  ["logo","apercu","fort"].forEach(function(k){ o[k]=(o[k]===true||o[k]==="true"); });
+  ["logo","apercu","fort","direct","tiroir","coupe","dlogo"].forEach(function(k){ o[k]=(o[k]===true||o[k]==="true"); });
   return o;
 }
 function lxImprSet(k,v){
@@ -37532,6 +37549,7 @@ function lxImprEssaiCorps(){
   return h;
 }
 function lxImprEssai(){
+  if(!window._lxEssaiFenetre&&lxDirectPret()){ lxDirectEssai(); return; } // 2026-11-06 : impression directe USB (repli fenêtre en cas d'échec)
   var c=lxImprCfg(); if(c.fmt==="std") c.fmt="t80";
   var w=window.open("","_blank","width=420,height=700"); if(!w){ try{ showAlert("Autorisez l’ouverture de fenêtres pour imprimer.","warning"); }catch(_e){} return; }
   w.document.write(lxImprDoc(lxImprEssaiCorps(),"Ticket d'essai",c,window._lxImprLogo)); w.document.close();
@@ -37568,6 +37586,7 @@ function lxImprCarteHtml(){
     h+='<div style="font-size:11px;color:var(--text3);margin:12px 0 6px">👁️ Aperçu en direct</div><div id="lxImprPv" style="background:#0c0f16;border-radius:10px;padding:10px;display:flex;justify-content:center;overflow:hidden"></div>';
   }
   h+='<div style="font-size:11px;color:var(--text3);line-height:1.5;margin-top:8px">S’applique aux tickets, duplicatas et clôtures Z de cet appareil. L’imprimante se choisit dans la fenêtre d’impression de l’appareil : sur iPad elle doit être compatible AirPrint ; sur Android, un service d’impression (Mopria ou appli de la marque) est nécessaire. Coupe du papier et tiroir-caisse : réglages du pilote de l’imprimante sur ordinateur.</div>';
+  try{ h+=lxDirectCarteHtml(); }catch(_eDir){} // 2026-11-06 : impression directe USB et tiroir-caisse
   return h;
 }
 function lxImprApercuMaj(){
@@ -37596,16 +37615,539 @@ function lxImprCssZ(){
   var lg=lxImprLargeurs(c), lay=(f==="t58")?300:420, zm=(lg.imp*96/25.4)/lay;
   return "@page{size:"+lg.papier+"mm 297mm;margin:0}body{width:"+lay+"px!important;max-width:"+lay+"px!important;zoom:"+zm.toFixed(4)+"}.no-print{zoom:"+(1/zm).toFixed(4)+"}@media print{html,body{margin:0!important;padding:0!important}}";
 }
+// =====================================================================
+// 2026-11-06 — IMPRESSION DIRECTE USB (ESC/POS, WebUSB) ET TIROIR-CAISSE SÉLECTIF (réglage par appareil, lx_impr_v1)
+// Version : LX_VERSION inchangée à ce stade (numéro décidé à la publication).
+// CONTENU DU TICKET INCHANGÉ : le texte envoyé à l'imprimante est tiré du DOM produit par buildTicketHTML (source unique), APRÈS
+// remplissage du n° légal et de l'extrait de signature (lxSigRemplir) et, pour un duplicata, APRÈS son enregistrement
+// (nf525_duplicata) : mêmes mentions, mêmes montants, même numéro. Seul le moyen d'envoi change (USB direct au lieu de la
+// fenêtre d'impression). Règles NF525 conservées : original une seule fois (window._lastReceipt.nbImpr), réimpression =
+// duplicata enregistré, impression BLOQUÉE si le duplicata n'est pas enregistré. Un original dont aucun octet n'est sorti
+// peut repartir par la fenêtre ; dès qu'un octet est parti vers l'imprimante, plus jamais (copie = « Duplicata »).
+// Mode direct désactivé (par défaut) : rien ne change, l'impression passe par la fenêtre comme avant.
+// Compatibilité : Chrome / Edge 61+ (iMac El Capitan = Chrome 103 maximum) : aucune API ni syntaxe postérieure à Chrome 103.
+// =====================================================================
+var _lxDir={dev:null, occupe:false, file:Promise.resolve(), init:false};
+function lxDirectDispo(){ try{ return !!(typeof navigator!=="undefined"&&navigator.usb&&typeof navigator.usb.requestDevice==="function"); }catch(_e){ return false; } }
+// Prête = réglage actif + imprimante autorisée et branchée (connue de Chrome). Décision SYNCHRONE : sinon impression par la fenêtre.
+function lxDirectPret(){ try{ return lxDirectDispo()&&lxImprCfg().direct===true&&!!_lxDir.dev; }catch(_e){ return false; } }
+function lxDirectOccupe(){ return _lxDir.occupe===true; }
+function lxDirectCols(c){ return (c.dlarg==="58")?32:((String(c.dcol)==="42")?42:48); }
+function lxDirectDots(c){ return (c.dlarg==="58")?384:((String(c.dcol)==="42")?512:576); }
+// Mode direct réglé mais imprimante absente : petit message, l'impression part par la fenêtre (comportement habituel)
+function lxDirectAvisRepli(){ try{ if(lxDirectDispo()&&lxImprCfg().direct===true&&!_lxDir.dev&&typeof toast==="function") toast("Imprimante USB non détectée : impression par la fenêtre habituelle.","warning"); }catch(_e){} }
+// Choix de l'interface : classe imprimante (0x07) d'abord, puis constructeur (0xFF), avec un point de sortie « bulk »
+function _lxDirChoix(d){
+  var best=null;
+  try{ (d.configurations||[]).forEach(function(cf){ (cf.interfaces||[]).forEach(function(itf){ (itf.alternates||[]).forEach(function(alt){
+    var out=null; (alt.endpoints||[]).forEach(function(e){ if(!out&&e.direction==="out"&&e.type==="bulk") out=e; });
+    if(!out) return;
+    var sc=(alt.interfaceClass===7)?3:((alt.interfaceClass===255)?2:1);
+    if(!best||sc>best.sc) best={sc:sc, conf:cf.configurationValue, itf:itf.interfaceNumber, alt:alt.alternateSetting, ep:out.endpointNumber};
+  }); }); }); }catch(_e){}
+  return best;
+}
+function _lxDirErr(code, e){
+  var m={absente:"imprimante USB non détectée (débranchée ou éteinte)", incompatible:"cet appareil USB n’est pas une imprimante ticket compatible",
+    refus:"accès à l’imprimante USB refusé par le navigateur", occupee:"imprimante occupée par le pilote de l’ordinateur (impression en cours, ou file d’impression macOS / Windows qui la garde)",
+    delai:"l’imprimante ne répond pas (plus de papier ? capot ouvert ?)", transfert:"envoi interrompu (câble débranché ou imprimante éteinte ?)"};
+  var x=new Error(m[code]||String(code)); x.code=code; x.cause0=e&&(e.name||e.message)||""; return x;
+}
+function _lxDirDelai(p, ms){ return new Promise(function(res, rej){ var t=setTimeout(function(){ rej(_lxDirErr("delai")); }, ms); p.then(function(v){ clearTimeout(t); res(v); }, function(e){ clearTimeout(t); rej(e); }); }); }
+// Un envoi = ouvrir, réserver l'interface, envoyer par blocs, libérer, fermer. L'interface n'est JAMAIS gardée entre deux envois
+// (la fenêtre d'impression du système, utilisée pour les Z, peut ainsi toujours accéder à l'imprimante).
+async function _lxDirJob(octets, info){
+  var d=_lxDir.dev; if(!d) throw _lxDirErr("absente");
+  var ch=_lxDirChoix(d); if(!ch) throw _lxDirErr("incompatible");
+  var reserve=false;
+  try{
+    try{ if(!d.opened) await _lxDirDelai(d.open(), 5000); }catch(e){ if(e&&e.code) throw e; throw _lxDirErr((e&&e.name==="SecurityError")?"refus":(e&&e.name==="NotFoundError")?"absente":"occupee", e); }
+    try{ if(!d.configuration||d.configuration.configurationValue!==ch.conf) await d.selectConfiguration(ch.conf); }catch(e){ throw _lxDirErr("occupee", e); }
+    try{ await _lxDirDelai(d.claimInterface(ch.itf), 5000); reserve=true; }catch(e){ if(e&&e.code==="delai") throw _lxDirErr("occupee", e); throw _lxDirErr((e&&e.name==="NotFoundError")?"absente":"occupee", e); }
+    if(ch.alt){ try{ await d.selectAlternateInterface(ch.itf, ch.alt); }catch(_eA){} }
+    var BLOC=1024;
+    for(var i=0;i<octets.length;i+=BLOC){
+      var r;
+      try{ r=await _lxDirDelai(d.transferOut(ch.ep, octets.subarray(i, Math.min(octets.length, i+BLOC))), 10000); }
+      catch(e){ if(e&&e.code) throw e; throw _lxDirErr((e&&e.name==="NotFoundError")?"absente":"transfert", e); }
+      if(!r||r.status!=="ok") throw _lxDirErr("transfert");
+      info.envoye+=(Number(r.bytesWritten)||0);
+    }
+  } finally {
+    if(reserve){ try{ await _lxDirDelai(d.releaseInterface(ch.itf), 2000); }catch(_eR){} }
+    try{ if(d.opened) await _lxDirDelai(d.close(), 2000); }catch(_eC){}
+  }
+}
+// Envoi sérialisé (tickets et tiroir à la suite, jamais mélangés). Ne rejette jamais : {ok, envoye, msg, code}
+function lxDirectEnvoyer(octets){
+  var info={envoye:0};
+  var run=function(){ return _lxDirJob(octets, info).then(function(){ return {ok:true, envoye:info.envoye, total:octets.length}; },
+    function(e){ return {ok:false, envoye:info.envoye, total:octets.length, code:(e&&e.code)||"transfert", msg:(e&&e.message)||"erreur"}; }); };
+  var p=_lxDir.file.then(run, run); _lxDir.file=p.then(function(){},function(){}); return p;
+}
+// --- Jeu de caractères : CP858 (= CP850 + €, ESC t 19) ou Windows-1252 (ESC t 16) ---
+var LX_ESC_CP850="ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜø£Ø×ƒáíóúñÑªº¿®¬½¼¡«»░▒▓│┤ÁÂÀ©╣║╗╝¢¥┐└┴┬├─┼ãÃ╚╔╩╦╠═╬¤ðÐÊËÈıÍÎÏ┘┌█▄¦Ì▀ÓßÔÒõÕµþÞÚÛÙýÝ¯´­±‗¾¶§÷¸°¨·¹³²■ ";
+var LX_ESC_1252="€\u0081‚ƒ„…†‡ˆ‰Š‹Œ\u008DŽ\u008F\u0090‘’“”•–—˜™š›œ\u009DžŸ";
+var _lxEscTables={};
+function _lxEscTable(cp){
+  if(_lxEscTables[cp]) return _lxEscTables[cp];
+  var m={}, i;
+  if(cp==="1252"){ for(i=0;i<32;i++) m[LX_ESC_1252.charAt(i)]=0x80+i; for(i=0xA0;i<=0xFF;i++) m[String.fromCharCode(i)]=i; }
+  else { for(i=0;i<128;i++) m[LX_ESC_CP850.charAt(i)]=0x80+i; delete m["ı"]; m["€"]=0xD5; } // CP858 : € à la place de ı (0xD5)
+  _lxEscTables[cp]=m; return m;
+}
+// Caractères absents des deux jeux : équivalents lisibles (le sens du ticket ne change pas) ; pictogrammes (émojis) retirés.
+function lxEscTranslit(s){
+  return String(s==null?"":s)
+    .replace(/[‘’‚′]/g,"'").replace(/[“”„″]/g,"\"")
+    .replace(/[‐-―−]/g,"-").replace(/…/g,"...")
+    .replace(/[  -   ]/g," ")
+    .replace(/œ/g,"oe").replace(/Œ/g,"OE").replace(/•/g,"*")
+    .replace(/[▶►→➜]/g,">").replace(/[⭐★☆]/g,"*")
+    .replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g,"").replace(/[☀-➿⬀-⯿​-‍︎️⃣]/g,"");
+}
+function lxEscEncoder(s, cp){
+  var t=_lxEscTable(cp==="1252"?"1252":"858"), r=[], x=lxEscTranslit(s);
+  for(var i=0;i<x.length;i++){ var ch=x.charAt(i), k=ch.charCodeAt(0);
+    if(k>=0x20&&k<0x7F) r.push(k); else if(t[ch]!==undefined) r.push(t[ch]); else if(k===9) r.push(32); else if(k>=0x20) r.push(0x3F); }
+  return r;
+}
+// --- DOM du ticket (buildTicketHTML) -> lignes de texte en colonnes ---
+var _LX_ESC_BLOC={DIV:1,P:1,H1:1,H2:1,H3:1,H4:1,H5:1,H6:1,TR:1,UL:1,OL:1,LI:1,SECTION:1,HEADER:1,FOOTER:1,CENTER:1,BLOCKQUOTE:1};
+function _lxEscCache(el){
+  try{ var s=el.style; if(s&&s.display==="none") return true; if(el.getAttribute&&el.getAttribute("aria-hidden")==="true") return true;
+    var c=" "+(el.className&&el.className.baseVal===undefined?el.className:"")+" "; if(/ (lxTrame|lxImprBar|no-print) /.test(c)) return true;
+    var tg=el.tagName; if(tg==="SCRIPT"||tg==="STYLE"||tg==="TEMPLATE"||tg==="HEAD"||tg==="TITLE") return true; }catch(_e){}
+  return false;
+}
+function _lxEscCtx(el, ctx){
+  var s=el.style||{}, n={a:ctx.a, b:ctx.b, z:ctx.z, pre:ctx.pre};
+  var ta=s.textAlign; if(ta==="center") n.a=1; else if(ta==="right"||ta==="end") n.a=2; else if(ta==="left"||ta==="start") n.a=0;
+  var fw=s.fontWeight; if(fw){ if(fw==="bold"||fw==="bolder"||Number(fw)>=600) n.b=true; else n.b=false; }
+  var tg=el.tagName; if(tg==="B"||tg==="STRONG"||tg==="TH"||/^H[1-6]$/.test(tg)) n.b=true;
+  var fs=parseFloat(s.fontSize); if(fs>0) n.z=(fs>=16)?2:((fs>=14)?1:0);
+  var ws=s.whiteSpace; if(ws==="pre-line"||ws==="pre-wrap"||ws==="pre") n.pre=true; else if(ws==="normal"||ws==="nowrap") n.pre=false;
+  return n;
+}
+function _lxEscBord(el, cote){
+  try{ var s=el.style, st=s["border"+cote+"Style"], w=parseFloat(s["border"+cote+"Width"]);
+    if(!st||st==="none"||st==="hidden") return null; if(!(w>0)&&s["border"+cote+"Width"]!=="medium") return null;
+    var col=String(s["border"+cote+"Color"]||""), m=col.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/), clair=false;
+    if(m) clair=(+m[1]>=150&&+m[2]>=150&&+m[3]>=150); else if(/^#([cdef])\1?\1?$|^#(ccc|ddd|eee|bbb|aaa|999)/i.test(col)) clair=true;
+    var car=(st==="dashed"||st==="dotted")?"- ":((w>=2)?"=":"-");
+    return {car:car, clair:clair};
+  }catch(_e){ return null; }
+}
+function _lxEscCoupe(t, w){ // découpe en lignes de largeur w (par mots ; mot trop long coupé)
+  var res=[], lignes=String(t).split("\n");
+  lignes.forEach(function(L){
+    var mots=L.split(" ").filter(function(x){ return x!==""; }), cur="";
+    if(!mots.length){ res.push(""); return; }
+    mots.forEach(function(m){
+      while(m.length>w){ if(cur){ res.push(cur); cur=""; } res.push(m.slice(0,w)); m=m.slice(w); }
+      if(!m) return;
+      if(!cur) cur=m; else if(cur.length+1+m.length<=w) cur+=" "+m; else { res.push(cur); cur=m; }
+    });
+    if(cur) res.push(cur);
+  });
+  return res;
+}
+function _lxEscTexteDe(el){ // texte visible d'un élément (sans les éléments masqués), espaces réduits, <br> = saut de ligne
+  var t="";
+  (function w(n){ for(var c=n.firstChild;c;c=c.nextSibling){ if(c.nodeType===3) t+=c.nodeValue; else if(c.nodeType===1){ if(_lxEscCache(c)) continue; if(c.tagName==="BR"){ t+="\n"; continue; } var bl=_LX_ESC_BLOC[c.tagName]||(c.style&&c.style.display==="block"); if(bl&&t&&!/\n$/.test(t)) t+="\n"; w(c); if(bl) t+="\n"; } } })(el);
+  return lxEscTranslit(t).split("\n").map(function(x){ return x.replace(/\s+/g," ").trim(); }).filter(function(x){ return x!==""; }).join("\n");
+}
+function _lxEscPad(t, w, a){ t=String(t); if(t.length>=w) return t.slice(0,w); var r=w-t.length; if(a===2) return new Array(r+1).join(" ")+t; if(a===1){ var g=Math.floor(r/2); return new Array(g+1).join(" ")+t+new Array(r-g+1).join(" "); } return t+new Array(r+1).join(" "); }
+function lxEscTexte(root, cols){
+  var out=[], buf=null;
+  var pushSep=function(sp){ if(!sp) return; var last=out[out.length-1]; if(last&&last.sep) return; out.push({sep:sp.car}); };
+  var flush=function(){
+    if(!buf) return; var b=buf; buf=null;
+    var t=lxEscTranslit(b.t); t=b.pre?t.replace(/[ \t\r\f\v]+/g," "):t.replace(/\s+/g," "); t=t.replace(/\u0001/g,"\n");
+    t.split("\n").map(function(x){ return x.trim(); }).forEach(function(x, i, arr){
+      if(x===""&&!(b.pre&&i>0&&i<arr.length-1)) return;
+      var w=(b.z===2)?Math.floor(cols/2):cols;
+      _lxEscCoupe(x, w).forEach(function(l){ out.push({t:l, a:b.a, b:b.b, z:b.z}); });
+    });
+  };
+  var addTxt=function(txt, ctx, blk){ if(!buf) buf={t:"", a:blk.a, b:false, z:0, pre:blk.pre}; if(/\S/.test(txt)){ if(ctx.b) buf.b=true; if(ctx.z>buf.z) buf.z=ctx.z; } buf.t+=txt; };
+  var table=function(el, ctx){
+    var rows=[], ncol=0;
+    for(var r=0;r<el.rows.length;r++){ var tr=el.rows[r]; if(_lxEscCache(tr)) continue; var tc=_lxEscCtx(tr, ctx), cells=[], n=0, th=true;
+      for(var c=0;c<tr.cells.length;c++){ var td=tr.cells[c]; if(_lxEscCache(td)) continue; var cc=_lxEscCtx(td, tc), sp=Math.max(1, td.colSpan||1);
+        cells.push({t:_lxEscTexteDe(td).replace(/\n/g," "), sp:sp, a:cc.a, b:cc.b}); n+=sp; if(td.tagName!=="TH") th=false; }
+      if(!cells.length) continue; ncol=Math.max(ncol, n);
+      var sT=_lxEscBord(tr,"Top"), sB=_lxEscBord(tr,"Bottom");
+      rows.push({cells:cells, th:th, sT:(sT&&!sT.clair)?sT:null, sB:(sB&&!sB.clair)?sB:null});
+    }
+    if(!rows.length) return;
+    var nat=[], mot=[], hd=[], j;
+    for(j=0;j<ncol;j++){ nat[j]=0; mot[j]=0; hd[j]=0; }
+    rows.forEach(function(R){ var x=0; R.cells.forEach(function(C){ if(C.sp===1){ if(R.th){ hd[x]=Math.max(hd[x], C.t.length); C.t.split(" ").forEach(function(m){ mot[x]=Math.max(mot[x], m.length); }); } else nat[x]=Math.max(nat[x], C.t.length); } x+=C.sp; }); });
+    var fx=0; for(j=1;j<ncol;j++){ if(nat[j]>nat[fx]) fx=j; }
+    // Largeurs : en-têtes sans mot coupé si la place le permet ; sinon (papier étroit) l'en-tête s'écrit sur une ligne, séparé par « | »
+    var W=[], fixe=0, enLigne=false, minFx=Math.max(mot[fx], Math.min(Math.max(nat[fx], 1), 10));
+    var dispo=function(){ return cols-(ncol-1)-fixe; };
+    for(j=0;j<ncol;j++){ if(j===fx) continue; W[j]=Math.max(1, nat[j], mot[j]); fixe+=W[j]; }
+    if(dispo()<minFx){
+      enLigne=true; fixe=0; for(j=0;j<ncol;j++){ if(j===fx) continue; W[j]=Math.max(1, nat[j]); fixe+=W[j]; }
+      minFx=Math.min(Math.max(nat[fx], 1), 10);
+      var garde=0; while(dispo()<minFx&&garde++<200){ var gj=-1; for(j=0;j<ncol;j++){ if(j!==fx&&W[j]>3&&(gj<0||W[j]>W[gj])) gj=j; } if(gj<0) break; W[gj]--; fixe--; }
+    } else {
+      var cible=Math.max(mot[fx], Math.min(nat[fx], Math.ceil(cols*0.4)), 8);
+      for(j=0;j<ncol;j++){ if(j===fx||hd[j]<=W[j]) continue; var dl=hd[j]-W[j]; if(dispo()-dl>=cible){ W[j]+=dl; fixe+=dl; } }
+    }
+    W[fx]=Math.max(1, dispo());
+    if(enLigne) rows.forEach(function(R){ if(R.th) R.ligne=R.cells.map(function(C){ return C.t; }).filter(function(x){ return x; }).join(" | "); });
+    rows.forEach(function(R){
+      if(R.sT) pushSep(R.sT);
+      if(R.ligne!==undefined){ _lxEscCoupe(R.ligne, cols).forEach(function(l){ out.push({t:l, a:0, b:true, z:0}); }); if(R.sB) pushSep(R.sB); return; }
+      var x=0, blocs=[], h=1;
+      R.cells.forEach(function(C){ var w=0; for(var k=x;k<x+C.sp&&k<ncol;k++) w+=W[k]; w+=(C.sp-1); var lg=C.t?_lxEscCoupe(C.t, w):[""]; h=Math.max(h, lg.length); blocs.push({lg:lg, w:w, a:C.a, b:C.b}); x+=C.sp; });
+      for(var i=0;i<h;i++){ var segs=[]; blocs.forEach(function(B, bi){ segs.push({t:_lxEscPad(B.lg[i]||"", B.w, B.a), b:!!(B.b&&B.lg[i])}); if(bi<blocs.length-1) segs.push({t:" ", b:false}); });
+        var tot=0; segs.forEach(function(s){ tot+=s.t.length; }); if(tot<cols) segs.push({t:new Array(cols-tot+1).join(" "), b:false});
+        out.push({segs:segs}); }
+      if(R.sB) pushSep(R.sB);
+    });
+  };
+  var walk=function(el, ctx, blk){
+    for(var c=el.firstChild;c;c=c.nextSibling){
+      if(c.nodeType===3){ addTxt(c.nodeValue, ctx, blk); continue; }
+      if(c.nodeType!==1||_lxEscCache(c)) continue;
+      var tg=c.tagName;
+      if(tg==="BR"){ addTxt("\u0001", ctx, blk); continue; }
+      if(tg==="IMG"||tg==="SVG"||tg==="CANVAS") continue;
+      var n=_lxEscCtx(c, ctx), s=c.style||{};
+      if(tg==="TABLE"){ flush(); pushSep(_lxEscBord(c,"Top")); table(c, n); pushSep(_lxEscBord(c,"Bottom")); continue; }
+      if(s.display==="flex"&&s.justifyContent==="space-between"&&c.children.length>=2){
+        flush(); pushSep(_lxEscBord(c,"Top"));
+        var g=_lxEscTexteDe(c.children[0]).replace(/\n/g," "), dr=[]; for(var k=1;k<c.children.length;k++){ if(!_lxEscCache(c.children[k])) dr.push(_lxEscTexteDe(c.children[k]).replace(/\n/g," ")); }
+        out.push({kv:[g, dr.join(" ")], b:n.b, z:n.z});
+        pushSep(_lxEscBord(c,"Bottom")); continue;
+      }
+      var bloc=!!(_LX_ESC_BLOC[tg]||s.display==="block"||s.display==="flex");
+      if(bloc){
+        flush(); pushSep(_lxEscBord(c,"Top"));
+        // barre de progression (fidélité) : bloc vide dont l'enfant a une largeur en %
+        if(!/\S/.test(c.textContent||"")&&c.firstElementChild&&/%$/.test(String(c.firstElementChild.style&&c.firstElementChild.style.width||""))){
+          var pc=Math.max(0, Math.min(100, parseFloat(c.firstElementChild.style.width)||0)), lb=Math.min(30, cols-2), pl=Math.round(lb*pc/100);
+          out.push({t:"["+new Array(pl+1).join("#")+new Array(lb-pl+1).join(".")+"]", a:1, b:false, z:0});
+        } else walk(c, n, n);
+        flush(); pushSep(_lxEscBord(c,"Bottom"));
+      } else walk(c, n, blk);
+    }
+  };
+  var c0={a:0, b:false, z:0, pre:false};
+  walk(root, c0, c0); flush();
+  while(out.length&&out[out.length-1].sep) out.pop();
+  return out;
+}
+// Texte brut des lignes (contrôle et tests)
+function lxEscTexteBrut(L, cols){
+  return L.map(function(l){
+    if(l.sep) return new Array(cols+1).join(l.sep).slice(0, cols);
+    if(l.segs) return l.segs.map(function(s){ return s.t; }).join("");
+    if(l.kv){ return l.kv[0]+" "+l.kv[1]; }
+    return l.t;
+  }).join("\n");
+}
+// --- Octets ESC/POS ---
+function lxEscTiroir(pin){ return new Uint8Array([0x1B, 0x70, (String(pin)==="5")?1:0, 25, 250]); } // ESC p m t1 t2 (impulsion 50 ms / 500 ms)
+function lxEscOctets(L, o){
+  var B=[], cols=o.cols||48, cp=(o.cp==="1252")?"1252":"858";
+  var p=function(){ for(var i=0;i<arguments.length;i++) B.push(arguments[i]); };
+  var tx=function(s){ var e=lxEscEncoder(s, cp); for(var i=0;i<e.length;i++) B.push(e[i]); };
+  p(0x1B,0x40); p(0x1B,0x52,0x00); p(0x1B,0x74,(cp==="1252")?16:19); // ESC @ (initialisation), ESC R 0, ESC t (jeu de caractères)
+  if(o.logo&&o.logo.w&&o.logo.h&&o.logo.d){ // GS v 0 : image 1 bit, par bandes de 128 lignes
+    var lg=o.logo, bw=lg.w/8;
+    p(0x1B,0x61,0x00);
+    for(var y0=0;y0<lg.h;y0+=128){ var hb=Math.min(128, lg.h-y0); p(0x1D,0x76,0x30,0x00, bw&0xFF,(bw>>8)&0xFF, hb&0xFF,(hb>>8)&0xFF); for(var k=y0*bw;k<(y0+hb)*bw;k++) B.push(lg.d[k]); }
+    p(0x0A);
+  }
+  var etat={a:-1,b:-1,z:-1};
+  var reg=function(a,b,z){ if(etat.a!==a){ p(0x1B,0x61,a); etat.a=a; } if(etat.b!==b){ p(0x1B,0x45,b); etat.b=b; } if(etat.z!==z){ p(0x1D,0x21,z); etat.z=z; } };
+  L.forEach(function(l){
+    if(l.sep){ reg(0,0,0); tx(new Array(cols+1).join(l.sep).slice(0, cols)); p(0x0A); return; }
+    if(l.segs){ reg(0,0,0); var sg=l.segs.slice(); while(sg.length&&!/\S/.test(sg[sg.length-1].t)) sg.pop(); // pas d'espaces inutiles en fin de ligne
+      sg.forEach(function(s){ var b=s.b?1:0; if(etat.b!==b){ p(0x1B,0x45,b); etat.b=b; } tx(s.t); }); p(0x0A); return; }
+    var z=(l.z===2)?0x11:((l.z===1)?0x01:0x00), w=(l.z===2)?Math.floor(cols/2):cols;
+    if(l.kv&&l.z===2&&l.kv[0].length+1+l.kv[1].length>w){ z=0x01; w=cols; } // trop long en double largeur (58 mm) : double hauteur seulement
+    if(l.kv){
+      reg(0, l.b?1:0, z);
+      var g=l.kv[0], d=l.kv[1];
+      if(g.length+1+d.length<=w){ tx(g+new Array(w-g.length-d.length+1).join(" ")+d); p(0x0A); return; }
+      var lg2=_lxEscCoupe(g, w), der=lg2.pop()||"";
+      lg2.forEach(function(x){ tx(x); p(0x0A); });
+      if(der.length+1+d.length<=w){ tx(der+new Array(w-der.length-d.length+1).join(" ")+d); p(0x0A); }
+      else { tx(der); p(0x0A); _lxEscCoupe(d, w).forEach(function(x){ tx(_lxEscPad(x, w, 2)); p(0x0A); }); }
+      return;
+    }
+    reg(l.a||0, l.b?1:0, z); tx(l.t); p(0x0A);
+  });
+  reg(0,0,0);
+  p(0x1B,0x64,0x04); // ESC d 4 : avance avant la coupe
+  if(o.coupe) p(0x1D,0x56,0x01); // GS V 1 : coupe partielle
+  return new Uint8Array(B);
+}
+// Logo du ticket (mêmes données que l'impression par fenêtre : version noir et blanc de lxImprLogoPrep), centré, largeur max 60 %
+var _lxEscLogoC=null;
+function lxEscLogo(c){
+  if(!c.dlogo) return Promise.resolve(null);
+  var dots=lxDirectDots(c);
+  return Promise.race([lxImprLogoPrep(), new Promise(function(r){ setTimeout(function(){ r(null); }, 1500); })]).then(function(L){
+    if(!L||!L.nb) return null;
+    var cle=L.src+"|"+dots; if(_lxEscLogoC&&_lxEscLogoC.k===cle) return _lxEscLogoC.v;
+    return new Promise(function(res){
+      var fini=false, fin=function(v){ if(fini) return; fini=true; if(v) _lxEscLogoC={k:cle, v:v}; res(v); };
+      var im=new Image();
+      im.onload=function(){ try{
+        var nw=im.naturalWidth||im.width, nh=im.naturalHeight||im.height; if(!nw||!nh){ fin(null); return; }
+        var lw=Math.min(Math.floor(dots*0.6), nw), lh=Math.round(nh*lw/nw); if(lh>200){ lh=200; lw=Math.round(nw*200/nh); }
+        if(lw<8||lh<1){ fin(null); return; }
+        var cv=document.createElement("canvas"); cv.width=dots; cv.height=lh; var cx=cv.getContext("2d");
+        cx.fillStyle="#fff"; cx.fillRect(0,0,dots,lh); cx.drawImage(im, Math.floor((dots-lw)/2), 0, lw, lh);
+        var px=cx.getImageData(0,0,dots,lh).data, bw=dots/8, d=new Uint8Array(bw*lh);
+        for(var y=0;y<lh;y++) for(var x=0;x<dots;x++){ var i=(y*dots+x)*4; if(0.299*px[i]+0.587*px[i+1]+0.114*px[i+2]<128) d[y*bw+(x>>3)]|=(0x80>>(x&7)); }
+        fin({w:dots, h:lh, d:d});
+      }catch(_e){ fin(null); } };
+      im.onerror=function(){ fin(null); };
+      setTimeout(function(){ fin(null); }, 1500);
+      im.src=L.nb;
+    });
+  }).catch(function(){ return null; });
+}
+// Document « hors écran » (aucun chargement de ressource) qui reçoit le ticket : lxSigRemplir / lxNumRemplir / lxDupSigRemplir
+// le complètent exactement comme la fenêtre d'impression.
+function lxDirectDoc(corps){ var d=document.implementation.createHTMLDocument("ticket"); d.body.innerHTML=corps; return d; }
+function lxEscposDepuisDoc(doc, c, logo){
+  var cols=lxDirectCols(c), L=lxEscTexte(doc.body, cols);
+  return lxEscOctets(L, {cols:cols, cp:c.dcp, coupe:c.coupe!==false, logo:logo||null});
+}
+// Repli : impression par la fenêtre, MÊME document (n° légal, signature, n° de duplicata déjà remplis). Si le navigateur bloque
+// l'ouverture (délai depuis le clic), un bouton l'ouvre (un seul usage).
+function lxDirectRepliFenetre(corps, titre, gabarit){
+  var fait=false;
+  var ouvrir=function(){
+    if(fait) return true;
+    var w=window.open("","_blank","width=380,height=650"); if(!w) return false; fait=true;
+    var _ic=lxImprCfg();
+    if(_ic.fmt!=="std"){ w.document.write(lxImprDoc(corps,titre,_ic,window._lxImprLogo)); w.document.close(); }
+    else {
+      var h="<html><head><title>"+_lxImprEsc(titre)+"</title>";
+      if(gabarit==="recu"){
+        h+="<style>html{color-scheme:light!important}*,body,div,span,p,h1,h2,h3,td,th,tr{color:#000!important;background:transparent!important;font-weight:600!important}body{font-family:'Courier New',monospace;padding:15px;max-width:340px;margin:0 auto;font-size:13px;line-height:1.6;background:#fff!important;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}";
+        h+="div[style*='font-size:10px'],div[style*='font-size:11px'],div[style*='font-size:9px']{font-size:12px!important;font-weight:700!important}";
+        h+="table{width:100%;border-collapse:collapse}@media print{body{padding:5px;font-size:13px}}</style></head><body>";
+      } else {
+        h+="<style>html{color-scheme:light!important}*,body,div,span,p,h1,h2,h3,td,th,tr{color:#000!important;background:transparent!important}body{font-family:'Courier New',monospace;padding:15px;max-width:340px;margin:0 auto;font-size:12px;line-height:1.5;background:#fff!important}";
+        h+="table{width:100%;border-collapse:collapse}@media print{.no-print{display:none!important}body{padding:5px}}</style></head><body>";
+      }
+      w.document.write(h+corps+"</body></html>"); w.document.close();
+    }
+    try{ w.addEventListener("beforeprint",function(){ lxImprAvantPrint(w,_ic); }); }catch(_eBp){}
+    lxImprLogoDans(w,_ic,1500).then(function(){ setTimeout(function(){
+      if(_ic.fmt!=="std"||_ic.apercu){ lxImprLancer(w,_ic,true); return; }
+      try{ w.onafterprint=function(){ try{ w.close(); }catch(_){} }; w.print(); setTimeout(function(){ try{ if(!w.closed) w.close(); }catch(_){} }, 5000); }catch(_e){}
+    },200); });
+    return true;
+  };
+  if(ouvrir()) return;
+  try{
+    var o=document.getElementById("lxDirRepli"); if(o) o.parentNode.removeChild(o);
+    o=document.createElement("div"); o.id="lxDirRepli";
+    o.style.cssText="position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:100000;background:#141824;border:1.5px solid #d4a843;border-radius:12px;padding:12px 14px;max-width:380px;width:calc(100% - 32px);box-shadow:0 10px 40px rgba(0,0,0,.6);font-family:inherit;color:#fff;font-size:13px;line-height:1.45";
+    o.innerHTML='<div style="font-weight:800;margin-bottom:6px">🖨️ Impression directe impossible</div><div style="color:#c9cfdb;margin-bottom:10px">Le ticket peut partir par la fenêtre d’impression habituelle.</div><div style="display:flex;gap:8px"><button type="button" class="btn" style="flex:1;background:linear-gradient(135deg,#e8c873,#a8862e);color:#111;font-weight:800;border:none;border-radius:9px;padding:10px">Imprimer par la fenêtre</button><button type="button" class="btn" style="background:transparent;color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:9px;padding:10px">Fermer</button></div>';
+    var bs=o.getElementsByTagName("button");
+    bs[0].onclick=function(){ if(!ouvrir()){ try{ showAlert("Autorisez l’ouverture de fenêtres pour imprimer.","warning"); }catch(_e){} return; } try{ o.parentNode.removeChild(o); }catch(_e2){} };
+    bs[1].onclick=function(){ try{ o.parentNode.removeChild(o); }catch(_e){} };
+    document.body.appendChild(o);
+  }catch(_eO){}
+}
+// Ticket (original ou duplicata) en direct. o = {corps, id, titre, gabarit, avant(doc) -> Promise, verifier() -> bool, original}
+async function lxDirectTicket(o){
+  _lxDir.occupe=true;
+  try{
+    var c=lxImprCfg(), doc=lxDirectDoc(o.corps), logo=null;
+    var taches=[];
+    if(o.id) taches.push(lxSigRemplir(doc, o.id, 3500)); // n° légal + extrait de signature, AVANT impression (comme la fenêtre)
+    if(o.avant) taches.push(o.avant(doc));                // duplicata : enregistrement obligatoire AVANT impression
+    taches.push(lxEscLogo(c).then(function(v){ logo=v; }));
+    await Promise.all(taches.map(function(p){ return Promise.resolve(p).catch(function(){}); }));
+    if(o.verifier&&!o.verifier()) return; // duplicata non enregistré : RIEN n'est envoyé
+    var octets=lxEscposDepuisDoc(doc, c, logo);
+    var r=await lxDirectEnvoyer(octets);
+    if(r.ok){ try{ if(typeof toast==="function") toast("🧾 Ticket envoyé à l’imprimante","success"); }catch(_eT){} return; }
+    if(!(r.envoye>0)){ // rien n'est sorti : même document par la fenêtre
+      try{ if(typeof toast==="function") toast("Impression directe impossible : "+r.msg+". Impression par la fenêtre.","warning"); }catch(_eT2){}
+      lxDirectRepliFenetre(doc.body.innerHTML, o.titre, o.gabarit);
+    } else { // une partie est sortie : jamais de second exemplaire (copie = duplicata enregistré)
+      try{ showAlert("L’impression s’est interrompue ("+r.msg+"). Le ticket a pu sortir en partie.\n\nPour remettre une copie au client : historique des tickets › « Duplicata ».","warning"); }catch(_eA){}
+    }
+  } catch(e){ try{ if(typeof toast==="function") toast("Impression directe : erreur ("+((e&&e.message)||e)+")","warning"); }catch(_eX){} }
+  finally{ _lxDir.occupe=false; }
+}
+// Enregistrement d'un duplicata (même appel et mêmes essais que reprintTicket)
+function _lxDirDupEnregistrer(a){
+  var _op=(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR)?((CURRENT_OPERATOR.prenom||"")+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:"")).trim():"";
+  var _essai=function(n){ return _sb.rpc("nf525_duplicata",{p_salon:_salonId,p_appt_id:a.id,p_operateur:_op||null}).then(function(r){
+      if(r&&!r.error&&r.data) return r;
+      if(n<2) return new Promise(function(res){ setTimeout(res,1200); }).then(function(){ return _essai(n+1); });
+      throw new Error((r&&r.error&&r.error.message)||"duplicata non enregistré");
+    },function(e){ if(n<2) return new Promise(function(res){ setTimeout(res,1200); }).then(function(){ return _essai(n+1); }); throw e; }); };
+  try{ return _essai(1); }catch(e){ return Promise.reject(e); }
+}
+function lxDirectReimpression(a, isDuplicate){
+  var dupOk=!isDuplicate;
+  lxDirectTicket({corps:buildTicketHTML(a, isDuplicate), id:a.id, titre:"Ticket n°"+lxNumAff(a), gabarit:"dup", original:!isDuplicate,
+    avant:isDuplicate?function(doc){ return _lxDirDupEnregistrer(a).then(function(r){
+        dupOk=true;
+        try{ if(r&&r.data){ var d=new Date(r.data.horodatage||Date.now()); doc.querySelectorAll(".lxDupNum").forEach(function(e){ e.textContent="Copie n°"+r.data.copie+" - "+d.toLocaleDateString("fr-FR")+" "+d.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"}); }); } }catch(_e){}
+        if(r&&r.data&&r.data.seq) return lxDupSigRemplir(doc, r.data.seq, 3000);
+      },function(e){ dupOk=false; window._lxDupErr=(e&&e.message)||String(e||"erreur"); }); }:null,
+    verifier:function(){
+      if(dupOk) return true;
+      try{ if(typeof auditLog==="function") auditLog("DUPLICATA_REFUSE","Ticket #"+(a.tkNum||"--")+" : duplicata non enregistré ("+String(window._lxDupErr||"")+") - impression bloquée"); }catch(_eL){}
+      try{ showAlert("Duplicata du ticket n°"+(a.tkNum||"--")+" non enregistré ("+String(window._lxDupErr||"réseau")+") : impression bloquée. Réessayez une fois la connexion rétablie.","warning"); }catch(_eS){}
+      return false;
+    }});
+}
+// Ticket d'essai en direct (sans valeur, rien d'enregistré en caisse)
+async function lxDirectEssai(){
+  if(lxDirectOccupe()) return;
+  _lxDir.occupe=true;
+  try{
+    var c=lxImprCfg(), doc=lxDirectDoc(lxImprEssaiCorps()), logo=await lxEscLogo(c);
+    try{ if(typeof auditLog==="function") auditLog("IMPRESSION_ESSAI","Ticket d’essai sans valeur (impression directe USB, "+(c.dlarg==="58"?"58":"80")+" mm)"); }catch(_eA){}
+    var r=await lxDirectEnvoyer(lxEscposDepuisDoc(doc, c, logo));
+    if(r.ok){ try{ toast("🧾 Ticket d’essai envoyé à l’imprimante","success"); }catch(_e){} }
+    else { try{ toast("Impression directe impossible : "+r.msg+". Ticket d’essai par la fenêtre.","warning"); }catch(_e2){} if(!(r.envoye>0)){ window._lxEssaiFenetre=true; try{ lxImprEssai(); } finally { window._lxEssaiFenetre=false; } } }
+  } finally { _lxDir.occupe=false; }
+}
+// --- Tiroir-caisse ---
+// À la VALIDATION d'un encaissement réussi comportant des espèces (vente, mixte, remboursement en espèces). Jamais bloquant :
+// la commande part après coup (setTimeout), toute erreur est silencieuse (petit message). Jamais pour carte / chèque / virement / bon.
+function lxTiroirSiEspeces(tk, contexte){
+  try{
+    if(!tk||!lxDirectDispo()) return;
+    var c=lxImprCfg(); if(c.direct!==true||c.tiroir===false) return;
+    var esp=0; try{ esp=Number(_lxPayBuckets(tk).esp)||0; }catch(_eB){ esp=0; }
+    if(!(Math.abs(esp)>0.004)) return;
+    setTimeout(function(){
+      try{
+        if(!_lxDir.dev){ try{ toast("Tiroir non ouvert : imprimante USB non détectée.","warning"); }catch(_eT){} return; }
+        lxDirectEnvoyer(lxEscTiroir(c.dpin)).then(function(r){
+          if(r.ok||r.envoye>0){ try{ if(typeof auditLog==="function") auditLog("TIROIR_ESPECES","Ouverture du tiroir à l’encaissement ("+(contexte||"vente")+") - ticket #"+(tk.tkNum||"--")+" - espèces "+esp.toFixed(2)+" €"+(r.ok?"":" (envoi incomplet)")); }catch(_eA){} }
+          if(!r.ok){ try{ toast("Tiroir non ouvert : "+r.msg,"warning"); }catch(_eT2){} }
+        },function(){});
+      }catch(_eS){}
+    },0);
+  }catch(_e){}
+}
+// Ouverture sans vente : motif obligatoire, journalisée (TIROIR_OUVERT, journal de la caisse)
+function lxTiroirDemande(){
+  if(!lxDirectPret()){ try{ showAlert("Imprimante USB non détectée : branchez-la et allumez-la, puis réessayez.","warning"); }catch(_e){} return; }
+  var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="max-width:360px">';
+  h+='<div style="font-weight:800;font-size:15px">🗄️ Ouvrir le tiroir</div>';
+  h+='<div style="font-size:12px;color:var(--text3);margin:4px 0 8px">L’ouverture sans vente est notée dans le journal de la caisse.</div>';
+  h+='<input id="lxTirMotif" type="text" maxlength="120" placeholder="Motif : rendre la monnaie, fond de caisse, contrôle…" style="width:100%;box-sizing:border-box;padding:10px;border-radius:9px;font-size:14px" onkeydown="if(event.key===\'Enter\'){event.preventDefault();lxTiroirValider();}">';
+  h+='<div style="display:flex;gap:8px;margin-top:12px"><button type="button" class="btn bg" style="flex:1" onclick="lxTiroirValider()">Ouvrir</button><button type="button" class="btn" style="flex:1;background:rgba(255,255,255,.06)" onclick="cM()">Annuler</button></div></div></div>';
+  var m=document.getElementById("modal"); if(m) m.innerHTML=h;
+  setTimeout(function(){ try{ document.getElementById("lxTirMotif").focus(); }catch(_e){} },50);
+}
+function lxTiroirValider(){
+  var el=document.getElementById("lxTirMotif"), motif=String(el&&el.value||"").replace(/[<>]/g,"").trim().slice(0,120);
+  if(motif.length<3){ if(el){ el.style.border="1.5px solid var(--red,#f44336)"; el.focus(); } return; }
+  cM();
+  var c=lxImprCfg();
+  lxDirectEnvoyer(lxEscTiroir(c.dpin)).then(function(r){
+    if(r.ok||r.envoye>0){ try{ if(typeof auditLog==="function") auditLog("TIROIR_OUVERT","Ouverture du tiroir sans vente - motif : "+motif+(r.ok?"":" (envoi incomplet)")); }catch(_eA){} }
+    if(r.ok){ try{ toast("🗄️ Tiroir ouvert","success"); }catch(_e){} }
+    else { try{ showAlert("Tiroir non ouvert : "+r.msg+".","warning"); }catch(_e2){} }
+  });
+}
+// --- Connexion / reconnexion ---
+function _lxDirMemo(d){ try{ lxImprSet("dvid", d.vendorId); lxImprSet("dpid", d.productId); lxImprSet("dsn", d.serialNumber||""); lxImprSet("dnom", String(d.productName||d.manufacturerName||"Imprimante USB").slice(0,60)); }catch(_e){} }
+function _lxDirCorrespond(d, c){ return !!(d&&c&&c.dvid!=null&&d.vendorId===Number(c.dvid)&&d.productId===Number(c.dpid)&&(!c.dsn||String(d.serialNumber||"")===String(c.dsn))); }
+function lxDirectRafraichirCarte(){ try{ var cd=document.getElementById("lxImprCard"); if(cd){ cd.innerHTML=lxImprCarteHtml(); setTimeout(lxImprApercuMaj,30); } }catch(_e){} }
+async function lxDirectConnecter(){
+  if(!lxDirectDispo()) return;
+  var d=null;
+  try{ d=await navigator.usb.requestDevice({filters:[]}); }
+  catch(e){ if(e&&e.name==="NotFoundError") return; try{ showAlert("Connexion impossible : "+((e&&e.message)||e),"warning"); }catch(_e){} return; }
+  if(!_lxDirChoix(d)){ try{ showAlert("Cet appareil USB n’est pas reconnu comme une imprimante ticket (aucune sortie d’impression).","warning"); }catch(_e2){} return; }
+  var ancien=_lxDir.dev; _lxDir.dev=d;
+  var r=await lxDirectEnvoyer(new Uint8Array([0x1B,0x40])); // essai : ESC @ (initialisation, rien n'est imprimé)
+  if(!r.ok){ _lxDir.dev=ancien; try{ showAlert("L’imprimante a été trouvée mais Luxyra ne peut pas lui écrire : "+r.msg+".\n\nL’impression habituelle par la fenêtre reste utilisée.","warning"); }catch(_e3){} lxDirectRafraichirCarte(); return; }
+  _lxDirMemo(d); lxImprSet("direct", true);
+  try{ if(typeof auditLog==="function") auditLog("IMPRESSION_DIRECTE_CONFIG","Imprimante USB connectée sur cet appareil : "+String(d.productName||"")+" ("+d.vendorId+":"+d.productId+")"); }catch(_eA){}
+  try{ toast("✓ Imprimante connectée","success"); }catch(_eT){}
+  lxDirectRafraichirCarte();
+}
+function lxDirectDeconnecter(){
+  var d=_lxDir.dev; _lxDir.dev=null;
+  ["direct","dvid","dpid","dsn","dnom"].forEach(function(k){ lxImprSet(k, k==="direct"?false:null); });
+  try{ if(d&&typeof d.forget==="function") d.forget().catch(function(){}); }catch(_e){}
+  try{ if(typeof auditLog==="function") auditLog("IMPRESSION_DIRECTE_CONFIG","Impression directe désactivée sur cet appareil"); }catch(_eA){}
+  lxDirectRafraichirCarte();
+}
+function lxDirectInit(){
+  if(_lxDir.init||!lxDirectDispo()) return; _lxDir.init=true;
+  try{
+    navigator.usb.addEventListener("connect", function(ev){ try{ var c=lxImprCfg(); if(c.direct===true&&_lxDirCorrespond(ev.device, c)){ _lxDir.dev=ev.device; lxDirectRafraichirCarte(); } }catch(_e){} });
+    navigator.usb.addEventListener("disconnect", function(ev){ try{ if(_lxDir.dev&&ev.device===_lxDir.dev){ _lxDir.dev=null; lxDirectRafraichirCarte(); } }catch(_e){} });
+  }catch(_eL){}
+  try{ var c=lxImprCfg(); if(c.direct===true) navigator.usb.getDevices().then(function(L){ for(var i=0;i<(L||[]).length;i++){ if(_lxDirCorrespond(L[i], c)){ _lxDir.dev=L[i]; break; } } lxDirectRafraichirCarte(); }).catch(function(){}); }catch(_eG){}
+}
+setTimeout(function(){ try{ lxDirectInit(); }catch(_e){} }, 800);
+// --- Partie « Impression directe » de la carte d'impression (Paramètres › Caisse et paiements) ---
+function lxDirectCarteHtml(){
+  var h='<div style="border-top:1px solid rgba(255,255,255,.1);margin-top:14px;padding-top:12px">';
+  h+='<div style="font-weight:800;font-size:14px">⚡ Impression directe (USB)</div>';
+  if(!lxDirectDispo()){
+    return h+'<div style="font-size:12px;color:var(--text3);line-height:1.5;margin-top:4px">Non disponible sur ce navigateur : l’impression directe demande Chrome ou Edge sur ordinateur ou sur tablette Android. Sur iPad, iPhone, Safari et Firefox, Apple et ces navigateurs ne permettent pas à une page web de piloter une imprimante USB : l’impression habituelle ci-dessus reste utilisée.</div></div>';
+  }
+  var c=lxImprCfg(), pret=!!_lxDir.dev&&c.direct===true;
+  var st=function(ok, t){ return '<div style="display:flex;align-items:center;gap:8px;border-radius:10px;padding:9px 10px;font-size:13px;margin:8px 0;'+(ok?'background:rgba(76,175,80,.1);border:1px solid rgba(76,175,80,.45);color:#c8e6c9':'background:rgba(255,255,255,.04);border:1px solid #3a4560;color:#a7b0c0')+'">'+t+'</div>'; };
+  var sw=function(k, lbl){ var on=c[k]!==false; return '<button type="button" aria-label="'+lbl+'" class="lxSw'+(on?' lxSwOn':'')+'" aria-pressed="'+(on?"true":"false")+'" onclick="lxImprChoisir(\''+k+'\','+(!on)+')"></button>'; };
+  var seg=function(k, opts){ return '<span class="lxSeg">'+opts.map(function(o){ var on=String(c[k])===o[0]; return '<button type="button" aria-pressed="'+(on?"true":"false")+'" class="lxSegB'+(on?' lxSegOn':'')+'" onclick="lxImprChoisir(\''+k+'\',\''+o[0]+'\')">'+o[1]+'</button>'; }).join("")+'</span>'; };
+  if(c.direct!==true){
+    h+='<div style="font-size:12px;color:var(--text3);line-height:1.5;margin-top:4px">Le ticket sort tout de suite, sans fenêtre d’impression, et le tiroir s’ouvre seulement pour les espèces. Imprimantes ticket compatibles « ESC/POS » (Metapace, Epson, Star, Bixolon…) branchées en USB, avec Chrome ou Edge sur ordinateur ou tablette Android.</div>';
+    h+=st(false,'○ Aucune imprimante connectée');
+    h+='<button type="button" class="btn bg" onclick="lxDirectConnecter()">🔌 Connecter l’imprimante USB</button>';
+    h+='<div style="font-size:12px;color:var(--text3);line-height:1.5;margin-top:8px">Chrome affiche alors la liste des appareils USB : choisissez votre imprimante. À faire une seule fois sur cet appareil.</div>';
+    return h+'</div>';
+  }
+  var nom=_lxImprEsc(c.dnom||"Imprimante USB");
+  h+=pret?st(true,'✓ '+nom+' connectée'):st(false,'⚠️ '+nom+' non détectée : branchez-la et allumez-la. En attendant, les tickets passent par la fenêtre d’impression.');
+  if(!pret) h+='<button type="button" class="btn bs" onclick="lxDirectConnecter()">🔌 Reconnecter</button>';
+  h+='<div class="lxIRow"><span>Ouvrir le tiroir pour les paiements en espèces<small>Même sans imprimer de ticket. Jamais pour la carte, le chèque ou le virement.</small></span>'+sw("tiroir","Ouvrir le tiroir pour les espèces")+'</div>';
+  h+='<div class="lxIRow"><span>Couper le papier à la fin du ticket</span>'+sw("coupe","Couper le papier")+'</div>';
+  h+='<div class="lxIRow"><span>Largeur du papier</span>'+seg("dlarg",[["80","80 mm"],["58","58 mm"]])+'</div>';
+  h+='<div class="lxIRow"><span>Logo sur le ticket<small>'+((window.SALON_CONFIG&&SALON_CONFIG.logo&&String(SALON_CONFIG.logo).indexOf("data:image")===0)?'Converti en noir et blanc pour l’imprimante':'Aucun logo imprimable dans Infos établissement')+'</small></span>'+sw("dlogo","Logo sur le ticket")+'</div>';
+  h+='<div style="font-size:12.5px;color:var(--text2);margin-top:10px;font-weight:700">⚙️ Réglages avancés (si le ticket d’essai sort mal)</div>';
+  if(c.dlarg!=="58") h+='<div class="lxIRow"><span>Caractères par ligne<small>42 si le texte déborde à droite</small></span>'+seg("dcol",[["48","48"],["42","42"]])+'</div>';
+  h+='<div class="lxIRow"><span>Accents et symbole €<small>À changer si les accents sortent mal</small></span>'+seg("dcp",[["858","Jeu 858"],["1252","Jeu 1252"]])+'</div>';
+  h+='<div class="lxIRow"><span>Branchement du tiroir<small>Broche 5 si le tiroir ne s’ouvre pas</small></span>'+seg("dpin",[["2","Broche 2"],["5","Broche 5"]])+'</div>';
+  h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button type="button" class="btn bs" onclick="lxImprEssai()">🧾 Ticket d’essai</button><button type="button" class="btn bs" onclick="lxTiroirDemande()">🗄️ Ouvrir le tiroir</button><button type="button" class="btn bs" onclick="lxDirectDeconnecter()">Déconnecter</button></div>';
+  h+='<div style="font-size:12px;color:var(--text3);line-height:1.5;margin-top:8px">Si l’imprimante ne répond pas (débranchée, éteinte, plus de papier), Luxyra le signale et propose l’impression habituelle par la fenêtre d’impression : vous n’êtes jamais bloqué. Le contenu du ticket ne change pas. Les clôtures Z passent toujours par la fenêtre d’impression.</div>';
+  return h+'</div>';
+}
+
 
 function reprintTicket(id){
   var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}
   if(!a)return;
+  if(lxDirectOccupe()){ try{ if(typeof toast==="function") toast("Impression en cours\u2026","info"); }catch(_eOc){} return; } // 2026-11-06 (impression directe USB)
   // 2026-10-11 (NF525) : toute impression depuis l'historique est un duplicata, sauf le ticket qui vient
   // d'être encaissé dans cette session et n'a pas encore été imprimé (l'indicateur « imprimé » ne peut pas
   // être enregistré sur un rendez-vous encaissé, protégé contre toute modification).
   var isDuplicate=!!a.printed || a.id!==window._lastSealedApptId;
   if(isDuplicate)auditLog("DUPLICATA_TICKET","R\u00e9impression ticket #"+(a.tkNum||"--"));
   a.printed=true; // 2026-10-11 : indicateur local (le RDV encaissé est protégé ; la base refusait la mise à jour)
+  // 2026-11-06 (impression directe USB) : mêmes étapes (duplicata ENREGISTRÉ avant impression, sinon rien n'est envoyé ; n° légal
+  // et signature remplis), envoi direct, repli fenêtre si rien n'est sorti. Mode direct inactif : fenêtre comme avant.
+  if(lxDirectPret()){ lxDirectReimpression(a, isDuplicate); return; }
+  lxDirectAvisRepli();
 
   var w=window.open("","_blank","width=380,height=650");if(!w)return;
   var _ic=lxImprCfg(); // 2026-11-06 (7.0.2) : réglages d'impression de cet appareil (mise en page seulement)
@@ -42023,6 +42565,7 @@ async function _cancelSecureTicketDoUneFois(id,motif){
   }
   AP.push(cancelTicket);
   if(typeof saveAppointment==="function")saveAppointment(cancelTicket);
+  try{ lxTiroirSiEspeces(cancelTicket,"annulation"); }catch(_eTir){} // 2026-11-06 : tiroir-caisse si remboursement en espèces
   // FIX 2026-07-09 (NF525) : scelle le contre-ticket dans le journal tickets (mirror annulerAcompte).
   // Avant, l annulation n etait ecrite que dans appointments -> jamais dans la table tickets scellee.
   if(!_enLigneC) _pTkCancel=(typeof saveTicketToDb==="function")?saveTicketToDb(cancelTicket):null; // 01/11/2026 : attendu avant l'annulation des bons vendus (la base exige le contre-ticket)
@@ -42836,6 +43379,7 @@ async function _lxRetourValiderUneFois(ctx){
   }
   AP.push(tk); window._lastSealedApptId=tk.id; // 1re impression = original
   if(typeof saveAppointment==="function") saveAppointment(tk);
+  try{ lxTiroirSiEspeces(tk,"remboursement"); }catch(_eTir){} // 2026-11-06 : tiroir-caisse si remboursement en espèces
   var _det=sel.lignes.map(function(s){ return s.l.name+(s.l.isProd&&s.q?" x"+s.q:"")+" -"+s.m.toFixed(2); }).join(" ; ");
   auditLog("TICKET_RETOUR_PARTIEL","Retour partiel du ticket #"+refTk+" du "+refDate+" → ticket de retour #"+tkNumR+" - Montant: -"+sel.total.toFixed(2)+"E ("+mode+") - Lignes: "+_det+" - Motif: "+motif+(dejaTot>0?" - déjà remboursé avant: "+dejaTot.toFixed(2)+"E":""));
   var _eff={faits:[],echecs:[]}; try{ _eff=await _lxRetourEffetsExecuter(plan, orig, tk)||_eff; }catch(_eEx){ console.warn("[retour partiel] effets",_eEx); _eff.echecs.push("effets de gestion : erreur ("+((_eEx&&_eEx.message)||_eEx)+")"); }
@@ -43889,7 +44433,10 @@ window.LX_NON_FISCAL_ACTIONS = window.LX_NON_FISCAL_ACTIONS || {
   RDV_HORS_HORAIRES:1, COLLAB_DESARCHIVAGE_REFUSE:1, COLLAB_DELETE_REFUSED:1,
   COLLAB_STATUT_RH:1, COLLAB_ARCHIVAGE_RESTAURE:1, SECURITE_DURCISSEMENT:1,
   SECURITE_CORRECTION_CRITIQUE:1, NF525_SCHEMA_HARDENING:1, RDV_COLLAB_AFFECTE:1,
-  CONFLIT_SYNCHRO:1
+  CONFLIT_SYNCHRO:1,
+  // 2026-11-06 (impression directe USB) : ouverture du tiroir liée à une vente (le ticket fait foi) et réglage de l'imprimante =
+  // supervision. L'ouverture SANS vente (TIROIR_OUVERT, motif obligatoire) reste dans le journal de la caisse.
+  TIROIR_ESPECES:1, IMPRESSION_DIRECTE_CONFIG:1
 };
 function exportAudit(){
   try{ if(typeof auditLog==="function") auditLog("EXPORT_AUDIT","Export du journal d\u2019audit"); }catch(_eX){} // 2026-10-11 (JET 110)
