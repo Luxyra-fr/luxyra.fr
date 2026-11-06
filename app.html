@@ -7445,6 +7445,9 @@ function printClotureZ(){
   h+="</body></html>";
   w.document.write(h);w.document.close();
   try{ lxZInfosRemplir(w.document, c.date); }catch(_eZi){}
+  // 2026-11-06 (7.0.2) : format d'impression de la Z choisi sur cet appareil (Paramètres › Caisse et paiements › Impression)
+  try{ var _zCss=(typeof lxImprCssZ==="function")?lxImprCssZ():""; if(_zCss){ var _zSt=w.document.createElement("style"); _zSt.textContent=_zCss; w.document.head.appendChild(_zSt);
+    var _zc=lxImprCfg(); if(_zc.z!=="a4"&&(_zc.fmt==="t80"||_zc.fmt==="t58")) w.addEventListener("beforeprint",function(){ lxImprAvantPrint(w,_zc); }); } }catch(_eZf){}
   // Injecte la barre d'actions premium (Imprimer + Enregistrer PDF + Fermer) — pas
   // de w.print() auto : l'utilisateur choisit explicitement Imprimer ou Enregistrer PDF.
   setTimeout(function(){
@@ -18857,6 +18860,8 @@ function rSettings(){
       h+='</label>';
     });
     h+='</div></div>';
+    // 2026-11-06 (7.0.2) : impression des tickets (réglage propre à cet appareil, mise en page seulement)
+    try{ h+='<div class="card" id="lxImprCard" style="margin-top:10px">'+lxImprCarteHtml()+'</div>'; setTimeout(function(){ lxImprLogoPrep().then(function(){ lxImprApercuMaj(); }); },60); }catch(_eImpr){}
     // === Mode caisse simplifi\u00e9e (auto-entrepreneur) ===
     var _gcs = (window.SITE_CONFIG && window.SITE_CONFIG.gestionCaisseSimple===true);
     h+='<div class="card" style="margin-top:10px;background:'+(_gcs?'rgba(232,200,115,.06)':'rgba(255,255,255,.02)')+';border:1px solid '+(_gcs?'rgba(232,200,115,.3)':'rgba(255,255,255,.08)')+'">';
@@ -36330,6 +36335,9 @@ function printTicketReceipt(){
   // depuis l'historique sera elle aussi un duplicata.
   if(R){ R.nbImpr=(R.nbImpr||0)+1;
     if(R.sid){ for(var _pi=0;_pi<AP.length;_pi++){ if(AP[_pi].id===R.sid){ AP[_pi].printed=true; break; } } } }
+  var _ic=lxImprCfg(); // 2026-11-06 (7.0.2) : réglages d'impression de cet appareil (mise en page seulement)
+  if(_ic.fmt!=="std"){ w.document.write(lxImprDoc(body,"Ticket #"+tkNumP,_ic,window._lxImprLogo)); w.document.close(); }
+  else {
   var h="<html><head><title>Ticket #"+tkNumP+"</title>";
   // FIX 2026-05-12 : contraste renforcé pour impression — tout en font-weight 600
   // + pure black + line-height plus aéré pour lisibilité petits caractères
@@ -36340,11 +36348,14 @@ function printTicketReceipt(){
   h+=body;
   h+="</body></html>";
   w.document.write(h);w.document.close();
+  }
+  try{ w.addEventListener("beforeprint",function(){ lxImprAvantPrint(w,_ic); }); }catch(_eBp){}
   // FIX 2026-05-12 : fermeture automatique de la fenêtre après impression
   // L'event afterprint se déclenche quand l'utilisateur ferme la boîte de dialogue
   // d'impression (Imprimer OU Annuler) → on ferme la fenêtre dans les deux cas
   // 2026-10-11 : extrait de signature NF525 inséré avant impression (3,5 s maximum)
   var _imprimer=function(){ setTimeout(function(){
+    if(_ic.fmt!=="std"||_ic.apercu){ lxImprLancer(w,_ic,true); return; } // 2026-11-06 (7.0.2) : format choisi ou aperçu Luxyra
     try{
       w.onafterprint = function(){ try{ w.close(); }catch(_){} };
       w.print();
@@ -36356,7 +36367,8 @@ function printTicketReceipt(){
   // 2026-11-06 (NF525) : n° légal + extrait de signature aussi pour une VENTE DIRECTE (sans RDV) : la ligne scellée (R.sid)
   // sert d'identifiant. Avant, seul un RDV (apptIdP) les recevait : l'original d'une vente directe sortait « provisoire ».
   var _idImpr=apptIdP||(R&&R.sid)||null;
-  if(_idImpr) lxSigRemplir(w.document, _idImpr, 3500).then(_imprimer,_imprimer); else _imprimer();
+  var _pLogo=lxImprLogoDans(w,_ic,1500);
+  if(_idImpr) Promise.all([lxSigRemplir(w.document, _idImpr, 3500),_pLogo]).then(_imprimer,_imprimer); else _pLogo.then(_imprimer,_imprimer);
 }
 
 function showTicket(method,total){
@@ -36414,6 +36426,10 @@ function showTicket(method,total){
   h+='<div class="ticket-receipt" style="font-family:\'Courier New\',monospace;padding:20px;font-size:14px;line-height:1.5;border-radius:16px 16px 0 0">';
   h+=ticketHtmlFull;
   h+='</div>';
+  // 2026-11-06 (7.0.2) : rappel de la note de prestation (arrêté n° 83-50/A du 3 octobre 1983, toujours en vigueur ; exclue de
+  // l'interdiction d'impression systématique, art. D541-371 2° code de l'environnement). Non bloquant, affichage seulement.
+  try{ var _lxPresta=0; (recA.items||[]).forEach(function(it){ if(!it||it.isSep||it.isAcompteData||it.isProd||it.isBon||it.isRetour) return; _lxPresta+=(Number(it.price)||0)*(Number(it.qty)||1)-(Number(it.remise)||0); });
+    if(_lxPresta>=25-0.004 && (Number(recA.pr)||0)>0) h+='<div style="background:#2a2410;border-top:1px solid rgba(255,193,7,.5);color:#ffe08a;font-size:12px;line-height:1.45;padding:9px 20px">\ud83d\udcdd Prestation de 25 \u20ac ou plus : la note est obligatoire. Imprimez le ticket ou envoyez-le par e-mail (avec l\u2019accord du client).</div>'; }catch(_eNote){}
 
   // Buttons OUTSIDE ticket-receipt (so colors are not overridden) \u2014 style premium Luxyra coh\u00e9rent
   h+='<div style="display:flex;gap:10px;padding:16px 20px;background:var(--card);border-radius:0 0 16px 16px">';
@@ -36821,7 +36837,7 @@ function exportTicketsCSV(){
 // (caractères 3, 7, 13 et 19 de la signature base64url), version du logiciel, nombre de lignes,
 // duplicatas numérotés. La signature est calculée côté serveur ; le ticket papier en reprend l'extrait.
 // =====================================================================
-var LX_VERSION="7.0.1", LX_CAISSE="C01"; // 2026-11-06 (7.0.1, MINEURE, accord d'Alexandre) : original imprimé une seule fois puis duplicata enregistré (reçu de fin d'encaissement), n° légal et signature aussi sur l'original d'une vente directe, « Conserver 6 ans » retiré du ticket client, commune d'une prestation à domicile ; aucun format d'empreinte, chaînage, signature, numérotation ni fonction serveur modifié ; // 2026-11-05 (7.0.0) : VERSION MAJEURE (BOI § 340) — requalification des évolutions de sécurisation 6.4 → 6.8.10, nouvelle attestation (racine 7), aucun changement fonctionnel de la caisse ; // 2026-11-05 (6.8.10) : contre-audits 6.8.9 / franchise et audit des problèmes anciens — trace serveur des tickets provisoires renvoyée (JET 125), liste des provisoires figée dans la Z, bons cadeaux à 0 % conservés, table unique des moyens de paiement, n° légal dans le compte client, duplicata de Z strict, PS retiré, config en objet. // 2026-11-05 (6.8.9) : audit v2 — trame « simulation » en mode test, prix unitaire, suivi des tickets provisoires, purge d'essai sans coupure de déclencheur. // 2026-11-05 (6.8.8) : n° légal imprimé, notice et contrôle serveur des archives (audit du 05/11). // 2026-10-29 (-9) : 6.8.7 = factures clients, réserves du contre-audit du lot 4 (lot 4b) : bon à usage unique = ligne « Bon cadeau … (réglé lors de l'achat du bon) » (jamais une remise, TVA acquittée à la vente du bon), remise de ligne détaillée (prix unitaire brut, remise, net) sur la facture et le XML EN 16931, numérotation F-/A- unique expliquée ; aucun calcul de caisse modifié (version MINEURE, dossier docs/dossier-attestation-version-mineure-6.8.7.md) ; 2026-10-28 (-8) : 6.8.6 = protections après enregistrement (lot 4 de l'audit indépendant : M4 colonnes figées des tickets, annulation = contre-ticket ; M10 bons cadeaux : solde dérivé des tickets, journal scellé ; M9 conditions des devis ; mineurs : FEC test, rapport / FEC, lien bon-ticket, Stripe, arrondis, factures clients). // 2026-10-28 : 6.8.5 = règle TVA UNIQUE dans tous les documents (lot 3 de l'audit indépendant, constats M1/M2/M3) : HT et TVA = somme, par taux, des montants enregistrés sur chaque ticket (Z, clôtures, rapport, Excel, ZIP, FEC, EBP / Quadratus, e-mail au comptable, statistiques) ; une ligne de TVA par taux sur le ticket imprimé et le duplicata ; ventilation figée dans le ticket (raw_data.lxTva, hors empreinte) ; documents d'une période passée calculés avec les valeurs ENREGISTRÉES (jamais au taux actuel). Formats d'empreinte, chaînage, signatures, numérotation et JET inchangés (BOI-TVA-DECLA-30-10-30 § 340 : version MINEURE). 2026-10-28 (-6) : 6.8.4 = corrections du contre-audit 3 (6.8.0 à 6.8.3 jamais publiées) : forçage de clôture soumis à un délai serveur de 5 minutes entre deux contrôles (contrôle refait au moment du forçage, heure possible affichée), journées retenues de plus de 60 jours signalées sur la carte « Caisse » (déblocage par l'administrateur Luxyra). 2026-10-28 (-5) : 6.8.3 = corrections du contre-audit final (6.8.0 à 6.8.2 jamais publiées) : journée retenue (ventes encaissées non transmises) -> Z refusée avec cause et marche à suivre, forçage tracé par un administrateur (lx_z_forcer), clôtures dans l'ordre des dates, carte « Caisse » de l'accueil ; date réelle d'une vente reportée SCELLÉE dans le ticket (items[0].lxRep, champ couvert par l'empreinte, format inchangé) ; exports à la date du journal avec la liste des ventes reportées ; seuil de version du serveur 6.8.3 (BOI-TVA-DECLA-30-10-30 § 340 : version MINEURE). 2026-10-28 (-4) : 6.8.2 = corrections du contre-audit (6.8.0 et 6.8.1 jamais publiées) : un ticket encaissé n'est plus jamais abandonné par la file de secours (vente d'une journée déjà close enregistrée sur la journée ouverte, date réelle de vente en mention ; clôture forcée = ticket gardé en file), seuil de version de référence du serveur ; formats de hash, chaînage, signatures et clôtures inchangés (BOI-TVA-DECLA-30-10-30 § 340 : version MINEURE). 2026-10-28 (-3) : 6.8.1 = corrections de l'audit de la 6.8.0 (jamais publiée) : version transmise dans chaque ticket (raw_data.lxVersion) et contrôlée par le serveur, série de n° imprimés propre au serveur (900001+) exclue du compteur des appareils ; formats de hash, chaînage et signatures inchangés (BOI-TVA-DECLA-30-10-30 § 340). 2026-10-28 (-2) : 6.8.0 = version MINEURE (recettes encaissées en ligne enregistrées par le serveur au paiement confirmé, avec la MÊME chaîne de numérotation, empreinte, sceau et signature ; BOI-TVA-DECLA-30-10-30 § 340 : aucune fonction d'inaltérabilité, de sécurisation, de conservation ou d'archivage modifiée). 6.7.0 = version MINEURE (bons cadeaux à usage unique / multiple, CGI art. 256 ter) : formats de hash, chaînage et signatures inchangés (BOI-TVA-DECLA-30-10-30 § 340)
+var LX_VERSION="7.0.2", LX_CAISSE="C01"; // 2026-11-06 (7.0.2, MINEURE) : réglages d'impression par appareil (A4 couleur / noir et blanc, ticket 80 / 58 mm, taille du texte, logo converti, aperçu Luxyra, format des Z, ticket d'essai sans valeur), rappel de la note de prestation dès 25 € ; MISE EN PAGE SEULEMENT, contenu du ticket inchangé (buildTicketHTML, classes CSS ajoutées), aucune donnée ni fonction NF525 modifiée ; // 2026-11-06 (7.0.1, MINEURE, accord d'Alexandre) : original imprimé une seule fois puis duplicata enregistré (reçu de fin d'encaissement), n° légal et signature aussi sur l'original d'une vente directe, « Conserver 6 ans » retiré du ticket client, commune d'une prestation à domicile ; aucun format d'empreinte, chaînage, signature, numérotation ni fonction serveur modifié ; // 2026-11-05 (7.0.0) : VERSION MAJEURE (BOI § 340) — requalification des évolutions de sécurisation 6.4 → 6.8.10, nouvelle attestation (racine 7), aucun changement fonctionnel de la caisse ; // 2026-11-05 (6.8.10) : contre-audits 6.8.9 / franchise et audit des problèmes anciens — trace serveur des tickets provisoires renvoyée (JET 125), liste des provisoires figée dans la Z, bons cadeaux à 0 % conservés, table unique des moyens de paiement, n° légal dans le compte client, duplicata de Z strict, PS retiré, config en objet. // 2026-11-05 (6.8.9) : audit v2 — trame « simulation » en mode test, prix unitaire, suivi des tickets provisoires, purge d'essai sans coupure de déclencheur. // 2026-11-05 (6.8.8) : n° légal imprimé, notice et contrôle serveur des archives (audit du 05/11). // 2026-10-29 (-9) : 6.8.7 = factures clients, réserves du contre-audit du lot 4 (lot 4b) : bon à usage unique = ligne « Bon cadeau … (réglé lors de l'achat du bon) » (jamais une remise, TVA acquittée à la vente du bon), remise de ligne détaillée (prix unitaire brut, remise, net) sur la facture et le XML EN 16931, numérotation F-/A- unique expliquée ; aucun calcul de caisse modifié (version MINEURE, dossier docs/dossier-attestation-version-mineure-6.8.7.md) ; 2026-10-28 (-8) : 6.8.6 = protections après enregistrement (lot 4 de l'audit indépendant : M4 colonnes figées des tickets, annulation = contre-ticket ; M10 bons cadeaux : solde dérivé des tickets, journal scellé ; M9 conditions des devis ; mineurs : FEC test, rapport / FEC, lien bon-ticket, Stripe, arrondis, factures clients). // 2026-10-28 : 6.8.5 = règle TVA UNIQUE dans tous les documents (lot 3 de l'audit indépendant, constats M1/M2/M3) : HT et TVA = somme, par taux, des montants enregistrés sur chaque ticket (Z, clôtures, rapport, Excel, ZIP, FEC, EBP / Quadratus, e-mail au comptable, statistiques) ; une ligne de TVA par taux sur le ticket imprimé et le duplicata ; ventilation figée dans le ticket (raw_data.lxTva, hors empreinte) ; documents d'une période passée calculés avec les valeurs ENREGISTRÉES (jamais au taux actuel). Formats d'empreinte, chaînage, signatures, numérotation et JET inchangés (BOI-TVA-DECLA-30-10-30 § 340 : version MINEURE). 2026-10-28 (-6) : 6.8.4 = corrections du contre-audit 3 (6.8.0 à 6.8.3 jamais publiées) : forçage de clôture soumis à un délai serveur de 5 minutes entre deux contrôles (contrôle refait au moment du forçage, heure possible affichée), journées retenues de plus de 60 jours signalées sur la carte « Caisse » (déblocage par l'administrateur Luxyra). 2026-10-28 (-5) : 6.8.3 = corrections du contre-audit final (6.8.0 à 6.8.2 jamais publiées) : journée retenue (ventes encaissées non transmises) -> Z refusée avec cause et marche à suivre, forçage tracé par un administrateur (lx_z_forcer), clôtures dans l'ordre des dates, carte « Caisse » de l'accueil ; date réelle d'une vente reportée SCELLÉE dans le ticket (items[0].lxRep, champ couvert par l'empreinte, format inchangé) ; exports à la date du journal avec la liste des ventes reportées ; seuil de version du serveur 6.8.3 (BOI-TVA-DECLA-30-10-30 § 340 : version MINEURE). 2026-10-28 (-4) : 6.8.2 = corrections du contre-audit (6.8.0 et 6.8.1 jamais publiées) : un ticket encaissé n'est plus jamais abandonné par la file de secours (vente d'une journée déjà close enregistrée sur la journée ouverte, date réelle de vente en mention ; clôture forcée = ticket gardé en file), seuil de version de référence du serveur ; formats de hash, chaînage, signatures et clôtures inchangés (BOI-TVA-DECLA-30-10-30 § 340 : version MINEURE). 2026-10-28 (-3) : 6.8.1 = corrections de l'audit de la 6.8.0 (jamais publiée) : version transmise dans chaque ticket (raw_data.lxVersion) et contrôlée par le serveur, série de n° imprimés propre au serveur (900001+) exclue du compteur des appareils ; formats de hash, chaînage et signatures inchangés (BOI-TVA-DECLA-30-10-30 § 340). 2026-10-28 (-2) : 6.8.0 = version MINEURE (recettes encaissées en ligne enregistrées par le serveur au paiement confirmé, avec la MÊME chaîne de numérotation, empreinte, sceau et signature ; BOI-TVA-DECLA-30-10-30 § 340 : aucune fonction d'inaltérabilité, de sécurisation, de conservation ou d'archivage modifiée). 6.7.0 = version MINEURE (bons cadeaux à usage unique / multiple, CGI art. 256 ter) : formats de hash, chaînage et signatures inchangés (BOI-TVA-DECLA-30-10-30 § 340)
 window.LX_SIG_CACHE=window.LX_SIG_CACHE||{};
 function _lxSigExtrait(sg){ sg=String(sg||""); return [3,7,13,19].map(function(i){ return sg.charAt(i-1)||""; }).join(""); }
 async function _lxSignerMaintenant(){
@@ -37037,7 +37053,7 @@ function buildTicketHTML(a, isDuplicate){
   if(isDuplicate)h+="<div style=\"text-align:center;border:3px solid #000;padding:6px;margin-bottom:8px;font-weight:900;font-size:16px;letter-spacing:3px\">DUPLICATA<span class=\"lxDupNum\" style=\"display:block;font-size:10px;letter-spacing:0\"></span><span class=\"lxDupSig\" style=\"display:block;font-size:9px;letter-spacing:0;font-weight:400\"></span></div>";
 
   // En-tête salon
-  h+="<div style=\"text-align:center;border-bottom:1px solid #000;padding-bottom:8px;margin-bottom:8px\">";
+  h+="<div class=\"lxTkHd\" style=\"text-align:center;border-bottom:1px solid #000;padding-bottom:8px;margin-bottom:8px\">"; // 2026-11-06 : classes lxTk* = mise en page d'impression seulement (contenu inchangé)
   h+="<div style=\"font-weight:900;font-size:14px;letter-spacing:1px\">"+SALON_CONFIG.nom.toUpperCase()+"</div>";
   if(SALON_CONFIG.sousTitre)h+="<div style=\"font-size:11px\">"+SALON_CONFIG.sousTitre+"</div>";
   h+="<div style=\"font-size:11px\">"+SALON_CONFIG.adresse+"</div>";
@@ -37080,7 +37096,7 @@ function buildTicketHTML(a, isDuplicate){
   h+="</div>";
 
   // Tableau articles
-  h+="<table style=\"width:100%;border-collapse:collapse;font-size:11px;margin-bottom:8px\">";
+  h+="<table class=\"lxTkLig\" style=\"width:100%;border-collapse:collapse;font-size:11px;margin-bottom:8px\">";
   h+="<tr style=\"border-top:1px solid #000;border-bottom:1px solid #000\"><th style=\"text-align:left;padding:4px 0\">Quantit\u00e9</th><th style=\"text-align:left\">D\u00e9signation</th><th style=\"text-align:right;padding-right:4px\">P.U. TTC</th><th style=\"text-align:right\">Total TTC</th></tr>";
   if(a.items&&a.items.length){
     for(var ii=0;ii<a.items.length;ii++){
@@ -37140,7 +37156,7 @@ function buildTicketHTML(a, isDuplicate){
   h+="<div style=\"display:flex;justify-content:space-between;font-weight:900;font-size:13px;border-top:2px solid #000;padding-top:6px\"><span>Total HT :</span><span>"+ht.toFixed(2)+"</span></div>";
 
   // Ventilation TVA
-  h+="<table style=\"width:100%;font-size:11px;margin:6px 0;border-top:1px solid #000;border-bottom:1px solid #000\"><tr style=\"font-weight:700\"><td></td><td style=\"text-align:center\">TVA</td><td style=\"text-align:center\">HT</td><td style=\"text-align:right\">TTC</td></tr>";
+  h+="<table class=\"lxTkTva\" style=\"width:100%;font-size:11px;margin:6px 0;border-top:1px solid #000;border-bottom:1px solid #000\"><tr style=\"font-weight:700\"><td></td><td style=\"text-align:center\">TVA</td><td style=\"text-align:center\">HT</td><td style=\"text-align:right\">TTC</td></tr>";
   if(_tvR && (_tvR.l.length || Math.abs(Number(_tvR.hc)||0)>0.004)){
     _tvR.l.forEach(function(x){ h+="<tr><td>TVA "+x.t+"%</td><td style=\"text-align:center\">"+x.tva.toFixed(2)+" \u20ac</td><td style=\"text-align:center\">"+x.ht.toFixed(2)+" \u20ac</td><td style=\"text-align:right\">"+x.ttc.toFixed(2)+" \u20ac</td></tr>"; });
     if(Math.abs(Number(_tvR.hc)||0)>0.004) h+="<tr><td>Non soumis (bon \u00e0 usage multiple)</td><td style=\"text-align:center\">0.00 \u20ac</td><td style=\"text-align:center\">"+Number(_tvR.hc).toFixed(2)+" \u20ac</td><td style=\"text-align:right\">"+Number(_tvR.hc).toFixed(2)+" \u20ac</td></tr>";
@@ -37150,7 +37166,7 @@ function buildTicketHTML(a, isDuplicate){
   if(txTVA===0)h+="<p style=\"font-size:9px;text-align:center\">TVA non applicable - Art. 293B du CGI</p>";
 
   // Total TTC
-  h+="<div style=\"display:flex;justify-content:space-between;font-weight:900;font-size:16px;padding:8px 0;border-bottom:1px solid #000\"><span>Total TTC :</span><span>"+total.toFixed(2)+" \u20ac</span></div>";
+  h+="<div class=\"lxTkTTC\" style=\"display:flex;justify-content:space-between;font-weight:900;font-size:16px;padding:8px 0;border-bottom:1px solid #000\"><span>Total TTC :</span><span>"+total.toFixed(2)+" \u20ac</span></div>";
 
   // Acompte
   if(a.acompte>0){
@@ -37252,7 +37268,7 @@ function buildTicketHTML(a, isDuplicate){
   }
   // Mentions légales NF525
   h+="<div style=\"border-top:1px dashed #999;margin:6px 0\"></div>";
-  h+="<div style=\"text-align:center;font-size:10px;color:#666\">";
+  h+="<div class=\"lxTkPied\" style=\"text-align:center;font-size:10px;color:#666\">";
   if(SALON_CONFIG.siret)h+="<div>SIRET: "+SALON_CONFIG.siret+"</div>";
   else h+="<div>SIRET : en cours d'attribution (immatriculation en cours)</div>"; // 2026-10-10 : affichage seulement (hors empreinte)
   if(SALON_CONFIG.tva)h+="<div>N\u00b0 TVA: "+SALON_CONFIG.tva+"</div>";
@@ -37335,6 +37351,246 @@ async function lxDupSigRemplir(doc, seq, maxMs){
   }
   put("Duplicata enregistr\u00e9 n\u00b0"+seq+" (signature sous 2 min)");
 }
+// =====================================================================
+// 2026-11-06 (7.0.2) — RÉGLAGES D'IMPRESSION PAR APPAREIL (Paramètres › Caisse et paiements › Impression des tickets)
+// MISE EN PAGE SEULEMENT : le contenu du ticket reste celui de buildTicketHTML (source unique, mentions inchangées),
+// rien n'est enregistré en base, aucune donnée NF525 n'est touchée. Réglage stocké dans le navigateur (localStorage),
+// propre à chaque appareil. Format « std » (par défaut, tant que l'établissement n'a rien choisi) = impression
+// EXACTEMENT comme avant la 7.0.2.
+// =====================================================================
+var LX_IMPR_DEF={fmt:"std",col:"c",sz:"n",logo:true,apercu:false,z:"m",larg:"auto",fort:true,esp:"n"};
+function lxImprCfg(){
+  var c={}; try{ c=JSON.parse(localStorage.getItem("lx_impr_v1")||"{}")||{}; }catch(_e){ c={}; }
+  var o={}; for(var k in LX_IMPR_DEF){ if(Object.prototype.hasOwnProperty.call(LX_IMPR_DEF,k)) o[k]=(c[k]!==undefined&&c[k]!==null)?c[k]:LX_IMPR_DEF[k]; }
+  if(["std","a4","t80","t58"].indexOf(o.fmt)<0) o.fmt="std";
+  ["logo","apercu","fort"].forEach(function(k){ o[k]=(o[k]===true||o[k]==="true"); });
+  return o;
+}
+function lxImprSet(k,v){
+  var c={}; try{ c=JSON.parse(localStorage.getItem("lx_impr_v1")||"{}")||{}; }catch(_e){ c={}; }
+  c[k]=v; if(k==="fmt") c.larg="auto";
+  try{ localStorage.setItem("lx_impr_v1",JSON.stringify(c)); }catch(_e){ try{ showAlert("Réglage non enregistré : le navigateur bloque le stockage local.","warning"); }catch(_e2){} }
+}
+// Largeur imprimable réelle (mm) et largeur du papier
+function lxImprLargeurs(c){
+  if(c.fmt==="t58"){ var l58=(c.larg==="auto")?48:Number(c.larg)||48; return {papier:58, imp:Math.max(36,Math.min(58,l58))}; }
+  var l80=(c.larg==="auto")?72:Number(c.larg)||72; return {papier:80, imp:Math.max(50,Math.min(80,l80))};
+}
+// --- Logo converti pour l'impression (calculé une fois par logo, en mémoire) ---
+// sombre = fond foncé (logo clair sur fond noir) -> inversé pour le papier. gris = A4 noir et blanc, nb = thermique (1 bit).
+window._lxImprLogo=null;
+function lxImprLogoPrep(){
+  var src=(window.SALON_CONFIG&&SALON_CONFIG.logo)||"";
+  if(!src||String(src).indexOf("data:image")!==0) return Promise.resolve(null);
+  if(window._lxImprLogo&&window._lxImprLogo.src===src) return Promise.resolve(window._lxImprLogo);
+  return new Promise(function(res){
+    var img=new Image();
+    img.onload=function(){
+      try{
+        var nw=img.naturalWidth||img.width, nh=img.naturalHeight||img.height, ks=Math.min(1,700/(nw||1),400/(nh||1)), W=Math.round(nw*ks), H=Math.round(nh*ks);
+        if(!W||!H){ res(null); return; }
+        var cv=document.createElement("canvas"); cv.width=W; cv.height=H; var cx=cv.getContext("2d");
+        cx.fillStyle="#fff"; cx.fillRect(0,0,W,H); cx.drawImage(img,0,0,W,H);
+        var d=cx.getImageData(0,0,W,H), p=d.data, bord=0, nb=0, x, y, i;
+        for(x=0;x<W;x+=4){ [0,H-1].forEach(function(yy){ var j=(yy*W+x)*4; bord+=0.299*p[j]+0.587*p[j+1]+0.114*p[j+2]; nb++; }); }
+        for(y=0;y<H;y+=4){ [0,W-1].forEach(function(xx){ var j=(y*W+xx)*4; bord+=0.299*p[j]+0.587*p[j+1]+0.114*p[j+2]; nb++; }); }
+        var sombre=nb>0&&(bord/nb)<110;
+        var g=new Uint8ClampedArray(W*H), mn=255, mx=0;
+        for(i=0;i<W*H;i++){ var v=0.299*p[i*4]+0.587*p[i*4+1]+0.114*p[i*4+2]; if(p[i*4+3]<20) v=sombre?0:255; if(sombre) v=255-v; g[i]=v; if(v<mn)mn=v; if(v>mx)mx=v; }
+        var et=(mx-mn)||1;
+        var dg=cx.createImageData(W,H), dn=cx.createImageData(W,H);
+        for(i=0;i<W*H;i++){ var s=Math.round((g[i]-mn)*255/et); dg.data[i*4]=dg.data[i*4+1]=dg.data[i*4+2]=s; dg.data[i*4+3]=255; var b=s<150?0:255; dn.data[i*4]=dn.data[i*4+1]=dn.data[i*4+2]=b; dn.data[i*4+3]=255; }
+        cx.putImageData(dg,0,0); var gris=cv.toDataURL("image/png");
+        cx.putImageData(dn,0,0); var nbu=cv.toDataURL("image/png");
+        window._lxImprLogo={src:src, orig:src, gris:gris, nb:nbu, sombre:sombre};
+        res(window._lxImprLogo);
+      }catch(_e){ res(null); }
+    };
+    img.onerror=function(){ res(null); };
+    img.src=src;
+  });
+}
+function _lxImprEsc(t){ return String(t==null?"":t).replace(/[&<>"]/g,function(m){ return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[m]; }); }
+// En-tête A4 (logo à gauche, établissement à droite) — l'en-tête du ticket (.lxTkHd) est alors masqué : mêmes informations.
+function lxImprEnteteA4(c, L){
+  var S=window.SALON_CONFIG||{}, h='<div class="lxA4Hd"><div class="lxA4Lg">';
+  if(c.logo&&L){ h+=(c.col==="c")?('<img src="'+_lxImprEsc(L.orig)+'" class="'+(L.sombre?"lxA4Badge":"")+'" alt="">'):('<img src="'+L.gris+'" alt="">'); }
+  h+='</div><div class="lxA4Id"><b>'+_lxImprEsc(S.nom||"")+'</b>';
+  if(S.sousTitre) h+='<br>'+_lxImprEsc(S.sousTitre);
+  h+='<br>'+_lxImprEsc(S.adresse||"")+'<br>'+_lxImprEsc((S.cp||"")+" "+(S.ville||""));
+  if(S.tel) h+='<br>Tél. '+_lxImprEsc(S.tel);
+  return h+'</div></div>';
+}
+// CSS d'impression selon le format (kind : "tk" ticket / duplicata / essai ; "z" clôture)
+function lxImprCss(c, kind){
+  var sc=(c.sz==="p")?0.9:(c.sz==="g")?1.15:1;
+  var css="html{color-scheme:light!important;background:#fff!important}body{background:#fff!important;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}";
+  css+=".lxImprBar{position:sticky;top:0;background:#111!important;padding:10px;display:flex;gap:8px;justify-content:center;z-index:99;font-family:Arial,sans-serif}.lxImprBar button{padding:10px 18px;border-radius:8px;border:1px solid #c8a84e;font-weight:800;font-size:13px;cursor:pointer}.lxImprBar .p{background:#c8a84e!important;color:#000!important}.lxImprBar .f{background:transparent!important;color:#fff!important}";
+  css+="@media print{.lxImprBar{display:none!important}}";
+  css+=".lxEss{text-align:center;font-weight:900;border:2px solid #000;padding:4px;margin:6px 0;letter-spacing:.5px}";
+  if(c.fmt==="a4"){
+    var col=(c.col==="c");
+    css+="@page{size:A4;margin:12mm}";
+    css+="body{font-family:Arial,Helvetica,sans-serif!important;max-width:none!important;width:auto!important;margin:0 auto!important;padding:0 2mm!important;zoom:"+(1.12*sc).toFixed(3)+";line-height:1.45!important}";
+    css+="body *{font-family:Arial,Helvetica,sans-serif!important}";
+    css+=".lxTkHd{display:none!important}";
+    css+=".lxA4Hd{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:14px}.lxA4Lg img{max-width:62mm;max-height:30mm;display:block}.lxA4Badge{border-radius:6px}";
+    css+=".lxA4Id{text-align:right;font-size:11px;line-height:1.5}.lxA4Id b{font-size:14px}";
+    css+=".lxTkLig th{text-transform:uppercase;font-size:9.5px!important;padding:6px 4px!important}.lxTkLig td{padding:5px 4px!important}";
+    if(col){
+      css+=".lxA4col .lxTkLig th{background:#f7efd9!important;color:#7a5f1c!important}";
+      css+=".lxA4col .lxTkTTC,.lxA4col .lxTkTTC span{color:#7a5f1c!important;border-color:#c9a13f!important}";
+      css+=".lxA4col .lxTkPied{border-top:1px solid #e0c983;padding-top:6px}";
+    }
+  } else if(c.fmt==="t80"||c.fmt==="t58"){
+    var lg=lxImprLargeurs(c), base=(c.fmt==="t58")?250:320, lay=Math.round(base/sc), zm=((lg.imp*96/25.4)/lay);
+    css+="@page{size:"+lg.papier+"mm 297mm;margin:0}"; // remplacé juste avant l'impression par la hauteur réelle (lxImprAvantPrint)
+    css+="html,body{margin:0!important;padding:0!important}";
+    css+="body{width:"+lay+"px!important;max-width:"+lay+"px!important;zoom:"+zm.toFixed(4)+";margin:0 auto!important;padding:"+Math.round(6/zm)+"px 0 0!important;font-family:'Courier New',monospace!important;color:#000!important}";
+    css+="body *{color:#000!important;background:transparent!important}";
+    if(c.fort) css+="body,body *{font-weight:700!important}";
+    css+=".lxThLg{display:block;margin:0 auto 6px;max-width:85%;max-height:120px}";
+    css+=".lxImprFin{height:"+((c.esp==="0")?0:(c.esp==="g")?16:7)+"mm}";
+  }
+  return css;
+}
+// Document complet à imprimer. corps = HTML de buildTicketHTML (ou bande Z / ticket d'essai).
+function lxImprDoc(corps, titre, c, L){
+  var h="<html><head><meta charset='utf-8'><title>"+_lxImprEsc(titre)+"</title><style>"+lxImprCss(c,"tk")+"</style></head><body class=\""+(c.fmt==="a4"&&c.col==="c"?"lxA4col":"")+"\">";
+  if(c.fmt==="a4") h+=lxImprEnteteA4(c,L);
+  else if(c.logo&&L) h+='<img class="lxThLg" src="'+L.nb+'" alt="">';
+  h+=corps;
+  if(c.fmt==="t80"||c.fmt==="t58") h+='<div class="lxImprFin"></div>';
+  return h+"</body></html>";
+}
+// Hauteur réelle du ticket thermique -> une seule page, une seule coupe (Chrome, Edge ; Safari 18.2+).
+function lxImprAvantPrint(w, c){
+  try{
+    if(!(c.fmt==="t80"||c.fmt==="t58")) return;
+    var d=w.document, lg=lxImprLargeurs(c);
+    var hpx=0, kids=d.body.children; // bas réel du contenu (les rectangles tiennent compte du zoom)
+    for(var i=0;i<kids.length;i++){ if(/(^| )(lxImprBar|no-print)( |$)/.test(kids[i].className||"")) continue; var r=kids[i].getBoundingClientRect(); if(r.bottom>hpx) hpx=r.bottom; }
+    hpx+=(w.scrollY||0);
+    var hmm=Math.ceil(hpx*25.4/96)+4; if(hmm<60) hmm=60; if(hmm>3000) hmm=3000;
+    var st=d.getElementById("lxImprPage"); if(!st){ st=d.createElement("style"); st.id="lxImprPage"; d.head.appendChild(st); }
+    st.textContent="@page{size:"+lg.papier+"mm "+hmm+"mm;margin:0}";
+  }catch(_e){}
+}
+// Impression finale : aperçu Luxyra (barre Imprimer / Fermer) ou fenêtre d'impression directe.
+function lxImprLancer(w, c, fermerApres){
+  try{
+    lxImprAvantPrint(w, c);
+    if(c.apercu){
+      var d=w.document, bar=d.createElement("div"); bar.className="lxImprBar";
+      bar.innerHTML='<button class="p" type="button">🖨 Imprimer</button><button class="f" type="button">Fermer</button>';
+      // 2026-11-06 : un seul clic « Imprimer » par fenêtre (original imprimé une seule fois, 7.0.1) : bouton désactivé, fenêtre fermée après impression
+      bar.firstChild.onclick=function(){ try{ bar.firstChild.disabled=true; bar.firstChild.textContent="Impression…"; }catch(_b){} lxImprAvantPrint(w, c); w.onafterprint=function(){ try{ w.close(); }catch(_){} }; w.print(); setTimeout(function(){ try{ if(!w.closed) w.close(); }catch(_){} }, 5000); };
+      bar.lastChild.onclick=function(){ w.close(); };
+      if(c.fmt!=="a4"&&c.fmt!=="std"){ bar.style.zoom=String(1/(parseFloat(w.getComputedStyle(d.body).zoom)||1)); }
+      d.body.insertBefore(bar, d.body.firstChild);
+      if(!d.getElementById("lxImprBarCss")){ var s2=d.createElement("style"); s2.id="lxImprBarCss"; s2.textContent=lxImprCss({fmt:"x"},"tk"); d.head.appendChild(s2); }
+      return;
+    }
+    if(fermerApres){ w.onafterprint=function(){ try{ w.close(); }catch(_){} }; }
+    w.print();
+    if(fermerApres) setTimeout(function(){ try{ if(!w.closed) w.close(); }catch(_){} }, 5000);
+  }catch(_e){}
+}
+// Logo prêt (borné) puis insertion dans un document déjà écrit
+function lxImprLogoDans(w, c, maxMs){
+  if(!c.logo||c.fmt==="std") return Promise.resolve();
+  return Promise.race([lxImprLogoPrep(), new Promise(function(r){ setTimeout(function(){ r(null); }, maxMs||1500); })]).then(function(L){
+    if(!L) return;
+    try{
+      var d=w.document;
+      if(c.fmt==="a4"){ var lg=d.querySelector(".lxA4Lg"); if(lg&&!lg.firstChild) lg.innerHTML=(c.col==="c")?('<img src="'+_lxImprEsc(L.orig)+'" class="'+(L.sombre?"lxA4Badge":"")+'" alt="">'):('<img src="'+L.gris+'" alt="">'); }
+      else if(!d.querySelector(".lxThLg")){ var im=d.createElement("img"); im.className="lxThLg"; im.src=L.nb; d.body.insertBefore(im, d.body.firstChild); }
+      return new Promise(function(r){ var ims=d.images, n=ims.length, k=0; if(!n){ r(); return; } for(var i=0;i<n;i++){ if(ims[i].complete){ if(++k>=n) r(); } else { ims[i].onload=ims[i].onerror=function(){ if(++k>=n) r(); }; } } setTimeout(r,800); });
+    }catch(_e){}
+  });
+}
+// Ticket d'essai : jamais un vrai ticket (aucun numéro, aucune signature, rien d'enregistré en caisse).
+function lxImprEssaiCorps(){
+  var S=window.SALON_CONFIG||{};
+  var h='<div class="lxEss">TICKET D’ESSAI — SANS VALEUR<br><span style="font-size:10px;font-weight:400">non enregistré en caisse</span></div>';
+  h+='<div class="lxTkHd" style="text-align:center;border-bottom:1px solid #000;padding-bottom:8px;margin-bottom:8px"><div style="font-weight:900;font-size:14px;letter-spacing:1px">'+_lxImprEsc(String(S.nom||"").toUpperCase())+'</div>';
+  if(S.sousTitre) h+='<div style="font-size:11px">'+_lxImprEsc(S.sousTitre)+'</div>';
+  h+='<div style="font-size:11px">'+_lxImprEsc(S.adresse||"")+'</div><div style="font-size:11px">'+_lxImprEsc((S.cp||"")+" "+(S.ville||""))+'</div></div>';
+  h+='<div style="text-align:center;margin-bottom:8px"><div style="font-weight:900;font-size:13px">Ticket d’essai (sans numéro)</div><div style="font-size:12px">'+new Date().toLocaleDateString("fr-FR")+' à '+new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"})+'</div></div>';
+  h+='<table class="lxTkLig" style="width:100%;border-collapse:collapse;font-size:11px;margin-bottom:8px"><tr style="border-top:1px solid #000;border-bottom:1px solid #000"><th style="text-align:left;padding:4px 0">Qté</th><th style="text-align:left">Désignation</th><th style="text-align:right">Total</th></tr>';
+  h+='<tr><td>1</td><td style="font-weight:700">PRESTATION D’EXEMPLE</td><td style="text-align:right">0.00</td></tr><tr><td>1</td><td style="font-weight:700">LIGNE DE TEST éèàç €</td><td style="text-align:right">0.00</td></tr></table>';
+  h+='<div class="lxTkTTC" style="display:flex;justify-content:space-between;font-weight:900;font-size:16px;padding:8px 0;border-bottom:1px solid #000"><span>Total :</span><span>0.00 €</span></div>';
+  h+='<div style="font-size:11px;margin-top:6px">Règle : |----|----|----|----|----|----|</div>';
+  if(S.noteTicket&&String(S.noteTicket).trim()) h+='<div style="font-size:10px;text-align:center;white-space:pre-line;margin-top:6px">'+_lxImprEsc(String(S.noteTicket).trim())+'</div>';
+  h+='<div class="lxEss">ESSAI — SANS VALEUR</div>';
+  return h;
+}
+function lxImprEssai(){
+  var c=lxImprCfg(); if(c.fmt==="std") c.fmt="t80";
+  var w=window.open("","_blank","width=420,height=700"); if(!w){ try{ showAlert("Autorisez l’ouverture de fenêtres pour imprimer.","warning"); }catch(_e){} return; }
+  w.document.write(lxImprDoc(lxImprEssaiCorps(),"Ticket d'essai",c,window._lxImprLogo)); w.document.close();
+  try{ if(typeof auditLog==="function") auditLog("IMPRESSION_ESSAI","Ticket d’essai sans valeur (format "+c.fmt+")"); }catch(_eA){}
+  lxImprLogoDans(w,c,1500).then(function(){ setTimeout(function(){ lxImprLancer(w,c,false); },200); });
+}
+// --- Carte de réglage (Paramètres › Caisse et paiements) ---
+function lxImprCarteHtml(){
+  var c=lxImprCfg(), on=function(k,v){ return c[k]===v?' lxSegOn':''; };
+  var seg=function(k,opts){ return '<span class="lxSeg">'+opts.map(function(o){ return '<button type="button" aria-pressed="'+(c[k]===o[0]?"true":"false")+'" class="lxSegB'+on(k,o[0])+'" onclick="lxImprChoisir(\''+k+'\',\''+o[0]+'\')">'+o[1]+'</button>'; }).join("")+'</span>'; };
+  var swLbl={logo:"Afficher le logo",apercu:"Aperçu avant impression",fort:"Texte renforcé"};
+  var sw=function(k){ return '<button type="button" aria-label="'+swLbl[k]+'" class="lxSw'+(c[k]?' lxSwOn':'')+'" aria-pressed="'+(c[k]?"true":"false")+'" onclick="lxImprChoisir(\''+k+'\','+(!c[k])+')"></button>'; };
+  var th=(c.fmt==="t80"||c.fmt==="t58"), dis=function(b){ return b?'':' inert style="opacity:.4;pointer-events:none"'; };
+  var h='<style>.lxSeg{display:inline-flex;flex-wrap:wrap;gap:6px}.lxSegB{padding:8px 11px;border-radius:9px;border:1px solid rgba(255,255,255,.18);background:transparent;color:var(--text,#fff);font-size:12.5px;cursor:pointer}.lxSegOn{background:linear-gradient(135deg,#e8c873,#a8862e)!important;color:#111!important;border-color:transparent!important;font-weight:800}.lxSw{width:40px;height:23px;border-radius:12px;border:none;background:#3a4560;position:relative;cursor:pointer;flex:none}.lxSw:after{content:"";position:absolute;left:3px;top:3px;width:17px;height:17px;border-radius:50%;background:#8a94a6}.lxSwOn{background:#d4a843}.lxSwOn:after{left:auto;right:3px;background:#111}.lxIRow{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.06);font-size:13.5px}.lxIRow small{display:block;font-size:11px;color:var(--text3)}</style>';
+  h+='<div class="ct">🖨️ Impression des tickets <span style="font-size:11px;color:var(--text3);font-weight:400">(cet appareil)</span></div>';
+  h+='<div style="font-size:12px;color:var(--text3);margin-bottom:8px">Quel type d’imprimante utilisez-vous sur cet appareil ?</div>';
+  h+=seg("fmt",[["a4","📄 Feuille A4"],["t80","🧾 Ticket 80 mm"],["t58","🧾 Ticket 58 mm"],["std","Comme avant"]]);
+  if(c.fmt==="std") h+='<div style="font-size:11.5px;color:#f3d98a;margin-top:6px">Aucun format choisi : les tickets s’impriment comme avant.</div>';
+  h+='<div class="lxIRow"'+dis(c.fmt==="a4")+'><span>Couleurs<small>Feuille A4 seulement</small></span>'+seg("col",[["c","Couleur"],["nb","Noir et blanc"]])+'</div>';
+  h+='<div class="lxIRow"'+dis(c.fmt!=="std")+'><span>Taille du texte</span>'+seg("sz",[["p","Petit"],["n","Normal"],["g","Grand"]])+'</div>';
+  h+='<div class="lxIRow"'+dis(c.fmt!=="std")+'><span>Afficher le logo<small>'+((window.SALON_CONFIG&&SALON_CONFIG.logo)?(String(SALON_CONFIG.logo).indexOf("data:image")===0?'Converti automatiquement pour l’impression':'Ce logo ne peut pas être imprimé : renvoyez-le dans Infos établissement'):'Aucun logo dans Infos établissement')+'</small></span>'+sw("logo")+'</div>';
+  h+='<div class="lxIRow"><span>Aperçu Luxyra avant d’imprimer<small>Désactivé : la fenêtre d’impression de l’appareil s’ouvre directement (c’est là qu’on choisit l’imprimante).</small></span>'+sw("apercu")+'</div>';
+  h+='<div class="lxIRow"'+dis(c.fmt!=="std")+'><span>Format des clôtures Z</span>'+seg("z",[["m","Comme les tickets"],["a4","A4"]])+'</div>';
+  h+='<div class="lxIRow"><span>Message en bas du ticket<small>Le même pour toutes vos caisses. Pas de mention fiscale ni de prix.</small></span><span style="font-size:12px;color:var(--gold)">Infos établissement › Note en bas des tickets</span></div>';
+  if(th){
+    var lg=lxImprLargeurs(c), opts=(c.fmt==="t58")?[["auto","Auto (48 mm)"],["44","44 mm"],["58","58 mm"]]:[["auto","Auto (72 mm)"],["64","64 mm"],["80","80 mm"]];
+    h+='<div style="font-size:12.5px;color:var(--text2);margin-top:10px;font-weight:700">⚙️ Réglages avancés (ticket thermique)</div>';
+    h+='<div class="lxIRow"><span>Largeur imprimable<small>Si le texte est coupé sur le bord ou trop petit</small></span>'+seg("larg",opts)+'</div>';
+    h+='<div class="lxIRow"><span>Texte renforcé<small>Plus lisible sur papier thermique</small></span>'+sw("fort")+'</div>';
+    h+='<div class="lxIRow"><span>Espace en fin de ticket<small>Évite que la dernière ligne soit coupée</small></span>'+seg("esp",[["0","Aucun"],["n","Normal"],["g","Grand"]])+'</div>';
+  }
+  h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button type="button" class="btn bs" onclick="lxImprEssai()">🧾 Imprimer un ticket d’essai</button></div>';
+  if(c.fmt!=="std"){
+    h+='<div style="font-size:11px;color:var(--text3);margin:12px 0 6px">👁️ Aperçu en direct</div><div id="lxImprPv" style="background:#0c0f16;border-radius:10px;padding:10px;display:flex;justify-content:center;overflow:hidden"></div>';
+  }
+  h+='<div style="font-size:11px;color:var(--text3);line-height:1.5;margin-top:8px">S’applique aux tickets, duplicatas et clôtures Z de cet appareil. L’imprimante se choisit dans la fenêtre d’impression de l’appareil : sur iPad elle doit être compatible AirPrint ; sur Android, un service d’impression (Mopria ou appli de la marque) est nécessaire. Coupe du papier et tiroir-caisse : réglages du pilote de l’imprimante sur ordinateur.</div>';
+  return h;
+}
+function lxImprApercuMaj(){
+  var z=document.getElementById("lxImprPv"); if(!z) return;
+  var c=lxImprCfg(); if(c.fmt==="std") return;
+  var fr=document.createElement("iframe"); fr.setAttribute("title","Aperçu du ticket"); fr.setAttribute("sandbox","allow-same-origin");
+  var Wpx=(c.fmt==="a4")?794:Math.round(lxImprLargeurs(c).papier*96/25.4)+10, ech=Math.min(1,(z.clientWidth-20)/Wpx); if(!(ech>0)) ech=0.5;
+  fr.style.cssText="width:"+Wpx+"px;height:"+(c.fmt==="a4"?1123:900)+"px;border:none;background:#fff;transform:scale("+ech+");transform-origin:top center;flex:none";
+  z.innerHTML=""; z.style.height=Math.round((c.fmt==="a4"?1123:900)*ech+20)+"px"; z.appendChild(fr);
+  var corps=lxImprEssaiCorps();
+  fr.srcdoc=lxImprDoc(corps,"Aperçu",c,window._lxImprLogo).replace("<body","<body style=\"margin:0 auto\"");
+  fr.onload=function(){ try{ var d=fr.contentDocument, hb=0; for(var i=0;i<d.body.children.length;i++){ var r=d.body.children[i].getBoundingClientRect(); if(r.bottom>hb) hb=r.bottom; }
+    if(c.fmt!=="a4"&&hb>0){ hb=Math.ceil(hb)+24; fr.style.height=hb+"px"; z.style.height=Math.round(hb*ech+20)+"px"; } }catch(_e){} };
+  if(c.logo&&!window._lxImprLogo) lxImprLogoPrep().then(function(L){ if(L) lxImprApercuMaj(); });
+}
+function lxImprChoisir(k,v){
+  if(v==="true") v=true; else if(v==="false") v=false;
+  lxImprSet(k,v);
+  var cd=document.getElementById("lxImprCard"); if(cd){ cd.innerHTML=lxImprCarteHtml(); setTimeout(lxImprApercuMaj,30); }
+}
+// Bande Z : format propre (ticket thermique ou A4) — mise en page seulement
+function lxImprCssZ(){
+  var c=lxImprCfg(); if(c.fmt==="std") return "";
+  var f=(c.z==="a4")?"a4":c.fmt;
+  if(f==="a4") return "@page{size:A4;margin:12mm}body{max-width:none!important;width:auto!important;font-size:12px!important}";
+  var lg=lxImprLargeurs(c), lay=(f==="t58")?300:420, zm=(lg.imp*96/25.4)/lay;
+  return "@page{size:"+lg.papier+"mm 297mm;margin:0}body{width:"+lay+"px!important;max-width:"+lay+"px!important;zoom:"+zm.toFixed(4)+"}.no-print{zoom:"+(1/zm).toFixed(4)+"}@media print{html,body{margin:0!important;padding:0!important}}";
+}
+
 function reprintTicket(id){
   var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}
   if(!a)return;
@@ -37346,14 +37602,19 @@ function reprintTicket(id){
   a.printed=true; // 2026-10-11 : indicateur local (le RDV encaissé est protégé ; la base refusait la mise à jour)
 
   var w=window.open("","_blank","width=380,height=650");if(!w)return;
+  var _ic=lxImprCfg(); // 2026-11-06 (7.0.2) : réglages d'impression de cet appareil (mise en page seulement)
+  if(_ic.fmt!=="std"){ w.document.write(lxImprDoc(buildTicketHTML(a, isDuplicate),"Ticket n\u00b0"+lxNumAff(a),_ic,window._lxImprLogo)); w.document.close(); }
+  else {
   var h="<html><head><title>Ticket n\u00b0"+lxNumAff(a)+"</title>";
   h+="<style>html{color-scheme:light!important}*,body,div,span,p,h1,h2,h3,td,th,tr{color:#000!important;background:transparent!important}body{font-family:'Courier New',monospace;padding:15px;max-width:340px;margin:0 auto;font-size:12px;line-height:1.5;background:#fff!important}";
   h+="table{width:100%;border-collapse:collapse}@media print{.no-print{display:none!important}body{padding:5px}}</style></head><body>";
   h+=buildTicketHTML(a, isDuplicate);
   h+="</body></html>";
   w.document.write(h);w.document.close();
+  }
+  try{ w.addEventListener("beforeprint",function(){ lxImprAvantPrint(w,_ic); }); }catch(_eBp){}
   // 2026-10-11 : duplicata numéroté et enregistré (signé côté serveur) + extrait de signature du ticket
-  var _taches=[lxSigRemplir(w.document, a.id, 3500)];
+  var _taches=[lxSigRemplir(w.document, a.id, 3500), lxImprLogoDans(w,_ic,1500)];
   // 2026-10-14 audit (NF525) : un duplicata doit être ENREGISTRÉ (numéroté, signé) avant d'être imprimé. Avant, un échec de
   // nf525_duplicata était ignoré et la copie partait à l'impression sans trace. Désormais : 2 essais, puis impression BLOQUÉE
   // avec un message clair (la fenêtre affiche la raison, aucune impression automatique).
@@ -37379,6 +37640,7 @@ function reprintTicket(id){
       try{ showAlert("Duplicata du ticket n\u00b0"+(a.tkNum||"--")+" non enregistr\u00e9 ("+String(window._lxDupErr||"r\u00e9seau")+") : impression bloqu\u00e9e. R\u00e9essayez une fois la connexion r\u00e9tablie.","warning"); }catch(_eS){}
       return;
     }
+    if(_ic.fmt!=="std"||_ic.apercu){ setTimeout(function(){ lxImprLancer(w,_ic,false); },200); return; } // 2026-11-06 (7.0.2)
     setTimeout(function(){w.print();},200);
   };
   Promise.all(_taches).then(_imprimer,_imprimer);
@@ -43613,7 +43875,7 @@ window.LX_NON_FISCAL_ACTIONS = window.LX_NON_FISCAL_ACTIONS || {
   JS_ERROR:1, JS_CONSOLE_ERROR:1, JS_ERROR_PUBLIC:1, DB_ERROR:1, NF525_SEAL_TRIGGER_FAIL:1,
   RDV_ANNULE:1, FIDELITE_POINT:1, SMS_ENVOYE:1, CONFIRM_SMS:1, CONFIRM_EMAIL:1,
   SMS_MODE_CHANGE:1, SMS_DEVICE_UNLINKED:1, CLIENT_MERGED:1, INVITATION_CLIENT:1,
-  BULK_CONSENT_ACTIVATE:1, BONS_CADEAUX_ONLINE_TOGGLE:1,
+  BULK_CONSENT_ACTIVATE:1, BONS_CADEAUX_ONLINE_TOGGLE:1, IMPRESSION_ESSAI:1,
   STRIPE_PRICE_FOUNDER_CREATED:1, FOUNDER_ATTRIBUTION:1,
   COMPTA_ACCOUNTS_UPDATE:1, EXPORT_EBP:1, EXPORT_FEC:1, RAPPORT_COMPTABLE:1, EXPORT_QUADRATUS:1,
   // Ajouts 2026-09-07/08-31 : actions de SUPERVISION, pas des evenements fiscaux.
