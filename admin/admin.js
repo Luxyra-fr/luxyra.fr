@@ -1449,7 +1449,7 @@ async function openChatConv(convId,salonId){
 async function chatMarquerLu(convId){
   var c=chatConv(convId);
   try{
-    await _sb.from('support_messages').update({read_by_admin:true}).eq('conversation_id',convId).eq('sender','client').eq('read_by_admin',false);
+    await _sb.from('support_messages').update({read_by_admin:true}).eq('conversation_id',convId).in('sender',['client','bot']).eq('read_by_admin',false); // 07/11 : le message d'escalade du bot comptait aussi comme non lu
     if(c&&c.unread_count_admin){ await _sb.from('support_conversations').update({unread_count_admin:0}).eq('id',convId); c.unread_count_admin=0; }
     var unread=0;(window.CHAT_CONVS||[]).forEach(function(x){if(x.status!=='resolved')unread+=(x.unread_count_admin||0);});
     window.ADMIN_UNREAD_CHAT=unread; var b=document.getElementById('badgeChat'); if(b) b.textContent=unread||'';
@@ -1470,7 +1470,7 @@ async function loadChatThread(){
     CHAT_MSGS=(r[0].data||[]).slice().reverse(); CHAT_NOTES=((r[1]&&!r[1].error&&r[1].data)||[]).slice().reverse();
     window.CHAT_MSGS_TOTAL=(r[0].count==null?CHAT_MSGS.length:r[0].count);
     chatRenderThread();
-    if(CHAT_MSGS.some(function(m){return m.sender==='client'&&!m.read_by_admin;})&&document.visibilityState!=='hidden'){
+    var _cv=chatConv(conv); if((CHAT_MSGS.some(function(m){return m.sender!=='admin'&&!m.read_by_admin;})||(_cv&&_cv.unread_count_admin>0))&&document.visibilityState!=='hidden'){ // 07/11 : compteur resté à 1 alors que tout était lu
       chatMarquerLu(conv); chatRenderListe();
     }
   }catch(e){ el.innerHTML='<div style="color:var(--red);font-size:12px">Erreur chargement : '+saEsc(e&&e.message||e)+'</div>'; }
@@ -5634,7 +5634,7 @@ async function asChargerSupport(id, convChoisie){
   h+='</div><div style="display:flex;gap:6px;margin-top:8px"><textarea id="asSupRep-'+id+'" rows="2" placeholder="Répondre à l’établissement…" style="flex:1;padding:8px;border-radius:8px;background:var(--bg3);color:var(--text);border:1px solid var(--border)"></textarea><button class="tb-btn primary" data-lx-click="asRepondreSupport(\''+saJs(id)+'\',\''+saJs(cur)+'\')">Envoyer</button></div>';
   el.innerHTML=h;
   var box=el.querySelector('div[style*="max-height:420px"]'); if(box) box.scrollTop=box.scrollHeight;
-  try{ await _sb.from("support_messages").update({read_by_admin:true}).eq("conversation_id",cur).eq("sender","client"); await _sb.from("support_conversations").update({unread_count_admin:0}).eq("id",cur); }catch(e){}
+  try{ await _sb.from("support_messages").update({read_by_admin:true}).eq("conversation_id",cur).in("sender",["client","bot"]).eq("read_by_admin",false); await _sb.from("support_conversations").update({unread_count_admin:0}).eq("id",cur); }catch(e){}
 }
 async function asRepondreSupport(id,conv){
   var t=document.getElementById("asSupRep-"+id); var msg=(t&&t.value||"").trim(); if(!msg) return;
