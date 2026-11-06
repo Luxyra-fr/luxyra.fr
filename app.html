@@ -36300,30 +36300,36 @@ function printTicketReceipt(){
   // showTicket depose desormais dans window._lastReceipt le HTML EXACT qu il affiche
   // (construit depuis la ligne scellee) -> imprime == ecran == duplicata.
   var R=(typeof window!=="undefined")?window._lastReceipt:null;
+  // 2026-11-06 (NF525, audit impression) : le ticket original ne sort qu'UNE fois. À partir du 2e clic sur « Imprimer »,
+  // la copie passe par reprintTicket() = DUPLICATA numéroté et enregistré (nf525_duplicata), impression bloquée si
+  // l'enregistrement échoue. Avant : chaque clic imprimait un nouvel original, sans trace.
+  if(R && R.nbImpr>0){
+    var _sidD=R.sid||null, _rowD=null;
+    if(_sidD){ for(var _di=0;_di<AP.length;_di++){ if(AP[_di].id===_sidD){ _rowD=AP[_di]; break; } } }
+    if(_rowD){ _rowD.printed=true; reprintTicket(_sidD); return; }
+    try{ showAlert("Ce ticket a déjà été imprimé. Pour une copie, utilisez « Duplicata » dans l’historique des tickets.","warning"); }catch(_eA){}
+    return;
+  }
   var body=null,tkNumP=tkN,apptIdP=null;
   if(R&&(R.html||R.a)){
     tkNumP=R.tkNum||tkN; apptIdP=R.apptId||null; body=R.html||null;
     if(!body){ try{ body=buildTicketHTML(R.a,false); }catch(_eB){ body=null; } }
   }
   if(body===null){
-    // Repli legacy (aucun snapshot : ne peut pas arriver depuis la modale du recu).
-    var total=0;(_tk.items||[]).forEach(function(it){total+=it.price*it.qty-it.remise;});total-=(_tk.remise||0);
-    var metStr=_tk.payments?_tk.payments.map(function(p){return p.method+" "+p.amount.toFixed(2)+"\u20ac"}).join(" + "):"CB";
-    var now=new Date();
-    var tempA={
-      id:_tk.apptId||"temp",cId:_tk.cId,stId:_tk.stId,sId:_tk.items&&_tk.items[0]?_tk.items[0].sId:null,
-      date:TD,time:now.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit",second:"2-digit"}),
-      pr:total,met:metStr,items:_tk.items||[],remise:_tk.remise||0,bonVenduRemise:_tk.bonVenduRemise||0,offertRemise:_tk.offertRemise||0,
-      acompte:_tk.acompte||0,acompteMode:_tk.acompteMode||"",
-      payments:_tk.payments||null,tkNum:tkN
-    };
-    apptIdP=_tk.apptId||null;
-    body=buildTicketHTML(tempA,false);
+    // 2026-11-06 (NF525) : sans copie du reçu affiché, on n'imprime plus d'original reconstruit (l'ancien repli relisait _tk,
+    // déjà remis à zéro, et pouvait sortir plusieurs originaux sans trace). La copie se fait par « Duplicata » dans l'historique.
+    try{ showAlert("Impression impossible depuis cet \u00e9cran. Utilisez \u00ab Duplicata \u00bb dans l\u2019historique des tickets.","warning"); }catch(_eL){}
+    return;
   }
   // Marquage « imprime » : semantique INCHANGEE (seul un RDV encaisse etait marque).
   // `printed` n est PAS un champ protege par appointments_nf525_protect.
   if(apptIdP){for(var pi2=0;pi2<AP.length;pi2++){if(AP[pi2].id===apptIdP){AP[pi2].printed=true;break;}}}
   var w=window.open("","_blank","width=380,height=650");if(!w)return;
+  // 2026-11-06 : original émis -> les impressions suivantes seront des duplicatas (voir plus haut). La ligne scellée
+  // (vente avec ou sans RDV) est marquée « imprimée » en mémoire, comme le fait reprintTicket : une réimpression
+  // depuis l'historique sera elle aussi un duplicata.
+  if(R){ R.nbImpr=(R.nbImpr||0)+1;
+    if(R.sid){ for(var _pi=0;_pi<AP.length;_pi++){ if(AP[_pi].id===R.sid){ AP[_pi].printed=true; break; } } } }
   var h="<html><head><title>Ticket #"+tkNumP+"</title>";
   // FIX 2026-05-12 : contraste renforcé pour impression — tout en font-weight 600
   // + pure black + line-height plus aéré pour lisibilité petits caractères
@@ -36347,7 +36353,10 @@ function printTicketReceipt(){
       setTimeout(function(){ try{ if(!w.closed) w.close(); }catch(_){} }, 5000);
     }catch(e){}
   },200); };
-  if(apptIdP) lxSigRemplir(w.document, apptIdP, 3500).then(_imprimer,_imprimer); else _imprimer();
+  // 2026-11-06 (NF525) : n° légal + extrait de signature aussi pour une VENTE DIRECTE (sans RDV) : la ligne scellée (R.sid)
+  // sert d'identifiant. Avant, seul un RDV (apptIdP) les recevait : l'original d'une vente directe sortait « provisoire ».
+  var _idImpr=apptIdP||(R&&R.sid)||null;
+  if(_idImpr) lxSigRemplir(w.document, _idImpr, 3500).then(_imprimer,_imprimer); else _imprimer();
 }
 
 function showTicket(method,total){
@@ -36397,7 +36406,7 @@ function showTicket(method,total){
   // apptId reste _tk.apptId (et NON recA.id) : le marquage `printed` garde exactement
   // la semantique d avant le fix (seuls les RDV etaient marques imprimes).
   try{
-    window._lastReceipt={html:ticketHtmlFull,tkNum:(recA.tkNum||tkN),apptId:(_tk.apptId||null),
+    window._lastReceipt={html:ticketHtmlFull,tkNum:(recA.tkNum||tkN),apptId:(_tk.apptId||null),sid:(srcA?srcA.id:null),nbImpr:0,
       a:(function(){try{return JSON.parse(JSON.stringify(recA));}catch(_e){return recA;}})()};
   }catch(_eSnap){ window._lastReceipt=null; }
   
@@ -36812,7 +36821,7 @@ function exportTicketsCSV(){
 // (caractères 3, 7, 13 et 19 de la signature base64url), version du logiciel, nombre de lignes,
 // duplicatas numérotés. La signature est calculée côté serveur ; le ticket papier en reprend l'extrait.
 // =====================================================================
-var LX_VERSION="7.0.0", LX_CAISSE="C01"; // 2026-11-05 (7.0.0) : VERSION MAJEURE (BOI § 340) — requalification des évolutions de sécurisation 6.4 → 6.8.10, nouvelle attestation (racine 7), aucun changement fonctionnel de la caisse ; // 2026-11-05 (6.8.10) : contre-audits 6.8.9 / franchise et audit des problèmes anciens — trace serveur des tickets provisoires renvoyée (JET 125), liste des provisoires figée dans la Z, bons cadeaux à 0 % conservés, table unique des moyens de paiement, n° légal dans le compte client, duplicata de Z strict, PS retiré, config en objet. // 2026-11-05 (6.8.9) : audit v2 — trame « simulation » en mode test, prix unitaire, suivi des tickets provisoires, purge d'essai sans coupure de déclencheur. // 2026-11-05 (6.8.8) : n° légal imprimé, notice et contrôle serveur des archives (audit du 05/11). // 2026-10-29 (-9) : 6.8.7 = factures clients, réserves du contre-audit du lot 4 (lot 4b) : bon à usage unique = ligne « Bon cadeau … (réglé lors de l'achat du bon) » (jamais une remise, TVA acquittée à la vente du bon), remise de ligne détaillée (prix unitaire brut, remise, net) sur la facture et le XML EN 16931, numérotation F-/A- unique expliquée ; aucun calcul de caisse modifié (version MINEURE, dossier docs/dossier-attestation-version-mineure-6.8.7.md) ; 2026-10-28 (-8) : 6.8.6 = protections après enregistrement (lot 4 de l'audit indépendant : M4 colonnes figées des tickets, annulation = contre-ticket ; M10 bons cadeaux : solde dérivé des tickets, journal scellé ; M9 conditions des devis ; mineurs : FEC test, rapport / FEC, lien bon-ticket, Stripe, arrondis, factures clients). // 2026-10-28 : 6.8.5 = règle TVA UNIQUE dans tous les documents (lot 3 de l'audit indépendant, constats M1/M2/M3) : HT et TVA = somme, par taux, des montants enregistrés sur chaque ticket (Z, clôtures, rapport, Excel, ZIP, FEC, EBP / Quadratus, e-mail au comptable, statistiques) ; une ligne de TVA par taux sur le ticket imprimé et le duplicata ; ventilation figée dans le ticket (raw_data.lxTva, hors empreinte) ; documents d'une période passée calculés avec les valeurs ENREGISTRÉES (jamais au taux actuel). Formats d'empreinte, chaînage, signatures, numérotation et JET inchangés (BOI-TVA-DECLA-30-10-30 § 340 : version MINEURE). 2026-10-28 (-6) : 6.8.4 = corrections du contre-audit 3 (6.8.0 à 6.8.3 jamais publiées) : forçage de clôture soumis à un délai serveur de 5 minutes entre deux contrôles (contrôle refait au moment du forçage, heure possible affichée), journées retenues de plus de 60 jours signalées sur la carte « Caisse » (déblocage par l'administrateur Luxyra). 2026-10-28 (-5) : 6.8.3 = corrections du contre-audit final (6.8.0 à 6.8.2 jamais publiées) : journée retenue (ventes encaissées non transmises) -> Z refusée avec cause et marche à suivre, forçage tracé par un administrateur (lx_z_forcer), clôtures dans l'ordre des dates, carte « Caisse » de l'accueil ; date réelle d'une vente reportée SCELLÉE dans le ticket (items[0].lxRep, champ couvert par l'empreinte, format inchangé) ; exports à la date du journal avec la liste des ventes reportées ; seuil de version du serveur 6.8.3 (BOI-TVA-DECLA-30-10-30 § 340 : version MINEURE). 2026-10-28 (-4) : 6.8.2 = corrections du contre-audit (6.8.0 et 6.8.1 jamais publiées) : un ticket encaissé n'est plus jamais abandonné par la file de secours (vente d'une journée déjà close enregistrée sur la journée ouverte, date réelle de vente en mention ; clôture forcée = ticket gardé en file), seuil de version de référence du serveur ; formats de hash, chaînage, signatures et clôtures inchangés (BOI-TVA-DECLA-30-10-30 § 340 : version MINEURE). 2026-10-28 (-3) : 6.8.1 = corrections de l'audit de la 6.8.0 (jamais publiée) : version transmise dans chaque ticket (raw_data.lxVersion) et contrôlée par le serveur, série de n° imprimés propre au serveur (900001+) exclue du compteur des appareils ; formats de hash, chaînage et signatures inchangés (BOI-TVA-DECLA-30-10-30 § 340). 2026-10-28 (-2) : 6.8.0 = version MINEURE (recettes encaissées en ligne enregistrées par le serveur au paiement confirmé, avec la MÊME chaîne de numérotation, empreinte, sceau et signature ; BOI-TVA-DECLA-30-10-30 § 340 : aucune fonction d'inaltérabilité, de sécurisation, de conservation ou d'archivage modifiée). 6.7.0 = version MINEURE (bons cadeaux à usage unique / multiple, CGI art. 256 ter) : formats de hash, chaînage et signatures inchangés (BOI-TVA-DECLA-30-10-30 § 340)
+var LX_VERSION="7.0.1", LX_CAISSE="C01"; // 2026-11-06 (7.0.1, MINEURE, accord d'Alexandre) : original imprimé une seule fois puis duplicata enregistré (reçu de fin d'encaissement), n° légal et signature aussi sur l'original d'une vente directe, « Conserver 6 ans » retiré du ticket client, commune d'une prestation à domicile ; aucun format d'empreinte, chaînage, signature, numérotation ni fonction serveur modifié ; // 2026-11-05 (7.0.0) : VERSION MAJEURE (BOI § 340) — requalification des évolutions de sécurisation 6.4 → 6.8.10, nouvelle attestation (racine 7), aucun changement fonctionnel de la caisse ; // 2026-11-05 (6.8.10) : contre-audits 6.8.9 / franchise et audit des problèmes anciens — trace serveur des tickets provisoires renvoyée (JET 125), liste des provisoires figée dans la Z, bons cadeaux à 0 % conservés, table unique des moyens de paiement, n° légal dans le compte client, duplicata de Z strict, PS retiré, config en objet. // 2026-11-05 (6.8.9) : audit v2 — trame « simulation » en mode test, prix unitaire, suivi des tickets provisoires, purge d'essai sans coupure de déclencheur. // 2026-11-05 (6.8.8) : n° légal imprimé, notice et contrôle serveur des archives (audit du 05/11). // 2026-10-29 (-9) : 6.8.7 = factures clients, réserves du contre-audit du lot 4 (lot 4b) : bon à usage unique = ligne « Bon cadeau … (réglé lors de l'achat du bon) » (jamais une remise, TVA acquittée à la vente du bon), remise de ligne détaillée (prix unitaire brut, remise, net) sur la facture et le XML EN 16931, numérotation F-/A- unique expliquée ; aucun calcul de caisse modifié (version MINEURE, dossier docs/dossier-attestation-version-mineure-6.8.7.md) ; 2026-10-28 (-8) : 6.8.6 = protections après enregistrement (lot 4 de l'audit indépendant : M4 colonnes figées des tickets, annulation = contre-ticket ; M10 bons cadeaux : solde dérivé des tickets, journal scellé ; M9 conditions des devis ; mineurs : FEC test, rapport / FEC, lien bon-ticket, Stripe, arrondis, factures clients). // 2026-10-28 : 6.8.5 = règle TVA UNIQUE dans tous les documents (lot 3 de l'audit indépendant, constats M1/M2/M3) : HT et TVA = somme, par taux, des montants enregistrés sur chaque ticket (Z, clôtures, rapport, Excel, ZIP, FEC, EBP / Quadratus, e-mail au comptable, statistiques) ; une ligne de TVA par taux sur le ticket imprimé et le duplicata ; ventilation figée dans le ticket (raw_data.lxTva, hors empreinte) ; documents d'une période passée calculés avec les valeurs ENREGISTRÉES (jamais au taux actuel). Formats d'empreinte, chaînage, signatures, numérotation et JET inchangés (BOI-TVA-DECLA-30-10-30 § 340 : version MINEURE). 2026-10-28 (-6) : 6.8.4 = corrections du contre-audit 3 (6.8.0 à 6.8.3 jamais publiées) : forçage de clôture soumis à un délai serveur de 5 minutes entre deux contrôles (contrôle refait au moment du forçage, heure possible affichée), journées retenues de plus de 60 jours signalées sur la carte « Caisse » (déblocage par l'administrateur Luxyra). 2026-10-28 (-5) : 6.8.3 = corrections du contre-audit final (6.8.0 à 6.8.2 jamais publiées) : journée retenue (ventes encaissées non transmises) -> Z refusée avec cause et marche à suivre, forçage tracé par un administrateur (lx_z_forcer), clôtures dans l'ordre des dates, carte « Caisse » de l'accueil ; date réelle d'une vente reportée SCELLÉE dans le ticket (items[0].lxRep, champ couvert par l'empreinte, format inchangé) ; exports à la date du journal avec la liste des ventes reportées ; seuil de version du serveur 6.8.3 (BOI-TVA-DECLA-30-10-30 § 340 : version MINEURE). 2026-10-28 (-4) : 6.8.2 = corrections du contre-audit (6.8.0 et 6.8.1 jamais publiées) : un ticket encaissé n'est plus jamais abandonné par la file de secours (vente d'une journée déjà close enregistrée sur la journée ouverte, date réelle de vente en mention ; clôture forcée = ticket gardé en file), seuil de version de référence du serveur ; formats de hash, chaînage, signatures et clôtures inchangés (BOI-TVA-DECLA-30-10-30 § 340 : version MINEURE). 2026-10-28 (-3) : 6.8.1 = corrections de l'audit de la 6.8.0 (jamais publiée) : version transmise dans chaque ticket (raw_data.lxVersion) et contrôlée par le serveur, série de n° imprimés propre au serveur (900001+) exclue du compteur des appareils ; formats de hash, chaînage et signatures inchangés (BOI-TVA-DECLA-30-10-30 § 340). 2026-10-28 (-2) : 6.8.0 = version MINEURE (recettes encaissées en ligne enregistrées par le serveur au paiement confirmé, avec la MÊME chaîne de numérotation, empreinte, sceau et signature ; BOI-TVA-DECLA-30-10-30 § 340 : aucune fonction d'inaltérabilité, de sécurisation, de conservation ou d'archivage modifiée). 6.7.0 = version MINEURE (bons cadeaux à usage unique / multiple, CGI art. 256 ter) : formats de hash, chaînage et signatures inchangés (BOI-TVA-DECLA-30-10-30 § 340)
 window.LX_SIG_CACHE=window.LX_SIG_CACHE||{};
 function _lxSigExtrait(sg){ sg=String(sg||""); return [3,7,13,19].map(function(i){ return sg.charAt(i-1)||""; }).join(""); }
 async function _lxSignerMaintenant(){
@@ -37057,6 +37066,10 @@ function buildTicketHTML(a, isDuplicate){
   }
   h+="<div style=\"font-size:12px\">Collaborateur: "+(sty?sty.n:"")+"</div>";
   h+="<div style=\"font-size:12px\">Client: "+clN+"</div>";
+  // 2026-11-06 : prestation à domicile -> lieu d'exécution (arrêté n° 83-50/A du 3 octobre 1983, note de prestation). Commune seule
+  // (code postal + ville tirés de l'adresse saisie), jamais l'adresse complète. Affichage seulement (hors empreinte).
+  try{ if(a&&a.lieu==="domicile"){ var _lxCm=String(a.adresse||"").match(/\b\d{5}\s+[^,\n\r]{2,60}/g), _lxCom=_lxCm?_lxCm[_lxCm.length-1].trim().match(/^(\d{5})\s+(.+)$/):null; // dernière correspondance (code postal en fin d'adresse)
+    h+="<div style=\"font-size:11px\">Prestation r\u00e9alis\u00e9e \u00e0 domicile"+(_lxCom?" : "+escapeHtml(_lxCom[1]+" "+_lxCom[2].trim()):"")+"</div>"; } }catch(_eLieu){}
   // 2026-10-11 (NF525 v2.3) : opérateur qui encaisse, type de document / d'opération, nature de la vente
   if(a.operator_name) h+="<div style=\"font-size:11px\">Op\u00e9rateur caisse : "+escapeHtml(String(a.operator_name))+"</div>";
   try{ var _nP=0,_nS=0; (a.items||[]).forEach(function(it){ if(!it||it.isSep||it.isAcompteData) return; if(it.isProd) _nP++; else _nS++; });
@@ -37251,7 +37264,7 @@ function buildTicketHTML(a, isDuplicate){
     h+="<div>Lignes : "+_nbL+" - Signature : <span class=\"lxSig\">"+_ex+"</span></div>"; }catch(_eS){}
   if(a.hash)h+="<div style=\"font-family:monospace;font-size:8px;color:#999;margin-top:4px\">R\u00e9f. : "+a.hash.slice(0,16)+"</div>";
   if(a.prevHash)h+="<div style=\"font-family:monospace;font-size:8px;color:#bbb\">Pr\u00e9c. : "+a.prevHash.slice(0,8)+"</div>";
-  h+="<div style=\"font-size:9px;color:#999\">Art. 286-I-3\u00b0 bis du CGI - Conserver 6 ans</div>";
+  h+="<div style=\"font-size:9px;color:#999\">Art. 286-I-3\u00b0 bis du CGI</div>"; // 2026-11-06 : « Conserver 6 ans » retiré du ticket client (obligation de l'établissement, LPF art. L102 B, pas du client)
   h+="</div>";
   if(_lxTr) h+="</div>"; // fin du conteneur de la trame de fond
 
