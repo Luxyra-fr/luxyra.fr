@@ -1505,7 +1505,7 @@ function chatPiecesHtml(p){
     var ch=String(x&&x.chemin||''); if(!/^[0-9a-f-]{36}\/[0-9a-f-]{36}\/[0-9a-f-]{36}\.(png|jpe?g|webp|pdf)$/i.test(ch)) return '';
     var nom=saEsc(x.nom||'pièce jointe'), taille=x.taille?' · '+Math.max(1,Math.round(x.taille/1024))+' Ko':'';
     if(x.type==='application/pdf') return '<span class="chatPj"><a href="#" data-pj="'+saEsc(ch)+'" data-lx-click="chatOuvrirPiece(this.dataset.pj);return false">📄 '+nom+saEsc(taille)+'</a></span>';
-    return '<span class="chatPj" title="'+nom+'"><img alt="'+nom+'" data-pj="'+saEsc(ch)+'" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" data-lx-click="chatOuvrirPiece(this.dataset.pj)"></span>';
+    return '<span class="chatPj" title="'+nom+'"><img alt="'+nom+'" data-pj="'+saEsc(ch)+'" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" data-lx-click="chatOuvrirPiece(this.dataset.pj)"></span>';
   }).join('')+'</div>';
 }
 async function chatUrlsSignees(chemins){
@@ -2605,6 +2605,9 @@ function _lxExpliquerErreur(msg, source, t){
   if(/refus[ée]?\s*\(RGPD\)|a refus[ée] (les )?sms|sans (accord|consentement)|n'a pas (donné son accord|consenti)/i.test(m)) return R('info','SMS non envoyé : le client n\'a pas donné son accord','Fonctionnement normal : Luxyra bloque les SMS aux clients qui n\'ont pas accepté d\'en recevoir (RGPD).','Rien à faire.');
   // 2026-10-15 : page publique pas chargée chez un visiteur (le message cite « Stripe=undefined » : ce n'est PAS un paiement)
   if(/SITE JS NON DEMARRE|boot_failed/i.test(m)) return R('surveiller','Page de réservation pas chargée chez un visiteur','Le site ne s\'est pas complètement chargé sur l\'appareil d\'un visiteur (connexion lente, page quittée ou mise à jour en cours). Aucun paiement n\'est concerné.','Rien à faire si c\'est isolé ; prévenir Claude si cela se répète.');
+  // 06/11/2026 : contrôle quotidien « établissement Pro sans Stripe Connect » = information (pas une panne) ; image « data: » = espace réservé, pas une panne
+  if(/stripe_connect_inactive|sans Stripe Connect actif/i.test(m)) return R('info','Établissement Pro sans compte Stripe connecté','Les réservations en ligne fonctionnent ; seuls les acomptes / empreintes en ligne seraient indisponibles. Signalé seulement si l\'établissement a activé un acompte ou une empreinte.','Rien à faire, sauf si l\'établissement veut encaisser des acomptes en ligne.');
+  if(/Resource load failed: <img> data:/i.test(m)) return R('info','Image d\'attente d\'une pièce jointe (corrigé le 06/11)','Petite image intégrée affichée avant la photo réelle d\'une pièce jointe du support. Sans effet pour l\'utilisateur.','Rien à faire.');
   if(/stripe/i.test(m)) return R('grave','Problème avec les paiements en ligne (Stripe)','Un paiement, un acompte ou un abonnement a pu échouer.','Regarder le détail ou prévenir Claude.');
   if(/permission denied|row-level security|RLS/i.test(m)) return R('surveiller','Accès aux données refusé','Une page a tenté de lire ou d\'écrire une donnée sans autorisation.','Prévenir Claude si cela se répète.');
   if(/does not exist|column|relation|function .* not exist|PGRST/i.test(m)) return R('grave','Élément manquant dans la base','Une fonction de l\'appli appelle un élément qui n\'existe pas : une fonctionnalité peut être en panne.','Prévenir Claude.');

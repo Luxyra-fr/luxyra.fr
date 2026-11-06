@@ -422,12 +422,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261105-11"></script>
+<script src="luxyra-supabase.js?v=20261106-1"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261105-11";
+  var attendu="20261106-1";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -486,6 +486,7 @@ console.log("LUXYRA v6.7");
     if(t && t !== window && t.tagName){
       var resUrl = t.src || t.href || "";
       // Skip les requêtes vers les CDNs publics non critiques (Google Fonts cache, etc.)
+      if(/^data:/i.test(resUrl)) return; // 06/11/2026 : une image « data: » intégrée ne dépend d'aucun réseau (ex. espace réservé d'une pièce jointe) : pas une panne
       if(/fonts\.(googleapis|gstatic)\.com|googletagmanager|tile\.openstreetmap|tile\.osm|basemaps\.cartocdn/.test(resUrl)) return; // 2026-10-13 : tuiles de carte (réseau lent) = bruit, sans effet
       _pushErr({
         type: "resource_error",
@@ -12243,9 +12244,10 @@ function rHome(){
   // 2026-10-27 : envoi au comptable en attente / bloqué (mois précédent non clôturé, écart, échec) — rien si tout va bien
   try{ if(!_lxNbBandeaux && typeof _lxEcCarteAccueil==="function"){ var _ecH=_lxEcCarteAccueil(); if(_ecH){ _lxNbBandeaux++; h+=_ecH; } } }catch(_eEc){}
   // 2026-10-10 : attestation de conformité de la caisse à signer (volet 2) — rappel sur l'accueil, masquable 7 jours
-  try{ if(!_lxNbBandeaux && window._lxAttStatut==="a_signer" && !window._lxVueAdmin && (typeof hasPermission!=="function"||hasPermission("settings")) && !(Number(localStorage.getItem("lx_att_masque_jusqu")||0)>Date.now())){
-    _lxNbBandeaux++;
-    h+='<div style="display:flex;align-items:center;gap:10px;background:#0e1a10;border:1.5px solid rgba(76,175,80,.6);box-shadow:0 4px 18px rgba(0,0,0,.5);border-radius:14px;padding:12px 14px;margin-bottom:12px"><div style="font-size:26px">\u270d\ufe0f</div><div style="flex:1;cursor:pointer" onclick="lxAttestationNF525()"><div style="font-weight:800;color:#7fc97f">Attestation de conformit\u00e9 de votre caisse \u00e0 signer</div><div style="font-size:12px;color:rgba(255,255,255,.85)">Document obligatoire \u00e0 pr\u00e9senter en cas de contr\u00f4le fiscal. Pr\u00e9-rempli, sign\u00e9 en 1 minute \u203a</div></div><button onclick="try{localStorage.setItem(\'lx_att_masque_jusqu\',String(Date.now()+7*864e5))}catch(e){};go(\'home\')" title="Me le rappeler plus tard" style="background:none;border:none;color:var(--text3);font-size:16px;cursor:pointer">\u2715</button></div>';
+  // 06/11/2026 : bandeau EMPILÉ (comme le contrat) — avant, il était masqué par tout autre bandeau (alertes de caisse, envoi au comptable…),
+  // et le masquage « plus tard » est propre à chaque version majeure (clé lx_att_masque_jusqu_v<majeure>).
+  try{ var _attMk="lx_att_masque_jusqu_v"+((window.LX_ATT&&LX_ATT.versionMajeure)||""); if(window._lxAttStatut==="a_signer" && !window._lxVueAdmin && (typeof hasPermission!=="function"||hasPermission("settings")) && !(Number(localStorage.getItem(_attMk)||0)>Date.now())){
+    h+='<div style="display:flex;align-items:center;gap:10px;background:#0e1a10;border:1.5px solid rgba(76,175,80,.6);box-shadow:0 4px 18px rgba(0,0,0,.5);border-radius:14px;padding:12px 14px;margin-bottom:12px"><div style="font-size:26px">\u270d\ufe0f</div><div style="flex:1;cursor:pointer" onclick="lxAttestationNF525()"><div style="font-weight:800;color:#7fc97f">Attestation de conformit\u00e9 de votre caisse \u00e0 signer</div><div style="font-size:12px;color:rgba(255,255,255,.85)">Document obligatoire \u00e0 pr\u00e9senter en cas de contr\u00f4le fiscal. Pr\u00e9-rempli, sign\u00e9 en 1 minute \u203a</div></div><button onclick="try{localStorage.setItem(\'lx_att_masque_jusqu_v\'+((window.LX_ATT&&LX_ATT.versionMajeure)||\'\'),String(Date.now()+7*864e5))}catch(e){};go(\'home\')" title="Me le rappeler plus tard" style="background:none;border:none;color:var(--text3);font-size:16px;cursor:pointer">\u2715</button></div>';
   } }catch(_eA){}
   // 2026-10-10 : demandes de RDV en ligne à valider (domicile / confirmation manuelle)
   try{ var _att=_lxRdvEnAttente(); if(_att.length && !window._lxVueAdmin){
@@ -18917,7 +18919,7 @@ function rSettings(){
     h+='<div class="ct">\ud83d\udd12 Conformit\u00e9 de la caisse (loi anti-fraude)</div>';
     h+='<div style="font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:14px">Votre caisse est <strong style="color:#7fc97f">conforme a la reglementation anti-fraude (art. 286-I-3 bis du CGI)</strong> (cha\u00eene cryptographique SHA-256, inalt\u00e9rabilit\u00e9, conservation 6 ans). T\u00e9l\u00e9chargez votre attestation et vos archives \u00e0 tout moment.</div>';
     h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
-    if(typeof lxAttConcerne!=="function"||lxAttConcerne()) h+='<button class="btn bs" style="padding:14px;font-size:13px;background:rgba(76,175,80,.1);color:#7fc97f;border:1px solid rgba(76,175,80,.3);font-weight:700" onclick="lxDownloadAttestationNF525()">\ud83d\udccb Mon attestation</button>';
+    if(typeof lxAttConcerne!=="function"||lxAttConcerne()) h+='<button class="btn bs" style="padding:14px;font-size:13px;background:rgba(76,175,80,.1);color:#7fc97f;border:1px solid rgba(76,175,80,.3);font-weight:700" onclick="lxDownloadAttestationNF525()">\ud83d\udccb Mon attestation'+(window._lxAttStatut==="a_signer"?' <span style="background:#e53935;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;margin-left:4px">\u00e0 signer</span>':'')+'</button>';
     else h+='<div style="padding:10px;font-size:11px;color:var(--text3);border:1px dashed rgba(255,255,255,.15);border-radius:10px;text-align:center">Attestation non requise<br>(franchise de TVA)</div>';
     h+='<button class="btn bs" style="padding:14px;font-size:13px;background:rgba(76,175,80,.1);color:#7fc97f;border:1px solid rgba(76,175,80,.3);font-weight:700" onclick="lxDownloadArchiveNF525()">\ud83d\udce5 Archive du mois</button>';
     h+='</div>';
@@ -41198,6 +41200,12 @@ async function lxAttStatutCharger(){
   } catch(x) { window._lxAttStatutCharge = false; }
 }
 setInterval(function(){ try { if (window._salonId && !window._lxAttStatutCharge) lxAttStatutCharger(); } catch(e) {} }, 6000);
+// 06/11/2026 : le statut n'était chargé qu'une fois par session -> une appli ouverte AVANT la signature du volet 1 par l'éditeur
+// restait sur « attente » jusqu'au redémarrage (cas réel : volet 2 v7 jamais proposé). Revérification toutes les 10 min et au
+// retour sur l'appli tant que le statut n'est pas définitif (signée / non concerné).
+function _lxAttRecharger(){ try { var st = window._lxAttStatut; if (!window._salonId || st === "signee" || st === "non_concerne") return; window._lxAttStatutCharge = false; lxAttStatutCharger(); } catch(e) {} }
+setInterval(_lxAttRecharger, 600000);
+try { document.addEventListener("visibilitychange", function(){ if (document.visibilityState === "visible") _lxAttRecharger(); }); } catch(e) {}
 window.lxDownloadAttestationNF525 = lxDownloadAttestationNF525;
 
 // =====================================================================
@@ -45805,7 +45813,7 @@ function refreshCurrentView(){
       var ch=String(x&&x.chemin||'');if(!/^[0-9a-f-]{36}\/[0-9a-f-]{36}\/[0-9a-f-]{36}\.(png|jpe?g|webp|pdf)$/i.test(ch))return '';
       var nom=esc(x.nom||'pièce jointe');
       if(x.type==='application/pdf')return '<span class="lxPj"><a href="#" data-pj="'+esc(ch)+'">📄 '+nom+'</a></span>';
-      return '<span class="lxPj"><img alt="'+nom+'" data-pj="'+esc(ch)+'" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></span>';
+      return '<span class="lxPj"><img alt="'+nom+'" data-pj="'+esc(ch)+'" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></span>';
     }).join('')+'</div>';
   }
   async function urlsSignees(ch){
