@@ -37669,7 +37669,7 @@ async function _lxDirJob(octets, info){
   var ch=_lxDirChoix(d); if(!ch) throw _lxDirErr("incompatible");
   var reserve=false;
   try{
-    try{ if(!d.opened) await _lxDirDelai(d.open(), 5000); }catch(e){ if(e&&e.code) throw e; throw _lxDirErr((e&&e.name==="SecurityError")?"refus":(e&&e.name==="NotFoundError")?"absente":"occupee", e); }
+    try{ if(!d.opened) await _lxDirDelai(d.open(), 5000); }catch(e){ if(e&&typeof e.code==="string") throw e; /* 2026-11-07 : seules nos erreurs (code texte) passent telles quelles ; les DOMException (code numérique) sont traduites */ throw _lxDirErr((e&&e.name==="SecurityError")?"refus":(e&&e.name==="NotFoundError")?"absente":"occupee", e); }
     try{ if(!d.configuration||d.configuration.configurationValue!==ch.conf) await _lxDirDelai(d.selectConfiguration(ch.conf), 5000); }catch(e){ throw _lxDirErr("occupee", e); } // 2026-11-07 : borné (5 s)
     try{ await _lxDirDelai(d.claimInterface(ch.itf), 5000); reserve=true; }catch(e){ if(e&&e.code==="delai") throw _lxDirErr("occupee", e); throw _lxDirErr((e&&e.name==="NotFoundError")?"absente":"occupee", e); }
     if(ch.alt){ try{ await _lxDirDelai(d.selectAlternateInterface(ch.itf, ch.alt), 5000); }catch(_eA){} } // 2026-11-07 : borné (5 s)
@@ -37683,7 +37683,7 @@ async function _lxDirJob(octets, info){
         var r;
         info.incertain=true;
         try{ r=await _lxDirDelai(d.transferOut(ch.ep, octets.subarray(pos, fin)), 10000); }
-        catch(e){ if(e&&e.code) throw e; throw _lxDirErr((e&&e.name==="NotFoundError")?"absente":"transfert", e); }
+        catch(e){ if(e&&typeof e.code==="string") throw e; /* 2026-11-07 : seules nos erreurs (code texte) passent telles quelles ; les DOMException (code numérique) sont traduites */ throw _lxDirErr((e&&e.name==="NotFoundError")?"absente":"transfert", e); }
         var n=Math.max(0, Math.min(fin-pos, Number(r&&r.bytesWritten)||0));
         info.incertain=false; info.envoye+=n; pos+=n;
         if(!r||r.status!=="ok") throw _lxDirErr("transfert");
@@ -38020,15 +38020,18 @@ function lxDirectRepliFenetre(corps, titre, gabarit){
 // Ticket (original ou duplicata) en direct. o = {corps, id, titre, gabarit, avant(doc) -> Promise, verifier() -> bool, original}
 async function lxDirectTicket(o){
   var _jt=_lxDirPrendre(); // 2026-11-07 : jeton + garde-fou 60 s
+  var _envoiLance=false, _verifOk=!o.verifier, doc=null; // 2026-11-07 : repli sûr en cas d'erreur imprévue
   try{
-    var c=lxImprCfg(), doc=lxDirectDoc(o.corps), logo=null;
+    var c=lxImprCfg(), logo=null; doc=lxDirectDoc(o.corps);
     var taches=[];
     if(o.id) taches.push(lxSigRemplir(doc, o.id, 3500)); // n° légal + extrait de signature, AVANT impression (comme la fenêtre)
     if(o.avant) taches.push(o.avant(doc));                // duplicata : enregistrement obligatoire AVANT impression
     taches.push(lxEscLogo(c).then(function(v){ logo=v; }));
     await Promise.all(taches.map(function(p){ return Promise.resolve(p).catch(function(){}); }));
     if(o.verifier&&!o.verifier()) return; // duplicata non enregistré : RIEN n'est envoyé
+    _verifOk=true;
     var octets=lxEscposDepuisDoc(doc, c, logo);
+    _envoiLance=true; // 2026-11-07 : à partir d'ici, des octets peuvent partir
     var r=await lxDirectEnvoyer(octets);
     if(r.ok){ try{ if(typeof toast==="function") toast("🧾 Ticket envoyé à l’imprimante","success"); }catch(_eT){} return; }
     if(!r.sorti){ // rien n'est sorti (aucun transfert lancé, ou refus net de l'imprimante) : même document par la fenêtre
@@ -38038,7 +38041,10 @@ async function lxDirectTicket(o){
       // exemplaire automatique (risque de deux originaux) ; la copie se fait par un duplicata enregistré, proposé ici.
       lxDirectProposerDup(o.id, r.msg);
     }
-  } catch(e){ try{ if(typeof toast==="function") toast("Impression directe : erreur ("+((e&&e.message)||e)+")","warning"); }catch(_eX){} }
+  } catch(e){ try{ if(typeof toast==="function") toast("Impression directe : erreur ("+((e&&e.message)||e)+")","warning"); }catch(_eX){}
+    // 2026-11-07 (contre-vérification 2, point 2) : erreur imprévue AVANT tout envoi -> rien n'est sorti : même document par la fenêtre
+    // (l'original n'est pas perdu) ; après le début de l'envoi -> duplicata proposé (jamais de second original).
+    try{ if(!_envoiLance && _verifOk && doc && doc.body) lxDirectRepliFenetre(doc.body.innerHTML, o.titre, o.gabarit); else if(_envoiLance) lxDirectProposerDup(o.id, (e&&e.message)||"erreur"); }catch(_eR){} }
   finally{ _lxDirRendre(_jt); }
 }
 // 2026-11-07 : impression interrompue alors que le ticket a pu sortir -> message + bouton « Imprimer un duplicata » (enregistré,
