@@ -37586,6 +37586,8 @@ function lxImprCarteHtml(){
     h+='<div style="font-size:11px;color:var(--text3);margin:12px 0 6px">👁️ Aperçu en direct</div><div id="lxImprPv" style="background:#0c0f16;border-radius:10px;padding:10px;display:flex;justify-content:center;overflow:hidden"></div>';
   }
   h+='<div style="font-size:11px;color:var(--text3);line-height:1.5;margin-top:8px">S’applique aux tickets, duplicatas et clôtures Z de cet appareil. L’imprimante se choisit dans la fenêtre d’impression de l’appareil : sur iPad elle doit être compatible AirPrint ; sur Android, un service d’impression (Mopria ou appli de la marque) est nécessaire. Coupe du papier et tiroir-caisse : réglages du pilote de l’imprimante sur ordinateur.</div>';
+  // 2026-11-07 : avec l'impression directe USB disponible, la phrase sur le pilote ne vaut que pour l'impression par la fenêtre
+  try{ if(lxDirectDispo()) h=h.replace("Coupe du papier et tiroir-caisse : réglages du pilote de l’imprimante sur ordinateur.","Avec la fenêtre d’impression, la coupe du papier et le tiroir-caisse dépendent des réglages du pilote de l’imprimante sur ordinateur ; avec l’impression directe USB (ci-dessous), Luxyra les commande lui-même."); }catch(_eTx){}
   try{ h+=lxDirectCarteHtml(); }catch(_eDir){} // 2026-11-06 : impression directe USB et tiroir-caisse
   return h;
 }
@@ -37623,11 +37625,17 @@ function lxImprCssZ(){
 // (nf525_duplicata) : mêmes mentions, mêmes montants, même numéro. Seul le moyen d'envoi change (USB direct au lieu de la
 // fenêtre d'impression). Règles NF525 conservées : original une seule fois (window._lastReceipt.nbImpr), réimpression =
 // duplicata enregistré, impression BLOQUÉE si le duplicata n'est pas enregistré. Un original dont aucun octet n'est sorti
-// peut repartir par la fenêtre ; dès qu'un octet est parti vers l'imprimante, plus jamais (copie = « Duplicata »).
+// peut repartir par la fenêtre ; dès qu'un octet est parti (ou a pu partir : délai dépassé ou erreur pendant l'envoi), plus jamais
+// (copie = « Duplicata » enregistré, proposé à l'écran). 2026-11-07 : délais sur tous les appels (USB, duplicata 15 s), garde-fou 60 s.
 // Mode direct désactivé (par défaut) : rien ne change, l'impression passe par la fenêtre comme avant.
 // Compatibilité : Chrome / Edge 61+ (iMac El Capitan = Chrome 103 maximum) : aucune API ni syntaxe postérieure à Chrome 103.
 // =====================================================================
-var _lxDir={dev:null, occupe:false, file:Promise.resolve(), init:false};
+var _lxDir={dev:null, occupe:false, file:Promise.resolve(), init:false, jeton:0};
+// 2026-11-07 (contre-vérification) : « occupé » posé avec un jeton et un garde-fou de 60 s — une impression bloquée
+// (réseau ou USB muet) n'empêche jamais la suivante. Le garde-fou ne libère que SON jeton (jamais celui d'un envoi plus récent).
+var LX_DIR_GARDE_MS=60000, LX_DIR_DUP_MS=15000;
+function _lxDirPrendre(){ var j=++_lxDir.jeton; _lxDir.occupe=true; var t=setTimeout(function(){ if(_lxDir.jeton===j) _lxDir.occupe=false; }, LX_DIR_GARDE_MS); return {j:j, t:t}; }
+function _lxDirRendre(k){ try{ clearTimeout(k.t); }catch(_e){} if(_lxDir.jeton===k.j) _lxDir.occupe=false; }
 function lxDirectDispo(){ try{ return !!(typeof navigator!=="undefined"&&navigator.usb&&typeof navigator.usb.requestDevice==="function"); }catch(_e){ return false; } }
 // Prête = réglage actif + imprimante autorisée et branchée (connue de Chrome). Décision SYNCHRONE : sinon impression par la fenêtre.
 function lxDirectPret(){ try{ return lxDirectDispo()&&lxImprCfg().direct===true&&!!_lxDir.dev; }catch(_e){ return false; } }
@@ -37653,7 +37661,7 @@ function _lxDirErr(code, e){
     delai:"l’imprimante ne répond pas (plus de papier ? capot ouvert ?)", transfert:"envoi interrompu (câble débranché ou imprimante éteinte ?)"};
   var x=new Error(m[code]||String(code)); x.code=code; x.cause0=e&&(e.name||e.message)||""; return x;
 }
-function _lxDirDelai(p, ms){ return new Promise(function(res, rej){ var t=setTimeout(function(){ rej(_lxDirErr("delai")); }, ms); p.then(function(v){ clearTimeout(t); res(v); }, function(e){ clearTimeout(t); rej(e); }); }); }
+function _lxDirDelai(p, ms, err){ return new Promise(function(res, rej){ var t=setTimeout(function(){ rej(err||_lxDirErr("delai")); }, ms); Promise.resolve(p).then(function(v){ clearTimeout(t); res(v); }, function(e){ clearTimeout(t); rej(e); }); }); }
 // Un envoi = ouvrir, réserver l'interface, envoyer par blocs, libérer, fermer. L'interface n'est JAMAIS gardée entre deux envois
 // (la fenêtre d'impression du système, utilisée pour les Z, peut ainsi toujours accéder à l'imprimante).
 async function _lxDirJob(octets, info){
@@ -37662,16 +37670,25 @@ async function _lxDirJob(octets, info){
   var reserve=false;
   try{
     try{ if(!d.opened) await _lxDirDelai(d.open(), 5000); }catch(e){ if(e&&e.code) throw e; throw _lxDirErr((e&&e.name==="SecurityError")?"refus":(e&&e.name==="NotFoundError")?"absente":"occupee", e); }
-    try{ if(!d.configuration||d.configuration.configurationValue!==ch.conf) await d.selectConfiguration(ch.conf); }catch(e){ throw _lxDirErr("occupee", e); }
+    try{ if(!d.configuration||d.configuration.configurationValue!==ch.conf) await _lxDirDelai(d.selectConfiguration(ch.conf), 5000); }catch(e){ throw _lxDirErr("occupee", e); } // 2026-11-07 : borné (5 s)
     try{ await _lxDirDelai(d.claimInterface(ch.itf), 5000); reserve=true; }catch(e){ if(e&&e.code==="delai") throw _lxDirErr("occupee", e); throw _lxDirErr((e&&e.name==="NotFoundError")?"absente":"occupee", e); }
-    if(ch.alt){ try{ await d.selectAlternateInterface(ch.itf, ch.alt); }catch(_eA){} }
+    if(ch.alt){ try{ await _lxDirDelai(d.selectAlternateInterface(ch.itf, ch.alt), 5000); }catch(_eA){} } // 2026-11-07 : borné (5 s)
+    // 2026-11-07 (contre-vérification) : info.incertain = un transfert a été lancé sans réponse définitive (délai dépassé, erreur
+    // pendant l'envoi) : des octets ont PU partir -> jamais de repli automatique par la fenêtre (risque de deux originaux).
+    // Écriture partielle (bytesWritten < taille du bloc) : le reste est renvoyé ; 3 envois de suite sans progrès = interruption.
     var BLOC=1024;
     for(var i=0;i<octets.length;i+=BLOC){
-      var r;
-      try{ r=await _lxDirDelai(d.transferOut(ch.ep, octets.subarray(i, Math.min(octets.length, i+BLOC))), 10000); }
-      catch(e){ if(e&&e.code) throw e; throw _lxDirErr((e&&e.name==="NotFoundError")?"absente":"transfert", e); }
-      if(!r||r.status!=="ok") throw _lxDirErr("transfert");
-      info.envoye+=(Number(r.bytesWritten)||0);
+      var fin=Math.min(octets.length, i+BLOC), pos=i, vide=0;
+      while(pos<fin){
+        var r;
+        info.incertain=true;
+        try{ r=await _lxDirDelai(d.transferOut(ch.ep, octets.subarray(pos, fin)), 10000); }
+        catch(e){ if(e&&e.code) throw e; throw _lxDirErr((e&&e.name==="NotFoundError")?"absente":"transfert", e); }
+        var n=Math.max(0, Math.min(fin-pos, Number(r&&r.bytesWritten)||0));
+        info.incertain=false; info.envoye+=n; pos+=n;
+        if(!r||r.status!=="ok") throw _lxDirErr("transfert");
+        if(n===0){ if(++vide>=3) throw _lxDirErr("transfert"); } else vide=0;
+      }
     }
   } finally {
     if(reserve){ try{ await _lxDirDelai(d.releaseInterface(ch.itf), 2000); }catch(_eR){} }
@@ -37679,11 +37696,13 @@ async function _lxDirJob(octets, info){
   }
 }
 // Envoi sérialisé (tickets et tiroir à la suite, jamais mélangés). Ne rejette jamais : {ok, envoye, msg, code}
+// 2026-11-07 : r.sorti = des octets sont (ou ont pu être) partis vers l'imprimante (envoyés, ou transfert sans réponse définitive).
+// File : un envoi précédent qui ne rendrait pas la main au bout de 60 s ne bloque pas les suivants.
 function lxDirectEnvoyer(octets){
-  var info={envoye:0};
-  var run=function(){ return _lxDirJob(octets, info).then(function(){ return {ok:true, envoye:info.envoye, total:octets.length}; },
-    function(e){ return {ok:false, envoye:info.envoye, total:octets.length, code:(e&&e.code)||"transfert", msg:(e&&e.message)||"erreur"}; }); };
-  var p=_lxDir.file.then(run, run); _lxDir.file=p.then(function(){},function(){}); return p;
+  var info={envoye:0, incertain:false};
+  var run=function(){ return _lxDirJob(octets, info).then(function(){ return {ok:true, envoye:info.envoye, total:octets.length, sorti:true}; },
+    function(e){ return {ok:false, envoye:info.envoye, total:octets.length, incertain:!!info.incertain, sorti:(info.envoye>0||!!info.incertain), code:(e&&e.code)||"transfert", msg:(e&&e.message)||"erreur"}; }); };
+  var p=_lxDirDelai(_lxDir.file, LX_DIR_GARDE_MS).then(run, run); _lxDir.file=p.then(function(){},function(){}); return p;
 }
 // --- Jeu de caractères : CP858 (= CP850 + €, ESC t 19) ou Windows-1252 (ESC t 16) ---
 var LX_ESC_CP850="ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜø£Ø×ƒáíóúñÑªº¿®¬½¼¡«»░▒▓│┤ÁÂÀ©╣║╗╝¢¥┐└┴┬├─┼ãÃ╚╔╩╦╠═╬¤ðÐÊËÈıÍÎÏ┘┌█▄¦Ì▀ÓßÔÒõÕµþÞÚÛÙýÝ¯´­±‗¾¶§÷¸°¨·¹³²■ ";
@@ -37709,8 +37728,17 @@ function lxEscTranslit(s){
 function lxEscEncoder(s, cp){
   var t=_lxEscTable(cp==="1252"?"1252":"858"), r=[], x=lxEscTranslit(s);
   for(var i=0;i<x.length;i++){ var ch=x.charAt(i), k=ch.charCodeAt(0);
-    if(k>=0x20&&k<0x7F) r.push(k); else if(t[ch]!==undefined) r.push(t[ch]); else if(k===9) r.push(32); else if(k>=0x20) r.push(0x3F); }
+    if(k>=0x20&&k<0x7F) r.push(k); else if(t[ch]!==undefined) r.push(t[ch]); else if(k===9) r.push(32); else if(k>=0x20) _lxEscSansAccent(ch, t, r); }
   return r;
+}
+// 2026-11-07 : caractère absent du jeu (ex. « ő », « ș », « ā ») -> lettre sans accent (NFD, un caractère pour un : colonnes intactes ; normalize :
+// Chrome 34+) ; « ? » seulement si rien de lisible n'en sort.
+function _lxEscSansAccent(ch, t, r){
+  var d="", n=0;
+  try{ if(typeof ch.normalize==="function") d=ch.normalize("NFD").replace(/[\u0300-\u036f]/g,""); }catch(_e){ d=""; }
+  for(var j=0;j<d.length;j++){ var c2=d.charAt(j), k2=c2.charCodeAt(0);
+    if(k2>=0x20&&k2<0x7F){ r.push(k2); n++; } else if(t[c2]!==undefined){ r.push(t[c2]); n++; } }
+  if(!n) r.push(0x3F);
 }
 // --- DOM du ticket (buildTicketHTML) -> lignes de texte en colonnes ---
 var _LX_ESC_BLOC={DIV:1,P:1,H1:1,H2:1,H3:1,H4:1,H5:1,H6:1,TR:1,UL:1,OL:1,LI:1,SECTION:1,HEADER:1,FOOTER:1,CENTER:1,BLOCKQUOTE:1};
@@ -37767,7 +37795,7 @@ function lxEscTexte(root, cols){
     t.split("\n").map(function(x){ return x.trim(); }).forEach(function(x, i, arr){
       if(x===""&&!(b.pre&&i>0&&i<arr.length-1)) return;
       var w=(b.z===2)?Math.floor(cols/2):cols;
-      _lxEscCoupe(x, w).forEach(function(l){ out.push({t:l, a:b.a, b:b.b, z:b.z}); });
+      _lxEscCoupe(x, w).forEach(function(l, k){ out.push({t:l, a:b.a, b:b.b, z:b.z, suite:k>0}); });
     });
   };
   var addTxt=function(txt, ctx, blk){ if(!buf) buf={t:"", a:blk.a, b:false, z:0, pre:blk.pre}; if(/\S/.test(txt)){ if(ctx.b) buf.b=true; if(ctx.z>buf.z) buf.z=ctx.z; } buf.t+=txt; };
@@ -37784,12 +37812,20 @@ function lxEscTexte(root, cols){
     var nat=[], mot=[], hd=[], j;
     for(j=0;j<ncol;j++){ nat[j]=0; mot[j]=0; hd[j]=0; }
     rows.forEach(function(R){ var x=0; R.cells.forEach(function(C){ if(C.sp===1){ if(R.th){ hd[x]=Math.max(hd[x], C.t.length); C.t.split(" ").forEach(function(m){ mot[x]=Math.max(mot[x], m.length); }); } else nat[x]=Math.max(nat[x], C.t.length); } x+=C.sp; }); });
+    // 2026-11-07 (58 mm, 32 colonnes) : montants « 7.98 € » collés en « 7.98€ » quand la table ne tient pas sur la largeur
+    // (le « € » ne part plus seul à la ligne). 80 mm inchangé.
+    if(cols<=32){ var natTot=ncol-1; for(j=0;j<ncol;j++) natTot+=nat[j];
+      if(natTot>cols){ for(j=0;j<ncol;j++) nat[j]=0;
+        rows.forEach(function(R){ var x=0; R.cells.forEach(function(C){ if(!R.th){ C.t=C.t.replace(/(\d) (€|%)/g,"$1$2"); if(C.sp===1) nat[x]=Math.max(nat[x], C.t.length); } x+=C.sp; }); }); } }
     var fx=0; for(j=1;j<ncol;j++){ if(nat[j]>nat[fx]) fx=j; }
     // Largeurs : en-têtes sans mot coupé si la place le permet ; sinon (papier étroit) l'en-tête s'écrit sur une ligne, séparé par « | »
     var W=[], fixe=0, enLigne=false, minFx=Math.max(mot[fx], Math.min(Math.max(nat[fx], 1), 10));
     var dispo=function(){ return cols-(ncol-1)-fixe; };
     for(j=0;j<ncol;j++){ if(j===fx) continue; W[j]=Math.max(1, nat[j], mot[j]); fixe+=W[j]; }
-    if(dispo()<minFx){
+    // 2026-11-07 (58 mm) : si les en-têtes (« Quantité »…) élargissent leurs colonnes au point de couper les désignations, l'en-tête
+    // passe sur sa propre ligne (« | ») et les colonnes prennent la largeur de leur contenu. 80 mm inchangé.
+    var _elDispo=cols-(ncol-1); for(j=0;j<ncol;j++){ if(j!==fx) _elDispo-=Math.max(1, nat[j]); }
+    if(dispo()<minFx||(cols<=32&&dispo()<nat[fx]&&_elDispo>dispo())){
       enLigne=true; fixe=0; for(j=0;j<ncol;j++){ if(j===fx) continue; W[j]=Math.max(1, nat[j]); fixe+=W[j]; }
       minFx=Math.min(Math.max(nat[fx], 1), 10);
       var garde=0; while(dispo()<minFx&&garde++<200){ var gj=-1; for(j=0;j<ncol;j++){ if(j!==fx&&W[j]>3&&(gj<0||W[j]>W[gj])) gj=j; } if(gj<0) break; W[gj]--; fixe--; }
@@ -37806,7 +37842,7 @@ function lxEscTexte(root, cols){
       R.cells.forEach(function(C){ var w=0; for(var k=x;k<x+C.sp&&k<ncol;k++) w+=W[k]; w+=(C.sp-1); var lg=C.t?_lxEscCoupe(C.t, w):[""]; h=Math.max(h, lg.length); blocs.push({lg:lg, w:w, a:C.a, b:C.b}); x+=C.sp; });
       for(var i=0;i<h;i++){ var segs=[]; blocs.forEach(function(B, bi){ segs.push({t:_lxEscPad(B.lg[i]||"", B.w, B.a), b:!!(B.b&&B.lg[i])}); if(bi<blocs.length-1) segs.push({t:" ", b:false}); });
         var tot=0; segs.forEach(function(s){ tot+=s.t.length; }); if(tot<cols) segs.push({t:new Array(cols-tot+1).join(" "), b:false});
-        out.push({segs:segs}); }
+        out.push({segs:segs, suite:i>0}); }
       if(R.sB) pushSep(R.sB);
     });
   };
@@ -37919,8 +37955,26 @@ function lxEscLogo(c){
 // Document « hors écran » (aucun chargement de ressource) qui reçoit le ticket : lxSigRemplir / lxNumRemplir / lxDupSigRemplir
 // le complètent exactement comme la fenêtre d'impression.
 function lxDirectDoc(corps){ var d=document.implementation.createHTMLDocument("ticket"); d.body.innerHTML=corps; return d; }
+// 2026-11-07 (contre-vérification, LNE 5.3 / dossier 7.0.0) : la trame de fond « simulation » (.lxTrame, mode test et démonstration)
+// ne peut pas s'imprimer en filigrane sur une imprimante thermique : son texte (le MÊME que celui de la trame, lu dans le document)
+// est imprimé en tête, en pied et toutes les 8 lignes au plus (jamais au milieu d'une ligne de tableau ou d'un texte coupé).
+var LX_ESC_TRAME_PAS=8;
+function _lxEscTrameTxt(doc){
+  try{ var el=doc.querySelector(".lxTrame"); if(!el) return "";
+    var d=el.querySelector("div div"), t=String((d&&d.textContent)||el.textContent||"").split("\u00a0")[0];
+    t=lxEscTranslit(t).replace(/\s+/g," ").trim();
+    return t||"MODE TEST - SIMULATION - SANS VALEUR FISCALE";
+  }catch(_e){ return ""; }
+}
+function _lxEscAvecTrame(L, txt, cols){
+  if(!txt) return L;
+  var M=function(){ return _lxEscCoupe(txt, cols).map(function(l){ return {t:l, a:1, b:false, z:0, trame:true}; }); };
+  var res=M(), n=0;
+  L.forEach(function(l){ if((n>=LX_ESC_TRAME_PAS&&!l.suite)||n>=LX_ESC_TRAME_PAS+6){ res=res.concat(M()); n=0; } res.push(l); n++; });
+  return res.concat(M());
+}
 function lxEscposDepuisDoc(doc, c, logo){
-  var cols=lxDirectCols(c), L=lxEscTexte(doc.body, cols);
+  var cols=lxDirectCols(c), L=_lxEscAvecTrame(lxEscTexte(doc.body, cols), _lxEscTrameTxt(doc), cols);
   return lxEscOctets(L, {cols:cols, cp:c.dcp, coupe:c.coupe!==false, logo:logo||null});
 }
 // Repli : impression par la fenêtre, MÊME document (n° légal, signature, n° de duplicata déjà remplis). Si le navigateur bloque
@@ -37965,7 +38019,7 @@ function lxDirectRepliFenetre(corps, titre, gabarit){
 }
 // Ticket (original ou duplicata) en direct. o = {corps, id, titre, gabarit, avant(doc) -> Promise, verifier() -> bool, original}
 async function lxDirectTicket(o){
-  _lxDir.occupe=true;
+  var _jt=_lxDirPrendre(); // 2026-11-07 : jeton + garde-fou 60 s
   try{
     var c=lxImprCfg(), doc=lxDirectDoc(o.corps), logo=null;
     var taches=[];
@@ -37977,24 +38031,46 @@ async function lxDirectTicket(o){
     var octets=lxEscposDepuisDoc(doc, c, logo);
     var r=await lxDirectEnvoyer(octets);
     if(r.ok){ try{ if(typeof toast==="function") toast("🧾 Ticket envoyé à l’imprimante","success"); }catch(_eT){} return; }
-    if(!(r.envoye>0)){ // rien n'est sorti : même document par la fenêtre
+    if(!r.sorti){ // rien n'est sorti (aucun transfert lancé, ou refus net de l'imprimante) : même document par la fenêtre
       try{ if(typeof toast==="function") toast("Impression directe impossible : "+r.msg+". Impression par la fenêtre.","warning"); }catch(_eT2){}
       lxDirectRepliFenetre(doc.body.innerHTML, o.titre, o.gabarit);
-    } else { // une partie est sortie : jamais de second exemplaire (copie = duplicata enregistré)
-      try{ showAlert("L’impression s’est interrompue ("+r.msg+"). Le ticket a pu sortir en partie.\n\nPour remettre une copie au client : historique des tickets › « Duplicata ».","warning"); }catch(_eA){}
+    } else { // 2026-11-07 : une partie est (ou a pu être) sortie, y compris délai dépassé pendant l'envoi : jamais de second
+      // exemplaire automatique (risque de deux originaux) ; la copie se fait par un duplicata enregistré, proposé ici.
+      lxDirectProposerDup(o.id, r.msg);
     }
   } catch(e){ try{ if(typeof toast==="function") toast("Impression directe : erreur ("+((e&&e.message)||e)+")","warning"); }catch(_eX){} }
-  finally{ _lxDir.occupe=false; }
+  finally{ _lxDirRendre(_jt); }
+}
+// 2026-11-07 : impression interrompue alors que le ticket a pu sortir -> message + bouton « Imprimer un duplicata » (enregistré,
+// numéroté, par reprintTicket : même règle NF525 que l'historique). Jamais de réimpression automatique.
+function lxDirectProposerDup(id, msg){
+  var txt="L’impression s’est interrompue ("+String(msg||"erreur")+"). Le ticket a pu sortir en tout ou en partie : vérifiez l’imprimante.";
+  try{
+    var o=document.getElementById("lxDirDup"); if(o) o.parentNode.removeChild(o);
+    o=document.createElement("div"); o.id="lxDirDup";
+    o.style.cssText="position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:100000;background:#141824;border:1.5px solid #d4a843;border-radius:12px;padding:12px 14px;max-width:380px;width:calc(100% - 32px);box-shadow:0 10px 40px rgba(0,0,0,.6);font-family:inherit;color:#fff;font-size:13px;line-height:1.45";
+    o.innerHTML='<div style="font-weight:800;margin-bottom:6px">🖨️ Impression interrompue</div><div class="lxDirDupTxt" style="color:#c9cfdb;margin-bottom:10px"></div><div style="display:flex;gap:8px">'+(id?'<button type="button" class="btn" style="flex:1;background:linear-gradient(135deg,#e8c873,#a8862e);color:#111;font-weight:800;border:none;border-radius:9px;padding:10px">Imprimer un duplicata</button>':'')+'<button type="button" class="btn" style="'+(id?'':'flex:1;')+'background:transparent;color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:9px;padding:10px">Fermer</button></div>';
+    o.querySelector(".lxDirDupTxt").textContent=txt+(id?" Si le client n’a pas de ticket complet, imprimez un duplicata (enregistré et numéroté).":" Pour une copie : historique des tickets › « Duplicata ».");
+    var bs=o.getElementsByTagName("button");
+    if(id) bs[0].onclick=function(){ try{ o.parentNode.removeChild(o); }catch(_e){} try{ reprintTicket(id); }catch(_e2){} };
+    bs[bs.length-1].onclick=function(){ try{ o.parentNode.removeChild(o); }catch(_e){} };
+    document.body.appendChild(o);
+  }catch(_eO){ try{ showAlert(txt+"\n\nPour remettre une copie au client : historique des tickets › « Duplicata ».","warning"); }catch(_eA){} }
 }
 // Enregistrement d'un duplicata (même appel et mêmes essais que reprintTicket)
+// 2026-11-07 (contre-vérification) : délai maximum de 15 s (LX_DIR_DUP_MS). Dépassé = duplicata REFUSÉ (aucune impression,
+// DUPLICATA_REFUSE) et plus aucun nouvel essai lancé ensuite (pas de duplicata enregistré en arrière-plan après le refus).
 function _lxDirDupEnregistrer(a){
   var _op=(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR)?((CURRENT_OPERATOR.prenom||"")+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:"")).trim():"";
-  var _essai=function(n){ return _sb.rpc("nf525_duplicata",{p_salon:_salonId,p_appt_id:a.id,p_operateur:_op||null}).then(function(r){
+  var abandon=false;
+  var _essai=function(n){ if(abandon) return Promise.reject(new Error("abandon")); return _sb.rpc("nf525_duplicata",{p_salon:_salonId,p_appt_id:a.id,p_operateur:_op||null}).then(function(r){
       if(r&&!r.error&&r.data) return r;
       if(n<2) return new Promise(function(res){ setTimeout(res,1200); }).then(function(){ return _essai(n+1); });
       throw new Error((r&&r.error&&r.error.message)||"duplicata non enregistré");
     },function(e){ if(n<2) return new Promise(function(res){ setTimeout(res,1200); }).then(function(){ return _essai(n+1); }); throw e; }); };
-  try{ return _essai(1); }catch(e){ return Promise.reject(e); }
+  var p; try{ p=_essai(1); }catch(e){ p=Promise.reject(e); }
+  var err=new Error("pas de réponse du serveur après "+Math.round(LX_DIR_DUP_MS/1000)+" s"); err.code="delai_dup";
+  return _lxDirDelai(p, LX_DIR_DUP_MS, err).then(null, function(e){ abandon=true; throw e; });
 }
 function lxDirectReimpression(a, isDuplicate){
   var dupOk=!isDuplicate;
@@ -38002,7 +38078,8 @@ function lxDirectReimpression(a, isDuplicate){
     avant:isDuplicate?function(doc){ return _lxDirDupEnregistrer(a).then(function(r){
         dupOk=true;
         try{ if(r&&r.data){ var d=new Date(r.data.horodatage||Date.now()); doc.querySelectorAll(".lxDupNum").forEach(function(e){ e.textContent="Copie n°"+r.data.copie+" - "+d.toLocaleDateString("fr-FR")+" "+d.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"}); }); } }catch(_e){}
-        if(r&&r.data&&r.data.seq) return lxDupSigRemplir(doc, r.data.seq, 3000);
+        if(r&&r.data&&r.data.seq) return _lxDirDelai(lxDupSigRemplir(doc, r.data.seq, 3000), 5000).then(null, function(){ // 2026-11-07 : borné
+          try{ doc.querySelectorAll(".lxDupSig").forEach(function(e){ if(!e.textContent) e.textContent="Duplicata enregistr\u00e9 n\u00b0"+r.data.seq+" (signature sous 2 min)"; }); }catch(_eS){} });
       },function(e){ dupOk=false; window._lxDupErr=(e&&e.message)||String(e||"erreur"); }); }:null,
     verifier:function(){
       if(dupOk) return true;
@@ -38014,14 +38091,15 @@ function lxDirectReimpression(a, isDuplicate){
 // Ticket d'essai en direct (sans valeur, rien d'enregistré en caisse)
 async function lxDirectEssai(){
   if(lxDirectOccupe()) return;
-  _lxDir.occupe=true;
+  var _jt=_lxDirPrendre(); // 2026-11-07 : jeton + garde-fou 60 s
   try{
     var c=lxImprCfg(), doc=lxDirectDoc(lxImprEssaiCorps()), logo=await lxEscLogo(c);
     try{ if(typeof auditLog==="function") auditLog("IMPRESSION_ESSAI","Ticket d’essai sans valeur (impression directe USB, "+(c.dlarg==="58"?"58":"80")+" mm)"); }catch(_eA){}
     var r=await lxDirectEnvoyer(lxEscposDepuisDoc(doc, c, logo));
     if(r.ok){ try{ toast("🧾 Ticket d’essai envoyé à l’imprimante","success"); }catch(_e){} }
-    else { try{ toast("Impression directe impossible : "+r.msg+". Ticket d’essai par la fenêtre.","warning"); }catch(_e2){} if(!(r.envoye>0)){ window._lxEssaiFenetre=true; try{ lxImprEssai(); } finally { window._lxEssaiFenetre=false; } } }
-  } finally { _lxDir.occupe=false; }
+    else if(!r.sorti){ try{ toast("Impression directe impossible : "+r.msg+". Ticket d’essai par la fenêtre.","warning"); }catch(_e2){} window._lxEssaiFenetre=true; try{ lxImprEssai(); } finally { window._lxEssaiFenetre=false; } }
+    else { try{ toast("Impression directe interrompue : "+r.msg+". Le ticket d’essai a pu sortir en partie : vérifiez l’imprimante puis relancez l’essai.","warning"); }catch(_e3){} } // 2026-11-07 : pas « par la fenêtre » quand une partie est partie
+  } finally { _lxDirRendre(_jt); }
 }
 // --- Tiroir-caisse ---
 // À la VALIDATION d'un encaissement réussi comportant des espèces (vente, mixte, remboursement en espèces). Jamais bloquant :
@@ -38036,7 +38114,7 @@ function lxTiroirSiEspeces(tk, contexte){
       try{
         if(!_lxDir.dev){ try{ toast("Tiroir non ouvert : imprimante USB non détectée.","warning"); }catch(_eT){} return; }
         lxDirectEnvoyer(lxEscTiroir(c.dpin)).then(function(r){
-          if(r.ok||r.envoye>0){ try{ if(typeof auditLog==="function") auditLog("TIROIR_ESPECES","Ouverture du tiroir à l’encaissement ("+(contexte||"vente")+") - ticket #"+(tk.tkNum||"--")+" - espèces "+esp.toFixed(2)+" €"+(r.ok?"":" (envoi incomplet)")); }catch(_eA){} }
+          if(r.ok||r.sorti){ try{ if(typeof auditLog==="function") auditLog("TIROIR_ESPECES","Ouverture du tiroir à l’encaissement ("+(contexte||"vente")+") - ticket #"+(tk.tkNum||"--")+" - espèces "+esp.toFixed(2)+" €"+(r.ok?"":" (envoi incomplet)")); }catch(_eA){} }
           if(!r.ok){ try{ toast("Tiroir non ouvert : "+r.msg,"warning"); }catch(_eT2){} }
         },function(){});
       }catch(_eS){}
@@ -38060,7 +38138,7 @@ function lxTiroirValider(){
   cM();
   var c=lxImprCfg();
   lxDirectEnvoyer(lxEscTiroir(c.dpin)).then(function(r){
-    if(r.ok||r.envoye>0){ try{ if(typeof auditLog==="function") auditLog("TIROIR_OUVERT","Ouverture du tiroir sans vente - motif : "+motif+(r.ok?"":" (envoi incomplet)")); }catch(_eA){} }
+    if(r.ok||r.sorti){ try{ if(typeof auditLog==="function") auditLog("TIROIR_OUVERT","Ouverture du tiroir sans vente - motif : "+motif+(r.ok?"":" (envoi incomplet)")); }catch(_eA){} }
     if(r.ok){ try{ toast("🗄️ Tiroir ouvert","success"); }catch(_e){} }
     else { try{ showAlert("Tiroir non ouvert : "+r.msg+".","warning"); }catch(_e2){} }
   });
@@ -38069,11 +38147,13 @@ function lxTiroirValider(){
 function _lxDirMemo(d){ try{ lxImprSet("dvid", d.vendorId); lxImprSet("dpid", d.productId); lxImprSet("dsn", d.serialNumber||""); lxImprSet("dnom", String(d.productName||d.manufacturerName||"Imprimante USB").slice(0,60)); }catch(_e){} }
 function _lxDirCorrespond(d, c){ return !!(d&&c&&c.dvid!=null&&d.vendorId===Number(c.dvid)&&d.productId===Number(c.dpid)&&(!c.dsn||String(d.serialNumber||"")===String(c.dsn))); }
 function lxDirectRafraichirCarte(){ try{ var cd=document.getElementById("lxImprCard"); if(cd){ cd.innerHTML=lxImprCarteHtml(); setTimeout(lxImprApercuMaj,30); } }catch(_e){} }
-async function lxDirectConnecter(){
+// 2026-11-07 : la liste de Chrome ne montre d'abord que les imprimantes (classe USB 7) ; tous=true (lien « Afficher tous les
+// appareils USB ») montre tout, pour les imprimantes qui se déclarent en classe « constructeur ».
+async function lxDirectConnecter(tous){
   if(!lxDirectDispo()) return;
   var d=null;
-  try{ d=await navigator.usb.requestDevice({filters:[]}); }
-  catch(e){ if(e&&e.name==="NotFoundError") return; try{ showAlert("Connexion impossible : "+((e&&e.message)||e),"warning"); }catch(_e){} return; }
+  try{ d=await navigator.usb.requestDevice({filters:(tous===true)?[]:[{classCode:7}]}); }
+  catch(e){ if(e&&e.name==="NotFoundError"){ if(tous!==true){ try{ toast("Imprimante absente de la liste ? Utilisez « Afficher tous les appareils USB ».","info"); }catch(_eT0){} } return; } try{ showAlert("Connexion impossible : "+((e&&e.message)||e),"warning"); }catch(_e){} return; }
   if(!_lxDirChoix(d)){ try{ showAlert("Cet appareil USB n’est pas reconnu comme une imprimante ticket (aucune sortie d’impression).","warning"); }catch(_e2){} return; }
   var ancien=_lxDir.dev; _lxDir.dev=d;
   var r=await lxDirectEnvoyer(new Uint8Array([0x1B,0x40])); // essai : ESC @ (initialisation, rien n'est imprimé)
@@ -38100,6 +38180,7 @@ function lxDirectInit(){
 }
 setTimeout(function(){ try{ lxDirectInit(); }catch(_e){} }, 800);
 // --- Partie « Impression directe » de la carte d'impression (Paramètres › Caisse et paiements) ---
+function _lxDirLienTous(){ return '<div style="font-size:12px;margin-top:6px"><a href="#" style="color:var(--gold,#d4a843);text-decoration:underline" onclick="event.preventDefault();lxDirectConnecter(true)">Imprimante absente de la liste ? Afficher tous les appareils USB</a></div>'; }
 function lxDirectCarteHtml(){
   var h='<div style="border-top:1px solid rgba(255,255,255,.1);margin-top:14px;padding-top:12px">';
   h+='<div style="font-weight:800;font-size:14px">⚡ Impression directe (USB)</div>';
@@ -38114,12 +38195,13 @@ function lxDirectCarteHtml(){
     h+='<div style="font-size:12px;color:var(--text3);line-height:1.5;margin-top:4px">Le ticket sort tout de suite, sans fenêtre d’impression, et le tiroir s’ouvre seulement pour les espèces. Imprimantes ticket compatibles « ESC/POS » (Metapace, Epson, Star, Bixolon…) branchées en USB, avec Chrome ou Edge sur ordinateur ou tablette Android.</div>';
     h+=st(false,'○ Aucune imprimante connectée');
     h+='<button type="button" class="btn bg" onclick="lxDirectConnecter()">🔌 Connecter l’imprimante USB</button>';
-    h+='<div style="font-size:12px;color:var(--text3);line-height:1.5;margin-top:8px">Chrome affiche alors la liste des appareils USB : choisissez votre imprimante. À faire une seule fois sur cet appareil.</div>';
+    h+='<div style="font-size:12px;color:var(--text3);line-height:1.5;margin-top:8px">Chrome affiche alors la liste des imprimantes USB : choisissez la vôtre. À faire une seule fois sur cet appareil.</div>';
+    h+=_lxDirLienTous();
     return h+'</div>';
   }
   var nom=_lxImprEsc(c.dnom||"Imprimante USB");
   h+=pret?st(true,'✓ '+nom+' connectée'):st(false,'⚠️ '+nom+' non détectée : branchez-la et allumez-la. En attendant, les tickets passent par la fenêtre d’impression.');
-  if(!pret) h+='<button type="button" class="btn bs" onclick="lxDirectConnecter()">🔌 Reconnecter</button>';
+  if(!pret) h+='<button type="button" class="btn bs" onclick="lxDirectConnecter()">🔌 Reconnecter</button>'+_lxDirLienTous();
   h+='<div class="lxIRow"><span>Ouvrir le tiroir pour les paiements en espèces<small>Même sans imprimer de ticket. Jamais pour la carte, le chèque ou le virement.</small></span>'+sw("tiroir","Ouvrir le tiroir pour les espèces")+'</div>';
   h+='<div class="lxIRow"><span>Couper le papier à la fin du ticket</span>'+sw("coupe","Couper le papier")+'</div>';
   h+='<div class="lxIRow"><span>Largeur du papier</span>'+seg("dlarg",[["80","80 mm"],["58","58 mm"]])+'</div>';
@@ -38129,7 +38211,7 @@ function lxDirectCarteHtml(){
   h+='<div class="lxIRow"><span>Accents et symbole €<small>À changer si les accents sortent mal</small></span>'+seg("dcp",[["858","Jeu 858"],["1252","Jeu 1252"]])+'</div>';
   h+='<div class="lxIRow"><span>Branchement du tiroir<small>Broche 5 si le tiroir ne s’ouvre pas</small></span>'+seg("dpin",[["2","Broche 2"],["5","Broche 5"]])+'</div>';
   h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button type="button" class="btn bs" onclick="lxImprEssai()">🧾 Ticket d’essai</button><button type="button" class="btn bs" onclick="lxTiroirDemande()">🗄️ Ouvrir le tiroir</button><button type="button" class="btn bs" onclick="lxDirectDeconnecter()">Déconnecter</button></div>';
-  h+='<div style="font-size:12px;color:var(--text3);line-height:1.5;margin-top:8px">Si l’imprimante ne répond pas (débranchée, éteinte, plus de papier), Luxyra le signale et propose l’impression habituelle par la fenêtre d’impression : vous n’êtes jamais bloqué. Le contenu du ticket ne change pas. Les clôtures Z passent toujours par la fenêtre d’impression.</div>';
+  h+='<div style="font-size:12px;color:var(--text3);line-height:1.5;margin-top:8px">Si l’imprimante ne répond pas (débranchée, éteinte, plus de papier), Luxyra le signale et propose l’impression habituelle par la fenêtre d’impression (ou un duplicata si le ticket a pu sortir en partie) : vous n’êtes jamais bloqué. Le contenu du ticket ne change pas. Les clôtures Z passent toujours par la fenêtre d’impression.</div>';
   return h+'</div>';
 }
 
