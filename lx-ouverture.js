@@ -1,9 +1,15 @@
-/* 2026-11-16 - Bandeau d'annonce d'ouverture : APERCU SEULEMENT.
-   Ne fait rien sans le parametre ?apercu=ouverture dans l'adresse. Heure de Paris (UTC+1). */
+/* 2026-11-16 - Bandeau d'annonce d'ouverture (valide par l'etablissement le 16/11/2026).
+   Actif pour les etablissements listes dans LX_OUV ; ?apercu=ouverture ajoute la barre de demonstration.
+   Heure de Paris fixee (UTC+1 fin novembre / debut decembre). Disparait seul a l'ouverture. */
 (function () {
   "use strict";
-  if (!/[?&]apercu=ouverture(&|$)/.test(location.search)) return;
-  var CFG = window.LX_OUVERTURE || { resa: "2026-11-30T09:00:00+01:00", salon: "2026-12-07T13:30:00+01:00", lienResa: "#" };
+  var LX_OUV = { "o-r-studio": { resa: "2026-11-30T09:00:00+01:00", salon: "2026-12-07T13:30:00+01:00", tel: "0745332225" } };
+  var DEMO = /[?&]apercu=ouverture(&|$)/.test(location.search);
+  var slug = "";
+  try { slug = String(window.__SALON_SLUG || new URLSearchParams(location.search).get("slug") || location.pathname.split("/")[1] || "").toLowerCase(); } catch (e) {}
+  var CFG = LX_OUV[slug];
+  if (!CFG) return;
+  var telAff = CFG.tel.replace(/(\d\d)(?=\d)/g, "$1 ");
   var T1 = Date.parse(CFG.resa), T2 = Date.parse(CFG.salon);
   var decalage = 0, simu = null, etat = "";
   var css = document.createElement("style");
@@ -51,13 +57,13 @@
     if (n === etat) return; etat = n;
     if (n === "fin") { el.style.display = "none"; return; }
     el.style.display = "";
-    $("lxOuvL").textContent = n === "avant" ? "R\u00e9servations en ligne dans" : "Ouverture du salon dans";
+    $("lxOuvL").textContent = n === "avant" ? "Prise de rendez-vous dans" : "Ouverture du salon dans";
     $("lxOuvD").innerHTML = n === "avant"
-      ? "R\u00e9servations en ligne d\u00e8s le <b>lundi 30 novembre \u00e0 9h</b>"
-      : "Les r\u00e9servations en ligne sont <b>ouvertes</b>";
+      ? "Prise de rendez-vous par t\u00e9l\u00e9phone d\u00e8s le <b>lundi 30 novembre \u00e0 9h</b>"
+      : "Prenez rendez-vous d\u00e8s maintenant <b>par t\u00e9l\u00e9phone</b>";
     $("lxOuvA").innerHTML = n === "avant"
-      ? '<span class="att">Agenda ouvert le 30 novembre \u00e0 9h</span>'
-      : '<a class="cta" href="' + CFG.lienResa + '">Prendre rendez-vous maintenant</a>';
+      ? '<span class="att">Rendez-vous par t\u00e9l\u00e9phone d\u00e8s le 30 novembre \u00e0 9h</span>'
+      : '<a class="cta" href="tel:' + CFG.tel + '">Appeler le ' + telAff + '</a>';
   }
   function battre() {
     var t = maintenant();
@@ -67,14 +73,16 @@
     $("lxOJ").textContent = deux(Math.floor(r / 86400)); $("lxOH").textContent = deux(Math.floor(r % 86400 / 3600));
     $("lxOM").textContent = deux(Math.floor(r % 3600 / 60)); $("lxOS").textContent = deux(r % 60);
   }
-  var d = document.createElement("div"); d.id = "lxOuvDemo";
-  d.innerHTML = '<b>D\u00e9mo</b><button data-e="avant">Avant le 30/11</button><button data-e="resa">R\u00e9servations ouvertes</button><button data-e="j10">10 s avant</button><button data-e="fin">Le 7/12 \u00e0 13h30</button><button data-e="reel">Heure r\u00e9elle</button>';
-  document.body.appendChild(d);
-  var cibles = { avant: T1 - 9 * 86400e3, resa: T1 + 5000, j10: T2 - 10000, fin: T2 };
-  d.addEventListener("click", function (ev) {
-    var b = ev.target.closest("button"); if (!b) return; var k = b.getAttribute("data-e");
-    simu = k === "reel" ? null : cibles[k] - Date.now();
-    d.querySelectorAll("button").forEach(function (x) { x.classList.toggle("on", x === b); }); battre();
-  });
+  if (DEMO) {
+    var d = document.createElement("div"); d.id = "lxOuvDemo";
+    d.innerHTML = '<b>D\u00e9mo</b><button data-e="avant">Avant le 30/11</button><button data-e="resa">R\u00e9servations ouvertes</button><button data-e="j10">10 s avant</button><button data-e="fin">Le 7/12 \u00e0 13h30</button><button data-e="reel">Heure r\u00e9elle</button>';
+    document.body.appendChild(d);
+    var cibles = { avant: T1 - 9 * 86400e3, resa: T1 + 5000, j10: T2 - 10000, fin: T2 };
+    d.addEventListener("click", function (ev) {
+      var b = ev.target.closest("button"); if (!b) return; var k = b.getAttribute("data-e");
+      simu = k === "reel" ? null : cibles[k] - Date.now();
+      d.querySelectorAll("button").forEach(function (x) { x.classList.toggle("on", x === b); }); battre();
+    });
+  }
   synchro(); battre(); setInterval(battre, 250); setInterval(synchro, 600000);
 })();
