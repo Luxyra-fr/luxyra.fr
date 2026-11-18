@@ -311,7 +311,7 @@ body{max-width:100%;margin:0 auto;}
 .gt-green::before{background:linear-gradient(135deg,#1a4a2e,#2d9a5e);}
 .gt-pink::before{background:linear-gradient(135deg,#5a1a35,#c44c7a);}
 .gt-purple::before{background:linear-gradient(135deg,#2a1a5c,#6C5CE7);}
-.gt-orange::before{background:linear-gradient(135deg,#5a2a10,#e17055);}
+.gt-orange::before{background:linear-gradient(135deg,#5a2a10,#e17055);}.gt-promo::before{background:linear-gradient(135deg,#5a1030,#e91e63);}
 .gt-gold::before{background:linear-gradient(135deg,#4a3a10,#c8a84e);}
 .tile-locked{opacity:.55;position:relative}.tile-locked .lock-badge{position:absolute;top:6px;right:6px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-size:9px;font-weight:800;padding:2px 6px;border-radius:6px;z-index:2;letter-spacing:.5px}.tile-locked:active{transform:none!important}
 .upgrade-overlay{position:fixed;inset:0;z-index:999;background:rgba(0,0,0,.7);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center}
@@ -422,12 +422,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261112-1"></script>
+<script src="luxyra-supabase.js?v=20261118-1"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261112-1";
+  var attendu="20261118-1";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -1009,6 +1009,7 @@ var APP_SECTIONS = [
   {key:"caisse", label:"\ud83d\udcb3 Caisse", desc:"Encaisser les clients"},
   {key:"clients", label:"\ud83d\udc65 Clients", desc:"Fiches clients"},
   {key:"products", label:"\ud83e\uddf4 Produits", desc:"Catalogue et stock"},
+  {key:"promos", label:"\ud83c\udff7\ufe0f G\u00e9rer les promos", desc:"Cr\u00e9er, modifier, mettre en pause les promos (tuile Promos)"}, // 2026-11-18 (7.0.6)
   {key:"stats", label:"\ud83d\udcca Statistiques", desc:"CA et performances"},
   {key:"compta", label:"\ud83d\udcb0 Comptabilit\u00e9", desc:"Cl\u00f4tures Z, exports"},
   {key:"marketing", label:"\ud83d\udce3 Marketing", desc:"Campagnes, promos, fid\u00e9lit\u00e9"},
@@ -1038,7 +1039,7 @@ function defaultPermissions(role) {
   // Collaborateur par défaut : caisse, planning, clients, ses RDV, encaisser
   // CA du jour MASQUÉ par défaut pour les collabs (info confidentielle gérant)
   return {
-    planning: true, caisse: true, clients: true, products: true,
+    planning: true, caisse: true, clients: true, products: true, promos: false, // 2026-11-18 (7.0.6) : promos réservées à l'administrateur par défaut
     stats: false, compta: false, marketing: false, settings: false, operateurs: false,
     see_other_planning: false, see_ca: false, see_previsionnel_mois: false, cloture_journee: true, cancel_rdv: true, refund: false,
     discount: true, see_prices_achat: false,
@@ -2546,7 +2547,7 @@ function editOpPermsUI(opId) {
   
   // Group sections by category
   var sectionGroups = [
-    {title:"\ud83d\udcdc Sections principales", keys:["planning","caisse","clients","products","stats","compta","marketing","settings","operateurs"]},
+    {title:"\ud83d\udcdc Sections principales", keys:["planning","caisse","clients","products","promos","stats","compta","marketing","settings","operateurs"]},
     {title:"\ud83d\udcc5 Planning", keys:["see_other_planning","see_ca","see_previsionnel_mois","cancel_rdv"]},
     {title:"\ud83d\udcb3 Caisse et paiements", keys:["refund","discount","cloture_journee"]},
     {title:"\ud83d\udcca Donn\u00e9es sensibles", keys:["see_prices_achat","export_data","manage_products","manage_services"]},
@@ -10298,6 +10299,7 @@ function go(pg,arg){
   // 2026-10-16 (incident Z n°128) : 1 réservation en ligne = 1 entrée, avant tout affichage (planning, accueil, stats, compta, caisse)
   if(/^(planning|home|stats|accounting|caisse|caisseGestion|tickets)$/.test(String(pg||""))){ try{ if(typeof _lxDedupOnlineAP==="function") _lxDedupOnlineAP(); }catch(_eDg){} }
   if(pg==="accounting"||pg==="tickets"){ try{ if(typeof lxCorrReglCharger==="function") lxCorrReglCharger(); }catch(_eCg){} } // 2026-10-11
+  if(pg==="caisse"){ try{ if(typeof lxPromosCharger==="function") lxPromosCharger({siPlusVieuxQue:5*60*1000}); }catch(_ePr){} } // 2026-11-18 (7.0.6) : promos à jour pour la caisse
   // 03/11/2026 (audit B, mineur 5) : changer de page ferme la fenêtre et la bulle de RDV restées ouvertes
   // (la caisse restait par-dessus « Gestion des tickets »). La caisse se rouvre d'elle-même si on y va.
   if(pg!==window._currentPage){ try{ var _mdl=document.getElementById("modal"); if(_mdl&&_mdl.innerHTML&&pg!=="caisse"&&typeof cM==="function") cM(); }catch(_eCm){} try{ if(typeof hideRdvPopup==="function") hideRdvPopup(); }catch(_eHp){} }
@@ -10324,7 +10326,7 @@ function go(pg,arg){
   // Map page → required permission
   var _pagePerm={
     planning:"planning", clients:"clients", detail:"clients",
-    services:"manage_services", products:"products", gifts:"caisse", commandes:"caisse",
+    services:"manage_services", products:"products", gifts:"caisse", commandes:"caisse", promos:"promos", promoForm:"promos", // 2026-11-18 (7.0.6)
     accounting:"compta", stats:"stats", marketing:"marketing",
     caisse:"caisse", settings:"settings",
     tickets:"caisse", caisseGestion:"caisse", pendingTk:"caisse",
@@ -10381,7 +10383,7 @@ function go(pg,arg){
   if(pg==="home"){
     hdr.style.display="";hdr.innerHTML='<div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;overflow:hidden"><img src="'+logoSrc+'" alt="L" id="hlogo" style="height:32px;border-radius:6px;flex-shrink:0"><div style="min-width:0;overflow:hidden"><h1 style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:16px;font-family:var(--f1);font-weight:800;color:#fff;letter-spacing:0;text-transform:none">'+SALON_CONFIG.nom+'</h1><small style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;font-size:11px">'+(SALON_CONFIG.modeActivite==="domicile"?"\ud83d\ude97 ":SALON_CONFIG.modeActivite==="mixte"?"\ud83d\udd00 ":"")+new Date(TD).toLocaleDateString("fr-FR",{weekday:"short",day:"numeric",month:"short"})+'  <span id="liveClock" style="color:var(--gold);font-weight:800">'+new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"})+'</span></small></div></div><div style="display:flex;align-items:center;gap:2px;flex-shrink:0"><span id="lxSmsPastille" style="display:none"></span><div id="opAvatarHeader" style="display:none"></div><button onclick="location.reload()" style="background:none;border:none;font-size:18px;cursor:pointer;padding:6px;color:var(--text3)" title="Actualiser">\ud83d\udd04</button>'+(typeof hasPermission!=="function"||hasPermission("settings")?'<button onclick="go(\'settings\')" style="background:none;border:none;font-size:18px;cursor:pointer;padding:6px;color:var(--text3)" title="Param\u00e8tres">\u2699\ufe0f</button>':'')+'<button onclick="showNotifs()" style="position:relative;background:none;border:none;font-size:20px;cursor:pointer;padding:6px">\ud83d\udd14<span id="notifBadge" style="display:none;position:absolute;top:0px;right:0px;background:var(--red);color:#fff;font-size:9px;font-weight:800;border-radius:50%;min-width:16px;height:16px;align-items:center;justify-content:center"></span></button></div>';if(typeof updateOperatorAvatar==="function")updateOperatorAvatar();if(typeof lxMajPastilleSms==="function")lxMajPastilleSms();
   }else{
-    var titles={planning:"Planning",clients:"Clients",detail:"Client",services:"Services et Forfaits",products:"Boutique",gifts:"Bons cadeaux",accounting:"Comptabilit\u00e9",stats:"Statistiques",caisse:"Caisse",settings:"Param\u00e8tres",tickets:"Gestion des tickets",caisseGestion:"Gestion de la caisse",pendingTk:"Tickets en attente",devis:"Devis",marketing:"Marketing",commandes:"Commandes",avis:"Avis clients"};
+    var titles={planning:"Planning",clients:"Clients",detail:"Client",services:"Services et Forfaits",products:"Boutique",gifts:"Bons cadeaux",accounting:"Comptabilit\u00e9",stats:"Statistiques",caisse:"Caisse",settings:"Param\u00e8tres",tickets:"Gestion des tickets",caisseGestion:"Gestion de la caisse",pendingTk:"Tickets en attente",devis:"Devis",marketing:"Marketing",commandes:"Commandes",avis:"Avis clients",promos:"Promos",promoForm:((typeof _LXP!=="undefined"&&_LXP.F&&_LXP.F.id)?"Modifier la promo":"Nouvelle promo")};
     hdr.style.display="";hdr.innerHTML='<button class="back-btn" onclick="goBack()" title="Retour">←</button><button class="back-btn" onclick="go(\'home\')" title="Accueil" style="margin-left:2px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12l9-9 9 9M5 10v10a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V10"/></svg></button><div><h1>'+(titles[pg]||"")+'</h1></div>';
   }
   
@@ -10418,6 +10420,11 @@ function go(pg,arg){
     else if(pg==="stats"){app.innerHTML='<div class="app-content">'+rStats()+'</div>';setTimeout(rAffl,50);}
     else if(pg==="marketing"){if(!isPro()){showUpgradeModal("SMS & Email Marketing");return;}var _smy=(pg===_prevPage)?window.scrollY:0;app.innerHTML='<div class="app-content">'+rMarketing()+'</div>';if(pg===_prevPage){window.scrollTo(0,_smy);requestAnimationFrame(function(){window.scrollTo(0,_smy);});}}
     else if(pg==="commandes")app.innerHTML='<div class="app-content">'+rCommandes()+'</div>';
+    else if(pg==="promos"){ // 2026-11-18 (7.0.6) : tuile Promos (liste) ; relecture si la dernière date de plus d'une minute
+      app.innerHTML='<div class="app-content">'+rPromos()+'</div>';
+      if(typeof lxPromosCharger==="function") lxPromosCharger({siPlusVieuxQue:60000}).then(function(r){ if(r&&!r.deja&&window._currentPage==="promos") app.innerHTML='<div class="app-content">'+rPromos()+'</div>'; });
+    }
+    else if(pg==="promoForm"){ app.innerHTML='<div class="app-content">'+rPromoForm()+'</div>'; lxpMaj(); }
     else if(pg==="caisse")app.innerHTML=rCaisse();
     else if(pg==="settings"){var _sy=(pg===_prevPage)?window.scrollY:0;app.innerHTML='<div class="app-content">'+rSettings()+'</div>';if(pg===_prevPage){window.scrollTo(0,_sy);requestAnimationFrame(function(){window.scrollTo(0,_sy);});}}
     else if(pg==="tickets")app.innerHTML='<div class="app-content">'+rTickets()+'</div>';
@@ -10531,6 +10538,7 @@ function _ico(p){return '<svg width="26" height="26" viewBox="0 0 24 24" fill="n
 var ICO={
   clients:_ico('<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/>'),
   products:_ico('<path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/>'),
+  promos:_ico('<path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/>'), // 2026-11-18 (7.0.6)
   services:_ico('<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/>'),
   caisse:_ico('<rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/>'),
   stats:_ico('<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>'),
@@ -12444,6 +12452,13 @@ function rHome(){
   if(hasPermission("products")){
     h+='<div class="tile gt-orange" style="position:relative" onclick="go(\'products\')"><div class="ti" style="color:#fff">'+ICO.products+'</div><div class="tl">Produits</div>';
     if(_prodAlerts>0)h+='<div style="position:absolute;top:6px;right:6px;background:var(--red);color:#fff;font-size:10px;font-weight:800;padding:2px 6px;border-radius:10px;min-width:18px;text-align:center">'+_prodAlerts+'</div>';
+    h+='</div>';
+  }
+  // 2026-11-18 (7.0.6) : tuile « Promos » après « Produits », tous forfaits ; pastille = promos en cours (hors pause)
+  if(hasPermission("promos")){
+    var _pmN=(typeof lxPromosEnCoursNb==="function")?lxPromosEnCoursNb():0;
+    h+='<div class="tile gt-promo" style="position:relative" onclick="go(\'promos\')"><div class="ti" style="color:#fff">'+ICO.promos+'</div><div class="tl">Promos</div>';
+    if(_pmN>0) h+='<div style="position:absolute;top:6px;right:6px;background:#fff;color:#c2185b;font-size:10px;font-weight:800;padding:2px 6px;border-radius:10px;min-width:18px;text-align:center" title="Promos en cours">'+_pmN+'</div>';
     h+='</div>';
   }
   if(hasPermission("caisse"))h+='<div class="tile gt-gold" onclick="go(\'gifts\')"><div class="ti" style="color:#fff">'+ICO.gifts+'</div><div class="tl">Bons cadeaux</div></div>';
@@ -22284,13 +22299,12 @@ function rProducts(){
   h+='</div>';
   
   // Ligne 2 : Toolbar compacte (icônes + labels TOUJOURS visibles)
-  h+='<div id="products-toolbar" style="display:grid;grid-template-columns:repeat(8,1fr);gap:6px;margin-bottom:10px">';
+  h+='<div id="products-toolbar" style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:10px">';
   h+='<button onclick="addProd()" style="padding:10px 4px;border-radius:12px;border:1px solid rgba(200,168,78,.25);background:linear-gradient(180deg,rgba(200,168,78,.12),rgba(200,168,78,.04));cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--gold);transition:all .2s" onmouseover="this.style.background=\'linear-gradient(180deg,rgba(200,168,78,.22),rgba(200,168,78,.08))\'" onmouseout="this.style.background=\'linear-gradient(180deg,rgba(200,168,78,.12),rgba(200,168,78,.04))\'">';
   h+='<span style="font-size:18px;line-height:1">\u2795</span><span style="font-size:10px;font-weight:700;letter-spacing:.2px">Ajouter</span></button>';
   h+='<button onclick="showBulkPriceUpdate()" style="padding:10px 4px;border-radius:12px;border:1px solid rgba(76,175,80,.25);background:linear-gradient(180deg,rgba(76,175,80,.12),rgba(76,175,80,.04));cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:#66bb6a;transition:all .2s" onmouseover="this.style.background=\'linear-gradient(180deg,rgba(76,175,80,.22),rgba(76,175,80,.08))\'" onmouseout="this.style.background=\'linear-gradient(180deg,rgba(76,175,80,.12),rgba(76,175,80,.04))\'">';
   h+='<span style="font-size:18px;line-height:1">\ud83d\udcc8</span><span style="font-size:10px;font-weight:700;letter-spacing:.2px">Prix</span></button>';
-  h+='<button onclick="showAllPromos()" style="padding:10px 4px;border-radius:12px;border:1px solid rgba(233,30,99,.25);background:linear-gradient(180deg,rgba(233,30,99,.12),rgba(233,30,99,.04));cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:#e91e63;transition:all .2s" onmouseover="this.style.background=\'linear-gradient(180deg,rgba(233,30,99,.22),rgba(233,30,99,.08))\'" onmouseout="this.style.background=\'linear-gradient(180deg,rgba(233,30,99,.12),rgba(233,30,99,.04))\'">';
-  h+='<span style="font-size:18px;line-height:1">\ud83c\udf89</span><span style="font-size:10px;font-weight:700;letter-spacing:.2px">Promos</span></button>';
+  // 2026-11-18 (7.0.6) : bouton « Promos » retiré (anciennes promos produits) : voir la tuile « Promos » de l'accueil
   h+='<button onclick="showAllStockHistory()" style="padding:10px 4px;border-radius:12px;border:1px solid rgba(100,181,246,.25);background:linear-gradient(180deg,rgba(100,181,246,.12),rgba(100,181,246,.04));cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:#64b5f6;transition:all .2s" onmouseover="this.style.background=\'linear-gradient(180deg,rgba(100,181,246,.22),rgba(100,181,246,.08))\'" onmouseout="this.style.background=\'linear-gradient(180deg,rgba(100,181,246,.12),rgba(100,181,246,.04))\'">';
   h+='<span style="font-size:18px;line-height:1">\ud83d\udcca</span><span style="font-size:10px;font-weight:700;letter-spacing:.2px">Mouvements</span></button>';
   h+='<button onclick="showInventoryHistory()" style="padding:10px 4px;border-radius:12px;border:1px solid rgba(156,39,176,.25);background:linear-gradient(180deg,rgba(156,39,176,.12),rgba(156,39,176,.04));cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:#ce93d8;transition:all .2s" onmouseover="this.style.background=\'linear-gradient(180deg,rgba(156,39,176,.22),rgba(156,39,176,.08))\'" onmouseout="this.style.background=\'linear-gradient(180deg,rgba(156,39,176,.12),rgba(156,39,176,.04))\'">';
@@ -22303,7 +22317,7 @@ function rProducts(){
   h+='<button onclick="lxOpenPampModal()" title="Gestion du Prix d\'Achat Moyen Pond\u00e9r\u00e9 (valorisation stock comptable)" style="padding:10px 4px;border-radius:12px;border:1px solid rgba(0,150,136,.25);background:linear-gradient(180deg,rgba(0,150,136,.12),rgba(0,150,136,.04));cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:#4db6ac;transition:all .2s" onmouseover="this.style.background=\'linear-gradient(180deg,rgba(0,150,136,.22),rgba(0,150,136,.08))\'" onmouseout="this.style.background=\'linear-gradient(180deg,rgba(0,150,136,.12),rgba(0,150,136,.04))\'">';
   h+='<span style="font-size:18px;line-height:1">\ud83d\udcca</span><span style="font-size:10px;font-weight:700;letter-spacing:.2px">PAMP</span></button>';
   h+='</div>';
-  // Mobile : 4 colonnes au lieu de 8
+  // Mobile : 4 colonnes au lieu de 7
   h+='<style>@media (max-width:640px){#products-toolbar{grid-template-columns:repeat(4,1fr)!important}}</style>';
   // PAO/Peremption alerts
   var _paoAlerts=getPeremptionAlerts();
@@ -23067,14 +23081,17 @@ function scanProd(code){
       // Check if already in ticket
       for(var j=0;j<_tk.items.length;j++){
         if(_tk.items[j].prodId===p.id&&_tk.items[j].isProd){
-          _tk.items[j].qty++;showCaisse();return;
+          _tk.items[j].qty++;_lxRemiseLigneRecalc(_tk.items[j]);showCaisse();return; // 2026-11-18 (7.0.6)
         }
       }
-      _tk.items.push({sId:null,name:p.n,price:getProdPrice(p),qty:1,remise:0,isProd:true,prodId:p.id});
+      var _niS={sId:null,name:p.n,price:getProdPrice(p),qty:1,remise:0,isProd:true,prodId:p.id};
+      lxPromoPoser(_niS,{source:"caisse"}); // 2026-11-18 (7.0.6)
+      _tk.items.push(_niS);
       showCaisse();
     } else {
       // Start new ticket with product
       _tk={step:1,stId:_defaultCollabId(),cId:null,items:[{sId:null,name:p.n,price:getProdPrice(p),qty:1,remise:0,isProd:true,prodId:p.id}],comment:"",remise:0};
+      lxPromoPoser(_tk.items[0],{source:"caisse"}); // 2026-11-18 (7.0.6)
       showCaisse();
     }
   }else{
@@ -23087,6 +23104,7 @@ function addProdToCaisse(id){
   if(!p)return;
   if(p.forSale===false){ showAlert("\u00ab "+p.n+" \u00bb n\u2019est pas disponible \u00e0 la vente (fiche produit \u203a Type de produit).","warning"); return; } // 2026-10-17 audit réglages (#48)
   _tk={step:1,stId:null,cId:null,items:[{sId:null,name:p.n,price:getProdPrice(p),qty:1,remise:0,isProd:true,prodId:p.id}],comment:"",remise:0};
+  lxPromoPoser(_tk.items[0],{source:"caisse"}); // 2026-11-18 (7.0.6)
   showCaisse();
 }
 
@@ -23147,7 +23165,9 @@ function editProd(id){
   htm+='</div></div>';
   
   // Tabs
-  var tabs=[{k:"infos",l:"\u2139\ufe0f Infos"},{k:"prix",l:"\ud83d\udcb0 Prix"},{k:"promo",l:"\ud83c\udf89 Promo"},{k:"histo",l:"\ud83d\udd52 Historique"}];
+  // 2026-11-18 (7.0.6) : onglet « Promo » retiré (remplacé par la tuile « Promos ») ; colonnes promo_* gardées en base, non modifiées ici
+  if(tab==="promo"){ tab="infos"; window._epTab="infos"; }
+  var tabs=[{k:"infos",l:"\u2139\ufe0f Infos"},{k:"prix",l:"\ud83d\udcb0 Prix"},{k:"histo",l:"\ud83d\udd52 Historique"}];
   // NF525: masquer l'onglet Prix si pas la permission see_prices_achat
   var _canSeePrices = (typeof hasPermission!=="function") || hasPermission("see_prices_achat");
   if(!_canSeePrices){
@@ -23234,54 +23254,6 @@ function editProd(id){
     htm+='</div>';
     htm+='<div style="text-align:center;margin-top:14px;font-size:11px;color:var(--text3)">Modifiez n\u2019importe quel champ \u2014 les autres se recalculent automatiquement</div>';
   }
-  else if(tab==="promo"){
-    var promoActif=p.promoActif||false;
-    var promoPrix=p.promoPrix||(p.p*0.8).toFixed(2);
-    var promoDebut=p.promoDebut||"";
-    var promoFin=p.promoFin||"";
-    var promoLabel=p.promoLabel||"";
-    // Calculate discount if active
-    var pctReduc=p.p>0?Math.round((1-(parseFloat(promoPrix)/p.p))*100):0;
-    var isCurrentlyActive=promoActif&&(!promoDebut||promoDebut<=TD)&&(!promoFin||promoFin>=TD);
-    
-    htm+='<div style="background:'+(isCurrentlyActive?"linear-gradient(135deg,rgba(233,30,99,.15),rgba(233,30,99,.05))":"rgba(255,255,255,.04)")+';border:2px solid '+(isCurrentlyActive?"#e91e63":"var(--border2)")+';border-radius:14px;padding:16px;margin-bottom:14px">';
-    htm+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">';
-    htm+='<div><div style="font-weight:800;font-size:15px;color:'+(isCurrentlyActive?"#e91e63":"#fff")+'">\ud83c\udf89 Promotion</div>';
-    if(isCurrentlyActive)htm+='<div style="font-size:11px;color:#e91e63;font-weight:700">\u26a1 Active actuellement</div>';
-    else if(promoActif)htm+='<div style="font-size:11px;color:var(--text3)">Programm\u00e9e</div>';
-    htm+='</div>';
-    htm+='<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="epPromoActif" '+(promoActif?"checked":"")+' style="width:22px;height:22px"><span style="font-size:13px;font-weight:700">Activ\u00e9e</span></label>';
-    htm+='</div>';
-    
-    // Prices comparison
-    htm+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">';
-    htm+='<div style="background:rgba(255,255,255,.04);border:1px solid var(--border2);border-radius:10px;padding:12px;text-align:center">';
-    htm+='<div style="font-size:11px;color:var(--text3);font-weight:700">Prix normal TTC</div>';
-    htm+='<div style="font-size:22px;font-weight:900;color:#fff;margin-top:4px;text-decoration:'+(isCurrentlyActive?"line-through":"none")+';opacity:'+(isCurrentlyActive?".5":"1")+'">'+p.p.toFixed(2)+' \u20ac</div>';
-    htm+='</div>';
-    htm+='<div style="background:'+(isCurrentlyActive?"rgba(233,30,99,.15)":"rgba(255,255,255,.04)")+';border:2px solid '+(isCurrentlyActive?"#e91e63":"var(--border2)")+';border-radius:10px;padding:12px;text-align:center">';
-    htm+='<div style="font-size:11px;color:'+(isCurrentlyActive?"#e91e63":"var(--text3)")+';font-weight:700">Prix promo TTC</div>';
-    htm+='<input type="number" id="epPromoPrix" value="'+promoPrix+'" min="0" step="0.01" style="text-align:center;font-size:22px;font-weight:900;background:transparent;border:none;border-bottom:2px solid '+(isCurrentlyActive?"#e91e63":"var(--border)")+';width:100%;color:'+(isCurrentlyActive?"#e91e63":"#fff")+';padding:4px 0;margin-top:4px" oninput="updatePromoPct()">';
-    htm+='<div id="promoPct" style="font-size:11px;color:#4caf50;font-weight:700;margin-top:4px">'+(pctReduc>0?"-"+pctReduc+"%":"")+'</div>';
-    htm+='</div>';
-    htm+='</div>';
-    
-    // Dates
-    htm+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">';
-    htm+='<div class="fg"><label>Date de d\u00e9but</label><input type="date" id="epPromoDebut" value="'+promoDebut+'" style="padding:10px"></div>';
-    htm+='<div class="fg"><label>Date de fin</label><input type="date" id="epPromoFin" value="'+promoFin+'" style="padding:10px"></div>';
-    htm+='</div>';
-    
-    // Label
-    htm+='<div class="fg"><label>Libell\u00e9 promo (facultatif)</label><input id="epPromoLabel" value="'+_lxAttr(promoLabel)+'" placeholder="Ex: Soldes d\u2019\u00e9t\u00e9, Promo rentr\u00e9e..." style="padding:10px"></div>';
-    
-    htm+='<div style="font-size:11px;color:var(--text3);margin-top:10px;padding:10px;background:rgba(33,150,243,.06);border-left:3px solid #2196f3;border-radius:6px">\ud83d\udca1 La promotion est appliqu\u00e9e automatiquement en caisse et sur votre boutique en ligne (Click &amp; Collect) pendant la p\u00e9riode active ; elle n\u2019appara\u00eet pas dans l\u2019annuaire Luxyra. Les dates sont incluses (d\u00e9but \u00e0 00h00, fin \u00e0 23h59).</div>'; // 2026-10-17 audit réglages (#51) : libellé exact (pas d'affichage dans l'annuaire)
-    htm+='</div>';
-    
-    if(isCurrentlyActive){
-      htm+='<div style="text-align:center;padding:14px;background:rgba(76,175,80,.08);border:1px solid rgba(76,175,80,.2);border-radius:10px"><div style="font-size:12px;color:#4caf50;font-weight:700">\u2705 Cette promotion est actuellement visible par vos clients</div></div>';
-    }
-  }
   else if(tab==="histo"){
     // Load history from local cache or fetch
     htm+='<div id="histoContent">';
@@ -23299,93 +23271,7 @@ function editProd(id){
   _epRestaurer(); // 2026-10-17 audit réglages (#13)
 }
 
-// Show all active and scheduled promos
-function showAllPromos(){
-  var today=TD;
-  var active=PRODS.filter(function(p){return p.promoActif&&p.promoPrix&&(!p.promoDebut||p.promoDebut<=today)&&(!p.promoFin||p.promoFin>=today);});
-  var scheduled=PRODS.filter(function(p){return p.promoActif&&p.promoPrix&&p.promoDebut&&p.promoDebut>today;});
-  var expired=PRODS.filter(function(p){return p.promoActif&&p.promoPrix&&p.promoFin&&p.promoFin<today;});
-  
-  var htm='<div class="mbox" style="max-width:700px;max-height:90vh;overflow-y:auto">';
-  htm+='<h2 style="color:#e91e63">\ud83c\udf89 Gestion des promotions</h2>';
-  
-  // Active
-  htm+='<div style="margin-bottom:18px">';
-  htm+='<div style="font-size:13px;font-weight:800;color:#e91e63;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">\u26a1 Promotions actives ('+active.length+')</div>';
-  if(!active.length){
-    htm+='<div style="color:var(--text3);font-size:13px;font-style:italic;padding:14px;text-align:center;background:rgba(255,255,255,.03);border-radius:10px">Aucune promotion active actuellement</div>';
-  } else {
-    for(var i=0;i<active.length;i++){
-      var p=active[i];
-      var pct=Math.round((1-p.promoPrix/p.p)*100);
-      htm+='<div style="display:flex;align-items:center;gap:10px;padding:10px;background:rgba(233,30,99,.08);border:1px solid rgba(233,30,99,.2);border-radius:10px;margin-bottom:6px;cursor:pointer" onclick="cM();window._epTab=\'promo\';editProd('+p.id+')">';
-      if(p.img)htm+='<div style="width:40px;height:40px;border-radius:8px;background:url('+p.img+') center/cover;flex-shrink:0"></div>';
-      else htm+='<div style="width:40px;height:40px;border-radius:8px;background:var(--bg);display:flex;align-items:center;justify-content:center;flex-shrink:0">\ud83d\udcf7</div>';
-      htm+='<div style="flex:1;min-width:0"><div style="font-weight:700;font-size:13px">'+p.n+'</div>';
-      htm+='<div style="font-size:11px;color:var(--text3)">';
-      if(p.promoLabel)htm+=p.promoLabel+' \u2022 ';
-      htm+=(p.promoDebut?fmt(p.promoDebut):"Imm\u00e9diat")+" \u2192 "+(p.promoFin?fmt(p.promoFin):"Sans fin");
-      htm+='</div></div>';
-      htm+='<div style="text-align:right;flex-shrink:0">';
-      htm+='<div style="font-size:11px;text-decoration:line-through;color:var(--text3)">'+p.p.toFixed(2)+'\u20ac</div>';
-      htm+='<div style="font-weight:900;color:#e91e63;font-size:16px">'+p.promoPrix.toFixed(2)+'\u20ac</div>';
-      htm+='<div style="font-size:10px;color:#4caf50;font-weight:700">-'+pct+'%</div>';
-      htm+='</div></div>';
-    }
-  }
-  htm+='</div>';
-  
-  // Scheduled
-  if(scheduled.length){
-    htm+='<div style="margin-bottom:18px">';
-    htm+='<div style="font-size:13px;font-weight:800;color:#2196f3;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">\ud83d\udcc5 Promotions programm\u00e9es ('+scheduled.length+')</div>';
-    for(var i=0;i<scheduled.length;i++){
-      var p=scheduled[i];
-      var pct=Math.round((1-p.promoPrix/p.p)*100);
-      htm+='<div style="display:flex;align-items:center;gap:10px;padding:10px;background:rgba(33,150,243,.06);border:1px solid rgba(33,150,243,.15);border-radius:10px;margin-bottom:6px;cursor:pointer" onclick="cM();window._epTab=\'promo\';editProd('+p.id+')">';
-      if(p.img)htm+='<div style="width:40px;height:40px;border-radius:8px;background:url('+p.img+') center/cover;flex-shrink:0"></div>';
-      else htm+='<div style="width:40px;height:40px;border-radius:8px;background:var(--bg);display:flex;align-items:center;justify-content:center;flex-shrink:0">\ud83d\udcf7</div>';
-      htm+='<div style="flex:1;min-width:0"><div style="font-weight:700;font-size:13px">'+p.n+'</div>';
-      htm+='<div style="font-size:11px;color:#64b5f6;font-weight:700">D\u00e9but : '+fmt(p.promoDebut)+'</div></div>';
-      htm+='<div style="text-align:right;flex-shrink:0"><div style="font-weight:900;color:#64b5f6;font-size:14px">'+p.promoPrix.toFixed(2)+'\u20ac</div><div style="font-size:10px;color:#4caf50;font-weight:700">-'+pct+'%</div></div>';
-      htm+='</div>';
-    }
-    htm+='</div>';
-  }
-  
-  // Expired
-  if(expired.length){
-    htm+='<div style="margin-bottom:18px">';
-    htm+='<div style="font-size:13px;font-weight:800;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">\u23f0 Promotions expir\u00e9es ('+expired.length+')</div>';
-    htm+='<div style="font-size:11px;color:var(--text3);margin-bottom:6px">Ces promos sont termin\u00e9es mais toujours marqu\u00e9es actives. <button onclick="disableExpiredPromos()" style="background:rgba(244,67,54,.15);color:#ef5350;border:1px solid rgba(244,67,54,.3);padding:4px 10px;border-radius:6px;font-size:11px;cursor:pointer;font-weight:700">D\u00e9sactiver toutes</button></div>';
-    for(var i=0;i<expired.length;i++){
-      var p=expired[i];
-      htm+='<div style="display:flex;align-items:center;gap:10px;padding:8px;background:rgba(255,255,255,.03);border-radius:10px;margin-bottom:4px;opacity:.6;cursor:pointer" onclick="cM();window._epTab=\'promo\';editProd('+p.id+')">';
-      htm+='<div style="flex:1;font-size:12px">'+p.n+'</div>';
-      htm+='<div style="font-size:11px;color:var(--text3)">Termin\u00e9e le '+fmt(p.promoFin)+'</div></div>';
-    }
-    htm+='</div>';
-  }
-  
-  htm+='<div style="display:flex;gap:8px;margin-top:14px">';
-  htm+='<button class="btn" style="flex:1;background:rgba(255,255,255,.06)" onclick="cM()">Fermer</button>';
-  htm+='</div></div>';
-  document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
-}
-
-function disableExpiredPromos(){
-  var today=TD;
-  var count=0;
-  PRODS.forEach(function(p){
-    if(p.promoActif&&p.promoFin&&p.promoFin<today){
-      p.promoActif=false;
-      if(typeof saveProduct==="function")saveProduct(p);
-      count++;
-    }
-  });
-  toast(count+" promo"+(count>1?"s":"")+" d\u00e9sactiv\u00e9e"+(count>1?"s":""),"success");
-  cM();showAllPromos();
-}
+// 2026-11-18 (7.0.6) : showAllPromos / disableExpiredPromos (anciennes promos produits) retirées : remplacées par la tuile « Promos ».
 
 // === BULK PRICE UPDATE (Augmentations multiples) ===
 function showBulkPriceUpdate(){
@@ -23883,23 +23769,329 @@ function applyBulkDelete(){
   });
 }
 
-// Get effective price for a product (promo if active, normal otherwise)
+// 2026-11-18 (7.0.6) : prix d'un produit = TOUJOURS le prix catalogue. Les anciennes promos produits (colonnes promo_*,
+// gardées en base pour la 8.0.0) ne remplacent plus jamais le prix : les promos passent par la tuile « Promos » et sont posées
+// en caisse comme une remise de ligne (lxPromoPoser). Relevé de production du 18/11 : 0 produit avec promo_actif.
+// Appelants : scanProd (2 lignes), addProdToCaisse, posAddProduct, doAddTkProd -> prix catalogue + promo éventuelle en remise.
 function getProdPrice(p){
   if(!p)return 0;
-  if(p.promoActif&&p.promoPrix){
-    var today=TD;
-    if(p.promoDebut&&today<p.promoDebut)return p.p;
-    if(p.promoFin&&today>p.promoFin)return p.p;
-    return p.promoPrix;
-  }
   return p.p;
 }
+// 2026-11-18 (7.0.6) : ancienne promo produit jamais active (badges et prix barrés de l'écran Produits et des listes de caisse
+// tkAddProductGrid / tkAddProductCat : prix catalogue affiché, sans badge).
 function isPromoActive(p){
-  if(!p||!p.promoActif||!p.promoPrix)return false;
-  var today=TD;
-  if(p.promoDebut&&today<p.promoDebut)return false;
-  if(p.promoFin&&today>p.promoFin)return false;
-  return true;
+  return false;
+}
+
+// =====================================================================
+// 2026-11-18 (7.0.6, lot 2) : TUILE « PROMOS » — liste (en cours / à venir / terminées), création, modification, pause,
+// duplication, suppression (douce). Données : LX_PROMOS (lignes promos_etab), lecture lxPromosCharger, écriture lxPromosEcrire
+// (luxyra-supabase.js, contrat de données § 1.1). Dates et heures saisies en heure de Paris (lxParisIso).
+// Le prix catalogue n'est jamais modifié : seule la règle est enregistrée. Aucun montant de taxe affiché.
+// =====================================================================
+var _LXP={tab:"encours", F:null, q:{svc:"",prod:""}, err:"", envoi:false};
+function lxPromoStatut(p){ var n=Date.now(), d=_lxPromoMs(p&&p.debut), f=_lxPromoMs(p&&p.fin); if(!(n<f)) return "fin"; if(n<d) return "avenir"; return "encours"; }
+function lxPromosEnCoursNb(){ return ((typeof LX_PROMOS!=="undefined"&&LX_PROMOS)||[]).filter(function(p){ return p&&!p.supprime_le&&p.en_pause!==true&&lxPromoStatut(p)==="encours"; }).length; }
+function _lxpEur(c){ var n=Math.round(Number(c)||0), neg=n<0; n=Math.abs(n); return (neg?"−":"")+Math.floor(n/100)+","+String(n%100).padStart(2,"0")+" €"; }
+function _lxpNum(v){ var x=String(Math.round((Number(v)||0)*100)/100); return x.replace(".",","); }
+function _lxpVal(type, v){ return type==="pct"?"−"+_lxpNum(v)+" %":type==="montant"?"−"+_lxpEur(Math.round(Number(v)*100)):"à "+_lxpEur(Math.round(Number(v)*100)); }
+var _LXP_MOIS=["janv.","févr.","mars","avr.","mai","juin","juil.","août","sept.","oct.","nov.","déc."];
+function _lxpYmdTxt(ymd, an){ var m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd||""); if(!m) return ""; return (+m[3])+" "+_LXP_MOIS[+m[2]-1]+(an?" "+m[1]:""); }
+// Fin enregistrée EXCLUE : une fin à 00:00 s'affiche « veille 23:59 » (jusqu'à la fin de la journée), sinon l'heure saisie.
+function _lxpFinParis(fin){ var ms=_lxPromoMs(fin); if(!isFinite(ms)) return null; var x=lxInstantVersParis(ms); if(x&&x.hm==="00:00") x=lxInstantVersParis(ms-60000); return x; }
+function _lxpDateTxt(x, an){ return x?_lxpYmdTxt(x.ymd, an)+" "+x.hm.replace(":"," h "):""; }
+function _lxpYmdPlus(ymd, n){ var m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd||""); if(!m) return null; var d=new Date(Date.UTC(+m[1],+m[2]-1,+m[3]+n)); return d.toISOString().slice(0,10); }
+function _lxpArticlesDe(p, kind){
+  var L=kind==="svc"?((typeof SVC!=="undefined"&&SVC)||[]):((typeof PRODS!=="undefined"&&PRODS)||[]), out=[];
+  L.forEach(function(a){ var art={type:kind==="svc"?"service":"produit", id:Number(a.id), cat:a.cat==null?null:String(a.cat)}; if(kind==="svc"&&a.devis) return; if(_lxPromoCibleOk(p, art)) out.push(a); });
+  return out;
+}
+function _lxpCss(){
+  if(document.getElementById("lxpCss")) return;
+  var st=document.createElement("style"); st.id="lxpCss";
+  st.textContent=".lxp-card{border-radius:12px;border:1px solid rgba(212,168,67,.14);background:linear-gradient(180deg,rgba(15,12,18,.75),rgba(10,10,14,.9));padding:12px 14px;margin-bottom:8px}"
+  +".lxp-card.on{border-color:rgba(233,30,99,.35);background:linear-gradient(135deg,rgba(233,30,99,.10),rgba(10,10,14,.9))}.lxp-card.pause{opacity:.7}"
+  +".lxp-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.lxp-pn{font-weight:800;font-size:15px;overflow-wrap:anywhere}.lxp-pd{font-size:12px;color:rgba(255,255,255,.75);margin-top:3px}"
+  +".lxp-pv{font-family:var(--f1);font-weight:900;font-size:19px;color:#f06292;white-space:nowrap}"
+  +".lxp-chan{display:inline-flex;align-items:center;font-size:11px;padding:2px 7px;border-radius:10px;background:rgba(255,255,255,.06);color:rgba(255,255,255,.75);border:1px solid rgba(255,255,255,.08)}.lxp-chan.off{opacity:.35;text-decoration:line-through}"
+  +".lxp-tabs{display:flex;gap:6px;overflow-x:auto;margin-bottom:12px;scrollbar-width:none}.lxp-tab{padding:8px 12px;border-radius:6px;font-size:12px;font-weight:700;background:rgba(20,20,20,.6);color:rgba(255,255,255,.6);border:1px solid rgba(255,255,255,.08);white-space:nowrap;flex-shrink:0;cursor:pointer;font-family:var(--f2)}"
+  +".lxp-tab.on{background:linear-gradient(135deg,rgba(232,200,115,.2),rgba(168,134,46,.08));color:#e8c873;border-color:rgba(212,168,67,.5)}"
+  +".lxp-b{display:inline-block;padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase}.lxp-b1{background:rgba(233,30,99,.15);color:#f06292}.lxp-b2{background:rgba(212,138,26,.15);color:#f0a030}.lxp-b3{background:rgba(74,133,181,.15);color:#64b5f6}.lxp-b4{background:rgba(255,255,255,.08);color:rgba(255,255,255,.55)}"
+  +".lxp-sw{position:relative;width:44px;height:24px;flex-shrink:0;display:inline-block}.lxp-sw input{opacity:0;width:0;height:0;position:absolute}.lxp-sw span{position:absolute;inset:0;border-radius:12px;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.15);cursor:pointer}"
+  +".lxp-sw span::after{content:'';position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;transition:.2s}.lxp-sw input:checked+span{background:linear-gradient(135deg,#e8c873,#a8862e)}.lxp-sw input:checked+span::after{left:22px;background:#0a0a0e}"
+  +".lxp-g2{display:grid;grid-template-columns:1fr 1fr;gap:10px}@media(max-width:600px){.lxp-g2{grid-template-columns:1fr}}"
+  +".lxp-seg{display:flex;gap:6px;flex-wrap:wrap}.lxp-seg button{flex:1;min-width:90px;padding:10px 8px;border-radius:10px;background:rgba(255,255,255,.05);border:1.5px solid rgba(255,255,255,.1);color:rgba(255,255,255,.75);font-weight:700;font-size:13px;cursor:pointer;font-family:var(--f2)}"
+  +".lxp-seg button.on{border-color:var(--gold);background:rgba(200,168,78,.12);color:#e8c873}"
+  +".lxp-chip{padding:7px 12px;border-radius:999px;border:1px solid rgba(200,168,78,.22);background:rgba(200,168,78,.05);color:rgba(255,255,255,.8);font-size:13px;font-weight:600;cursor:pointer;font-family:var(--f2)}.lxp-chip.on{background:rgba(200,168,78,.2);color:#e8c873;border-color:rgba(212,168,67,.6)}"
+  +".lxp-art{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.05)}.lxp-art .an{font-size:13.5px;font-weight:700;overflow-wrap:anywhere}.lxp-art .ac{font-size:11px;color:rgba(255,255,255,.5)}"
+  +".lxp-art .ap{text-align:right;font-variant-numeric:tabular-nums;font-size:13px;white-space:nowrap}.lxp-art .ap b{color:#f06292;font-size:15px}.lxp-art.dim{opacity:.45}.lxp-strike{text-decoration:line-through;color:rgba(255,255,255,.5)}"
+  +".lxp-list{max-height:320px;overflow-y:auto;border:1px solid rgba(255,255,255,.06);border-radius:10px;background:rgba(0,0,0,.2)}"
+  +".lxp-w{display:flex;gap:8px;align-items:flex-start;font-size:13px;line-height:1.45;padding:8px 10px;border-radius:8px;margin-bottom:6px;overflow-wrap:anywhere}.lxp-w>div{min-width:0}"
+  +".lxp-w.r{background:rgba(196,56,56,.14);border:1px solid rgba(244,67,54,.35);color:#ffb4b0}.lxp-w.o{background:rgba(212,138,26,.12);border:1px solid rgba(255,152,0,.3);color:#ffd59a}.lxp-w.b{background:rgba(74,133,181,.12);border:1px solid rgba(100,181,246,.3);color:#cfe6fb}.lxp-w.g{background:rgba(45,154,94,.12);border:1px solid rgba(76,175,80,.3);color:#b9efc9}"
+  +".lxp-ck{display:flex;align-items:flex-start;gap:10px;padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,.07);background:rgba(255,255,255,.03);margin-bottom:6px;cursor:pointer}.lxp-ck input{width:18px;height:18px;flex-shrink:0;accent-color:#e8c873;margin-top:2px}.lxp-ck .t{font-weight:700;font-size:14px}.lxp-ck .s{font-size:12px;color:rgba(255,255,255,.55);margin-top:2px}"
+  +".lxp-chipv{display:inline-block;background:#e91e63;color:#fff;font-size:12px;font-weight:800;padding:5px 10px;border-radius:8px;overflow-wrap:anywhere}"
+  +".lxp-sum{position:sticky;bottom:10px;z-index:20;background:linear-gradient(135deg,rgba(40,30,12,.97),rgba(14,12,10,.97));border:1.5px solid rgba(200,168,78,.45);border-radius:14px;padding:12px 14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;box-shadow:0 8px 24px rgba(0,0,0,.5)}"
+  +".lxp-sum .st{flex:1;min-width:170px;font-size:13px;color:rgba(255,255,255,.8)}.lxp-sum .st b{color:#fff}"
+  +".lxp-note{font-size:12.5px;line-height:1.5;color:rgba(255,255,255,.78);margin:12px 0 4px;padding:10px 12px;background:rgba(33,150,243,.06);border-left:3px solid #2196f3;border-radius:6px}"
+  +".lxp-in{width:100%;min-width:0}";
+  document.head.appendChild(st);
+}
+// ---------- Liste ----------
+function rPromos(){
+  _lxpCss();
+  var E=window._lxPromosEtat||{}, P=((typeof LX_PROMOS!=="undefined"&&LX_PROMOS)||[]).filter(function(p){ return p&&!p.supprime_le; });
+  var h='<div class="lxp-row" style="justify-content:space-between;margin-bottom:12px"><div style="font-size:13px;color:rgba(255,255,255,.7);flex:1;min-width:180px">Prestations et produits, avec dates (heure de Paris)</div>';
+  h+='<button class="btn bg btn-sm" onclick="lxpNouvelle()">+ Nouvelle promo</button></div>';
+  if(!E.charge){ h+='<div style="text-align:center;padding:30px;color:rgba(255,255,255,.55)">Chargement des promos…</div>'; return h; }
+  if(E.cache||E.erreur){
+    var hl=(E.erreur==="hors_ligne")||(typeof navigator!=="undefined"&&navigator.onLine===false);
+    h+='<div class="lxp-w o">⚠ <div>'+(hl?"<b>Hors connexion</b> : liste enregistrée sur cet appareil. Les modifications sont impossibles jusqu’au retour de la connexion.":"<b>Liste non mise à jour</b> ("+escapeHtml(typeof lxPromosMessageErreur==="function"?lxPromosMessageErreur(E.erreur):String(E.erreur))+"). Affichage de la dernière liste enregistrée sur cet appareil.")
+      +' <button class="btn btn-ghost btn-sm" style="margin-left:6px" onclick="lxpRecharger()">Réessayer</button></div></div>';
+  }
+  var g={encours:[],avenir:[],fin:[]};
+  P.forEach(function(p){ g[lxPromoStatut(p)].push(p); });
+  g.encours.sort(function(a,b){ return _lxPromoMs(a.fin)-_lxPromoMs(b.fin); });
+  g.avenir.sort(function(a,b){ return _lxPromoMs(a.debut)-_lxPromoMs(b.debut); });
+  g.fin.sort(function(a,b){ return _lxPromoMs(b.fin)-_lxPromoMs(a.fin); });
+  var LB={encours:"En cours",avenir:"À venir",fin:"Terminées"};
+  h+='<div class="lxp-tabs">'+["encours","avenir","fin"].map(function(k){ return '<button class="lxp-tab'+(k===_LXP.tab?' on':'')+'" onclick="_LXP.tab=\''+k+'\';go(\'promos\')">'+LB[k]+' ('+g[k].length+')</button>'; }).join("")+'</div>';
+  var arr=g[_LXP.tab]||[];
+  if(!arr.length) h+='<div style="text-align:center;padding:24px;color:rgba(255,255,255,.5);font-style:italic">Aucune promo ici.</div>';
+  arr.forEach(function(p){
+    var st=lxPromoStatut(p), ns=p.cible_services&&p.cible_services!=="aucune"?_lxpArticlesDe(p,"svc").length:0, np=p.cible_produits&&p.cible_produits!=="aucune"?_lxpArticlesDe(p,"prod").length:0;
+    var parts=[]; if(ns) parts.push(ns+" prestation"+(ns>1?"s":"")); if(np) parts.push(np+" produit"+(np>1?"s":""));
+    var pill=p.en_pause===true&&st!=="fin"?'<span class="lxp-b lxp-b2">En pause</span>':st==="encours"?'<span class="lxp-b lxp-b1">En cours</span>':st==="avenir"?'<span class="lxp-b lxp-b3">À venir</span>':'<span class="lxp-b lxp-b4">Terminée</span>';
+    var C=function(k,l){ return '<span class="lxp-chan'+(p[k]===true?'':' off')+'">'+l+'</span>'; };
+    var id=_lxAttr(String(p.id)).replace(/'/g,"");
+    h+='<div class="lxp-card'+(st==="encours"&&p.en_pause!==true?' on':'')+(p.en_pause===true&&st!=="fin"?' pause':'')+'">';
+    h+='<div class="lxp-row" style="align-items:flex-start;flex-wrap:nowrap"><div style="flex:1;min-width:0"><div class="lxp-row"><span class="lxp-pn">'+escapeHtml(p.nom||"")+'</span>'+pill+'</div>';
+    h+='<div class="lxp-pd">Client : « '+escapeHtml(p.libelle||"")+' »</div>';
+    h+='<div class="lxp-pd">📅 du '+_lxpDateTxt(lxInstantVersParis(p.debut),true)+' au '+_lxpDateTxt(_lxpFinParis(p.fin),true)+'</div>';
+    h+='<div class="lxp-pd">🏷 '+(parts.join(" · ")||"aucun article")+(p.cumulable===true?' · cumulable':'')+'</div></div>';
+    h+='<div class="lxp-pv">'+_lxpVal(p.type,p.valeur)+'</div></div>';
+    h+='<div class="lxp-row" style="margin-top:8px">'+C("canal_site","Page publique")+C("canal_resa","Réservation")+C("canal_boutique","Boutique")+C("canal_caisse","Caisse")+'</div>';
+    h+='<div class="lxp-row" style="margin-top:10px;justify-content:space-between">';
+    if(st!=="fin") h+='<label class="lxp-row" style="cursor:pointer;font-size:13px"><span class="lxp-sw"><input type="checkbox" '+(p.en_pause===true?'':'checked')+' onchange="lxpPause(\''+id+'\',!this.checked)"><span></span></span>'+(p.en_pause===true?'En pause':'Active')+'</label>';
+    else h+='<span style="font-size:12px;color:rgba(255,255,255,.5)">Terminée le '+_lxpDateTxt(_lxpFinParis(p.fin),true)+'</span>';
+    h+='<div class="lxp-row"><button class="btn btn-ghost btn-sm" onclick="lxpDupliquer(\''+id+'\')">\ud83d\udccb Dupliquer</button>';
+    if(st!=="fin") h+='<button class="btn btn-outline-gold btn-sm" onclick="lxpModifier(\''+id+'\')">✏️ Modifier</button>';
+    h+='<button class="btn btn-outline-red btn-sm" onclick="lxpSupprimer(\''+id+'\')" title="Supprimer">🗑</button>';
+    h+='</div></div></div>';
+  });
+  h+='<div class="lxp-note">Une promo se classe seule selon ses dates (heure de Paris). L’interrupteur met en <b>pause</b> sans rien supprimer ; « Dupliquer » ouvre une copie sans dates, à compléter.</div>';
+  h+='<div class="lxp-note">La promo ne touche <b>jamais</b> au prix catalogue : la fiche prestation ou produit garde son prix. Arrêter, mettre en pause ou supprimer une promo ne laisse aucun prix à « remettre ».</div>';
+  return h;
+}
+function lxpRecharger(){ if(typeof lxPromosCharger!=="function") return; lxPromosCharger().then(function(){ if(window._currentPage==="promos") go("promos"); }); }
+function _lxpTrouver(id){ var r=null; ((typeof LX_PROMOS!=="undefined"&&LX_PROMOS)||[]).forEach(function(p){ if(p&&String(p.id)===String(id)) r=p; }); return r; }
+function _lxpOk(r, txt){
+  if(r&&r.ok){ if(txt&&typeof toast==="function") toast(txt,"success"); return true; }
+  if(typeof showAlert==="function") showAlert("⚠️ Non enregistré — "+((r&&r.message)||"erreur")+".","warning");
+  return false;
+}
+function lxpPause(id, pause){
+  var p=_lxpTrouver(id); if(!p||typeof lxPromosEcrire!=="function") return;
+  lxPromosEcrire("modifier", id, {en_pause:!!pause}).then(function(r){ _lxpOk(r, pause?"« "+(p.nom||"")+" » mise en pause":"« "+(p.nom||"")+" » réactivée"); if(window._currentPage==="promos") go("promos"); });
+}
+function lxpSupprimer(id){
+  var p=_lxpTrouver(id); if(!p) return;
+  showConfirm("Supprimer la promo « "+escapeHtml(p.nom||"")+" » ?\nElle ne s’appliquera plus nulle part. La suppression est définitive.", function(){
+    lxPromosEcrire("modifier", id, {supprime_le:"now"}).then(function(r){ _lxpOk(r, "Promo supprimée"); if(window._currentPage==="promos") go("promos"); });
+  });
+}
+// ---------- Formulaire ----------
+function _lxpCibleDe(mode, cats, ids){ var on=!!mode&&mode!=="aucune"; return {on:on, mode:on?mode:"articles", cats:(cats||[]).map(String), ids:(ids||[]).map(Number)}; }
+function _lxpFormDe(p, copie){
+  var d=p&&!copie?lxInstantVersParis(p.debut):null, f=p&&!copie?_lxpFinParis(p.fin):null;
+  return {id:(p&&!copie)?p.id:null, nom:p?(copie?("Copie de "+(p.nom||"")).slice(0,80):(p.nom||"")):"", libelle:p?(p.libelle||""):"", type:p?p.type:"pct", valeur:p?String(Number(p.valeur)):"10",
+    svc:p?_lxpCibleDe(p.cible_services,p.services_categories,p.services_ids):{on:true,mode:"articles",cats:[],ids:[]},
+    prod:p?_lxpCibleDe(p.cible_produits,p.produits_categories,p.produits_ids):{on:false,mode:"articles",cats:[],ids:[]},
+    d1:d?d.ymd:"", h1:d?d.hm:"09:00", d2:f?f.ymd:"", h2:f?f.hm:"23:59",
+    canal_site:p?p.canal_site===true:true, canal_resa:p?p.canal_resa===true:true, canal_boutique:false/* 7.0.6 : boutique en ligne bientôt (voir _lxpLigne) */, canal_caisse:p?p.canal_caisse===true:true,
+    cumulable:p?p.cumulable===true:false, en_pause:(p&&!copie)?p.en_pause===true:false};
+}
+function lxpNouvelle(){ _LXP.F=_lxpFormDe(null); var t=lxInstantVersParis(Date.now()); _LXP.F.d1=t.ymd; _LXP.F.h1="09:00"; _LXP.F.d2=_lxpYmdPlus(t.ymd,14); _LXP.err=""; _LXP.q={svc:"",prod:""}; go("promoForm"); }
+function lxpModifier(id){ var p=_lxpTrouver(id); if(!p) return; _LXP.F=_lxpFormDe(p); _LXP.err=""; _LXP.q={svc:"",prod:""}; go("promoForm"); }
+function lxpDupliquer(id){ var p=_lxpTrouver(id); if(!p) return; _LXP.F=_lxpFormDe(p,true); _LXP.err=""; _LXP.q={svc:"",prod:""}; go("promoForm"); if(typeof toast==="function") toast("Copie : choisissez les dates puis enregistrez","info"); }
+// Promo « en cours de saisie » au format de la base (calculs en direct et enregistrement)
+function _lxpLigne(F){
+  var vh=Math.round(Number(String(F.valeur).replace(",","."))*100), deb=lxParisIso(F.d1,F.h1||"00:00");
+  var fin=(F.h2==="23:59")?lxParisIso(_lxpYmdPlus(F.d2,1),"00:00"):lxParisIso(F.d2,F.h2||"00:00");
+  var c=function(t){ return t.on?t.mode:"aucune"; };
+  return {nom:String(F.nom||"").trim(), libelle:String(F.libelle||"").trim(), type:F.type, valeur:isFinite(vh)?vh/100:0, debut:deb, fin:fin,
+    cible_services:c(F.svc), services_categories:F.svc.on&&F.svc.mode==="categories"?F.svc.cats.slice():[], services_ids:F.svc.on&&F.svc.mode==="articles"?F.svc.ids.slice():[],
+    cible_produits:c(F.prod), produits_categories:F.prod.on&&F.prod.mode==="categories"?F.prod.cats.slice():[], produits_ids:F.prod.on&&F.prod.mode==="articles"?F.prod.ids.slice():[],
+    // 2026-11-18 (7.0.6, lot 5) : canal « Boutique en ligne » toujours décoché : le ticket des commandes payées en ligne est créé
+    // par le serveur (lx_prive.recette_traiter) avec une remise 0 sur chaque ligne ; une remise de ligne exacte y demanderait
+    // de modifier cette fonction (hors 7.0.6). Les commandes Click & Collect restent au prix catalogue.
+    canal_site:!!F.canal_site, canal_resa:!!F.canal_resa, canal_boutique:false, canal_caisse:!!F.canal_caisse, cumulable:!!F.cumulable};
+}
+function rPromoForm(){
+  _lxpCss();
+  var F=_LXP.F; if(!F){ _LXP.F=F=_lxpFormDe(null); }
+  var ck=function(id,on,t,s,fn){ return '<label class="lxp-ck"><input type="checkbox" id="'+id+'"'+(on?' checked':'')+' onchange="'+(fn||'lxpLire();lxpMaj()')+'"><div><div class="t">'+t+'</div>'+(s?'<div class="s">'+s+'</div>':'')+'</div></label>'; };
+  var h='';
+  h+='<div class="card"><div class="ct">1 · Nom et libellé</div><div class="lxp-g2">';
+  h+='<div class="fg"><label>Nom interne</label><input id="lxpNom" class="lxp-in" maxlength="80" value="'+_lxAttr(F.nom)+'" placeholder="Ex : Noël soins visage" oninput="lxpLire();lxpMaj()"></div>';
+  h+='<div class="fg"><label>Libellé visible par le client</label><input id="lxpLib" class="lxp-in" maxlength="40" value="'+_lxAttr(F.libelle)+'" placeholder="Ex : Noël −20 %" oninput="lxpLire();lxpMaj()"></div>';
+  h+='</div><div style="font-size:12px;color:rgba(255,255,255,.55)">Aperçu : <span class="lxp-chipv" id="lxpLibPrev"></span></div></div>';
+  h+='<div class="card"><div class="ct">2 · Réduction</div><div class="lxp-seg" id="lxpType">';
+  [["pct","Pourcentage (%)"],["montant","Montant en €"],["prix_fixe","Prix fixe"]].forEach(function(t){ h+='<button type="button" data-t="'+t[0]+'" class="'+(F.type===t[0]?'on':'')+'" onclick="lxpType(\''+t[0]+'\')">'+t[1]+'</button>'; });
+  h+='</div><div class="lxp-row" style="margin-top:10px;flex-wrap:nowrap"><input id="lxpVal" class="lxp-in" type="number" min="0" step="0.01" inputmode="decimal" value="'+_lxAttr(F.valeur)+'" style="flex:1;font-size:20px;font-weight:800;text-align:center" oninput="lxpLire();lxpMaj()">';
+  h+='<div id="lxpUnit" style="font-family:var(--f1);font-size:20px;font-weight:800;color:#e8c873;min-width:40px"></div></div><div id="lxpTypeHelp" style="font-size:12px;color:rgba(255,255,255,.55);margin-top:6px"></div></div>';
+  h+='<div class="card"><div class="ct">3 · Articles concernés</div><div id="lxpTgt_svc">'+_lxpCibleHtml("svc")+'</div><div id="lxpTgt_prod" style="margin-top:14px">'+_lxpCibleHtml("prod")+'</div></div>';
+  h+='<div class="card"><div class="ct">4 · Dates (heure de Paris)</div><div class="lxp-g2">';
+  h+='<div><div class="fg" style="margin-bottom:4px"><label>Début</label></div><div class="lxp-row" style="flex-wrap:nowrap"><input id="lxpD1" type="date" value="'+_lxAttr(F.d1)+'" style="flex:2;min-width:0" oninput="lxpLire();lxpMaj()"><input id="lxpH1" type="time" value="'+_lxAttr(F.h1)+'" style="flex:1;min-width:0" oninput="lxpLire();lxpMaj()"></div></div>';
+  h+='<div><div class="fg" style="margin-bottom:4px"><label>Fin</label></div><div class="lxp-row" style="flex-wrap:nowrap"><input id="lxpD2" type="date" value="'+_lxAttr(F.d2)+'" style="flex:2;min-width:0" oninput="lxpLire();lxpMaj()"><input id="lxpH2" type="time" value="'+_lxAttr(F.h2)+'" style="flex:1;min-width:0" oninput="lxpLire();lxpMaj()"></div></div>';
+  h+='</div><div style="font-size:12px;color:rgba(255,255,255,.55);margin-top:6px">La promo s’arrête à l’heure de fin. 23:59 = jusqu’à la fin de la journée.</div></div>';
+  h+='<div class="card"><div class="ct">5 · Où elle s’applique</div>';
+  h+=ck("lxpCSite",F.canal_site,"Page publique de l’établissement","Prix promo et date de fin affichés.");
+  h+=ck("lxpCResa",F.canal_resa,"Réservation en ligne","Prestations seulement : promo du jour du rendez-vous.");
+  h+='<label class="lxp-ck" style="opacity:.45;cursor:not-allowed"><input type="checkbox" id="lxpCBout" disabled><div><div class="t">Boutique en ligne (Click &amp; Collect) <span style="font-size:11px;font-weight:700;color:#e8c873">bientôt</span></div><div class="s">Pas encore disponible : les commandes en ligne restent au prix normal.</div></div></label>'; // 2026-11-18 (7.0.6)
+  h+=ck("lxpCCaisse",F.canal_caisse,"Caisse","À l’ajout d’un article en promo, la remise est posée toute seule sur la ligne (à l’écran : « Promo : nom »). Elle reste modifiable ou retirable. Sur le ticket imprimé : « Remise ».");
+  h+='</div>';
+  h+='<div class="card"><div class="ct">6 · Règles</div>';
+  h+='<div class="lxp-w g">✔ <div><b>Pas de cumul entre deux promos sur un même article</b> : seule la plus avantageuse pour le client s’applique.</div></div>';
+  h+=ck("lxpCumul",F.cumulable,"Cumulable avec la remise fidélité et les cartes d’abonnement","Décochée : la promo ne s’ajoute pas à la fidélité ni aux cartes ; la plus avantageuse pour le client s’applique.");
+  h+='<div class="lxp-w g">✔ <div>Les bons cadeaux restent toujours utilisables.</div></div></div>';
+  h+='<div class="card"><div class="ct">Contrôles en direct</div><div id="lxpWarn"></div></div>';
+  h+='<div id="lxpErr"></div>';
+  h+='<div class="lxp-sum"><div class="st" id="lxpSum"></div><button class="btn btn-ghost btn-sm" onclick="goBack()">Annuler</button><button class="btn bg btn-sm" id="lxpSave" onclick="lxpEnregistrer()">✅ Enregistrer</button></div>';
+  h+='<div class="lxp-note">Le calcul se fait au centime, article par article, avec l’arrondi commercial (0,005 € → 0,01 €). Le prix « après » n’est jamais enregistré dans la fiche : seule la règle l’est.</div>';
+  return h;
+}
+function _lxpCats(kind){ var L=kind==="svc"?((typeof SVC!=="undefined"&&SVC)||[]):((typeof PRODS!=="undefined"&&PRODS)||[]), o=[]; L.forEach(function(x){ var c=x&&x.cat; if(c!=null&&c!==""&&o.indexOf(String(c))<0) o.push(String(c)); }); return o; }
+function _lxpCibleHtml(kind){
+  var t=_LXP.F[kind], lab=kind==="svc"?"Prestations":"Produits";
+  var h='<label class="lxp-ck" style="margin-bottom:8px"><input type="checkbox"'+(t.on?' checked':'')+' onchange="_LXP.F[\''+kind+'\'].on=this.checked;lxpCible(\''+kind+'\')"><div><div class="t">'+lab+'</div><div class="s">'+(kind==="svc"?"Les prestations « sur devis » ne sont jamais concernées.":"Sur la page publique, prix barré = prix le plus bas des 30 derniers jours.")+'</div></div></label>';
+  if(t.on){
+    h+='<div class="lxp-seg" style="margin-bottom:10px">'+[["tout","Toutes"],["categories","Par catégorie"],["articles","Article par article"]].map(function(m){ return '<button type="button" class="'+(t.mode===m[0]?'on':'')+'" onclick="_LXP.F[\''+kind+'\'].mode=\''+m[0]+'\';lxpCible(\''+kind+'\')">'+m[1]+'</button>'; }).join("")+'</div>';
+    if(t.mode==="categories"){ var cs=_lxpCats(kind); h+='<div class="lxp-row" style="margin-bottom:10px">'+(cs.length?cs.map(function(c,i){ return '<button type="button" class="lxp-chip'+(t.cats.indexOf(c)>=0?' on':'')+'" onclick="lxpCat(\''+kind+'\','+i+')">'+escapeHtml(c)+'</button>'; }).join(""):'<span style="font-size:12px;color:rgba(255,255,255,.5)">Aucune catégorie.</span>')+'</div>'; }
+    if(t.mode==="articles") h+='<input class="lxp-in" placeholder="🔍 Rechercher '+(kind==="svc"?"une prestation":"un produit")+'…" value="'+_lxAttr(_LXP.q[kind])+'" oninput="_LXP.q[\''+kind+'\']=this.value;lxpArticles(\''+kind+'\')" style="margin-bottom:8px">';
+    h+='<div class="lxp-list" id="lxpList_'+kind+'"></div>';
+  }
+  return h;
+}
+function lxpCible(kind){ var e=document.getElementById("lxpTgt_"+kind); if(e) e.innerHTML=_lxpCibleHtml(kind); lxpMaj(); }
+function lxpCat(kind, i){ var c=_lxpCats(kind)[i]; if(c==null) return; var t=_LXP.F[kind], k=t.cats.indexOf(c); if(k>=0) t.cats.splice(k,1); else t.cats.push(c); lxpCible(kind); }
+function lxpArt(kind, id, on){ var t=_LXP.F[kind], k=t.ids.indexOf(Number(id)); if(on&&k<0) t.ids.push(Number(id)); if(!on&&k>=0) t.ids.splice(k,1); lxpMaj(true); }
+function lxpType(t){ _LXP.F.type=t; Array.prototype.forEach.call(document.querySelectorAll("#lxpType button"),function(b){ b.classList.toggle("on", b.getAttribute("data-t")===t); }); lxpLire(); lxpMaj(); }
+function lxpLire(){
+  var F=_LXP.F, v=function(id){ var e=document.getElementById(id); return e?e.value:null; }, c=function(id,d){ var e=document.getElementById(id); return e?!!e.checked:d; };
+  if(!F) return;
+  var x;
+  if((x=v("lxpNom"))!=null) F.nom=x; if((x=v("lxpLib"))!=null) F.libelle=x; if((x=v("lxpVal"))!=null) F.valeur=x;
+  if((x=v("lxpD1"))!=null) F.d1=x; if((x=v("lxpH1"))!=null) F.h1=x; if((x=v("lxpD2"))!=null) F.d2=x; if((x=v("lxpH2"))!=null) F.h2=x;
+  F.canal_site=c("lxpCSite",F.canal_site); F.canal_resa=c("lxpCResa",F.canal_resa); F.canal_boutique=false; F.canal_caisse=c("lxpCCaisse",F.canal_caisse); F.cumulable=c("lxpCumul",F.cumulable);
+}
+function lxpArticles(kind){
+  var box=document.getElementById("lxpList_"+kind); if(!box) return;
+  var F=_LXP.F, t=F[kind], R=_lxpLigne(F), L=kind==="svc"?((typeof SVC!=="undefined"&&SVC)||[]):((typeof PRODS!=="undefined"&&PRODS)||[]), q=String(_LXP.q[kind]||"").trim().toLowerCase(), h="", n=0;
+  L.forEach(function(a){
+    var art={type:kind==="svc"?"service":"produit", id:Number(a.id), cat:a.cat==null?null:String(a.cat)}, devis=kind==="svc"&&a.devis===true;
+    var m=_lxPromoCibleOk(R, art);
+    if(t.mode==="articles"&&q&&(String(a.n||"")+" "+String(a.cat||"")).toLowerCase().indexOf(q)<0) return;
+    if(t.mode!=="articles"&&!m) return;
+    if(++n>400) return;
+    var px=_lxCentimes(a.p), r=(!devis&&m)?_lxPromoRemiseC(R.type,R.valeur,px):0, ap=(kind==="svc"&&a.apartir)?"à partir de ":"";
+    h+='<div class="lxp-art'+(devis?' dim':'')+'">';
+    h+=t.mode==="articles"?'<input type="checkbox" style="width:18px;height:18px;accent-color:#e8c873"'+(m&&!devis?' checked':'')+(devis?' disabled':'')+' onchange="lxpArt(\''+kind+'\','+Number(a.id)+',this.checked)">':'<span style="color:#f06292">●</span>';
+    h+='<div style="min-width:0"><div class="an">'+escapeHtml(a.n||"")+'</div><div class="ac">'+escapeHtml(a.cat||"")+(devis?' · sur devis, non concernée':'')+(ap?' · prix « à partir de »':'')+'</div></div>';
+    if(devis) h+='<div class="ap" style="color:rgba(255,255,255,.5)">Sur devis</div>';
+    else if(m&&!(px>0)) h+='<div class="ap">'+_lxpEur(px)+'<div style="font-size:11px;color:rgba(255,255,255,.5)">prix 0 : aucune</div></div>';
+    else if(m) h+='<div class="ap"><span class="lxp-strike">'+ap+_lxpEur(px)+'</span> → <b>'+_lxpEur(px-r)+'</b><div style="font-size:11px;color:rgba(255,255,255,.5)">'+(r>0?'−'+_lxpEur(r):'aucune réduction')+'</div></div>';
+    else h+='<div class="ap">'+ap+_lxpEur(px)+'</div>';
+    h+='</div>';
+  });
+  if(n>400) h+='<div style="padding:10px;text-align:center;font-size:12px;color:rgba(255,255,255,.5)">'+(n-400)+' autres : affinez la recherche.</div>';
+  box.innerHTML=h||'<div style="padding:14px;text-align:center;font-size:12px;color:rgba(255,255,255,.5)">'+(t.mode==="categories"?"Choisissez au moins une catégorie.":"Aucun résultat.")+'</div>';
+}
+// Contrôles en direct : renvoie la liste des alertes (classe r = bloquant)
+function lxpControles(F){
+  var W=[], R=_lxpLigne(F), w=function(c,t){ W.push({c:c,t:t}); }, val=Number(String(F.valeur).replace(",","."));
+  var dOk=/^\d{4}-\d{2}-\d{2}$/.test(F.d1||"")&&/^\d{4}-\d{2}-\d{2}$/.test(F.d2||"")&&/^\d{2}:\d{2}$/.test(F.h1||"")&&/^\d{2}:\d{2}$/.test(F.h2||"")&&R.debut&&R.fin;
+  var now=Date.now(), dms=dOk?_lxPromoMs(R.debut):NaN, fms=dOk?_lxPromoMs(R.fin):NaN;
+  if(!R.nom) w("r","Donnez un nom à la promo.");
+  if(!R.libelle) w("r","Donnez un libellé visible par le client (40 caractères au plus).");
+  if(!(val>0)) w("r","La valeur de la réduction doit être supérieure à 0.");
+  else if(F.type==="pct"&&val>100) w("r","Un pourcentage ne peut pas dépasser 100 %.");
+  else if(Math.abs(Math.round(val*100)-val*100)>1e-6) w("b","Valeur arrondie au centime : "+_lxpNum(val)+".");
+  if(!dOk) w("r","Renseignez la date et l’heure de début et de fin.");
+  else {
+    if(!(fms>dms)) w("r","La fin doit être après le début.");
+    else if(!(fms>now)) w("r","<b>La date de fin est passée</b> : la promo ne s’appliquerait jamais.");
+    else if(dms<=now) w("b",F.id?"La promo est en cours : les changements s’appliquent dès l’enregistrement.":"La promo démarre <b>dès l’enregistrement</b>.");
+  }
+  var S=F.svc.on?_lxpArticlesDe(R,"svc"):[], Pd=F.prod.on?_lxpArticlesDe(R,"prod"):[];
+  if(F.svc.on&&F.svc.mode==="categories"&&!F.svc.cats.length) w("r","Prestations : choisissez au moins une catégorie.");
+  if(F.svc.on&&F.svc.mode==="articles"&&!F.svc.ids.length) w("r","Prestations : cochez au moins une prestation.");
+  if(F.prod.on&&F.prod.mode==="categories"&&!F.prod.cats.length) w("r","Produits : choisissez au moins une catégorie.");
+  if(F.prod.on&&F.prod.mode==="articles"&&!F.prod.ids.length) w("r","Produits : cochez au moins un produit.");
+  if(!F.svc.on&&!F.prod.on) w("r","Choisissez des prestations et/ou des produits.");
+  else if(!S.length&&!Pd.length&&!W.some(function(x){ return /cochez|choisissez au moins/i.test(x.t); })) w("o","Aucun article du catalogue n’est concerné pour l’instant.");
+  var zero=[], none=[], apart=[];
+  S.concat(Pd).forEach(function(a){ var px=_lxCentimes(a.p); if(!(px>0)) return; var r=_lxPromoRemiseC(R.type,R.valeur,px); if(val>0&&px-r===0&&r>0) zero.push(a.n); if(val>0&&r===0&&!(R.type==="prix_fixe"&&a.apartir&&S.indexOf(a)>=0)) none.push(a.n); }); // A9 : « à partir de » + prix fixe : avertissement dédié
+  S.forEach(function(a){ if(a.apartir) apart.push(a.n); });
+  var lst=function(L){ return L.slice(0,8).map(function(x){ return escapeHtml(String(x||"")); }).join(", ")+(L.length>8?" et "+(L.length-8)+" autre"+(L.length-8>1?"s":""):""); };
+  if(zero.length) w("r","<b>Prix à 0,00 €</b> pour : "+lst(zero)+". Vérifiez la valeur (un article offert se gère plutôt avec « Offert » en caisse).");
+  if(none.length&&val>0) w("o",(R.type==="prix_fixe"?"Prix fixe supérieur ou égal au prix normal":"Réduction nulle")+", <b>aucune réduction</b> pour : "+lst(none)+".");
+  if(R.type==="prix_fixe"&&((F.svc.on&&F.svc.mode!=="articles")||(F.prod.on&&F.prod.mode!=="articles"))) w("b","Prix fixe sur une catégorie entière : tous les articles concernés seront au même prix.");
+  if(apart.length&&R.type==="prix_fixe"&&val>0){ // 2026-11-18 (7.0.6, vérif. finale A9) : même règle que le serveur, chiffrée sur un exemple
+    var ax=S.filter(function(a){ return a.apartir; })[0], axP=_lxCentimes(ax.p), axF=axP*2;
+    w("o","<b>Prix fixe sur une prestation « à partir de »</b> ("+lst(apart)+") : le client paie "+_lxpEur(Math.round(val*100))+" quel que soit le prix final. En caisse, la remise est calculée sur le prix final de la ligne : « "+escapeHtml(String(ax.n||""))+" » relevée à "+_lxpEur(axF)+" donne une remise de <b>"+_lxpEur(_lxPromoRemiseC(R.type,R.valeur,axF))+"</b>. Sur la page publique et en réservation en ligne, elle est calculée sur le prix de départ ("+_lxpEur(axP)+" : remise "+_lxpEur(_lxPromoRemiseC(R.type,R.valeur,axP))+"). Un pourcentage ou un montant évite cet écart.");
+  } else if(apart.length) w("b","Prix « à partir de » ("+lst(apart)+") : la promo s’applique au prix de départ ; en caisse, au prix réel de la ligne.");
+  if(!F.canal_site&&!F.canal_resa&&!F.canal_boutique&&!F.canal_caisse) w("r","Cochez au moins un endroit où la promo s’applique.");
+  if(F.canal_boutique&&F.svc.on&&!F.prod.on) w("b","« Boutique en ligne » ne concerne que les produits : sans effet ici.");
+  if(F.canal_resa&&F.prod.on&&!F.svc.on) w("b","« Réservation en ligne » ne concerne que les prestations : sans effet ici.");
+  if(F.canal_site&&F.svc.on&&!F.canal_resa) w("o","Page publique cochée sans « Réservation en ligne » : le client voit un prix promo qu’il ne paiera pas en réservant en ligne.");
+  // 2026-11-18 (7.0.6, vérif. finale A8) : la page publique annonce pour un produit « Prix promo en établissement » : ce prix doit
+  // être appliqué en caisse. Page publique + produits sans « Caisse » : bloquant (cocher « Caisse » ou retirer les produits).
+  if(F.canal_site&&F.prod.on&&!F.canal_caisse) w("r","<b>Produits sur la page publique : cochez aussi « Caisse »</b>. La page annonce « Prix promo en établissement » : sans « Caisse », ce prix ne serait pas appliqué à l’encaissement. Sinon, décochez « Page publique » ou retirez les produits de cette promo.");
+  else if(F.canal_site&&F.prod.on) w("b","Produits : la page publique affiche le prix promo avec la mention « en établissement » ; les commandes en ligne (Click &amp; Collect) restent au prix normal pour le moment."); // 2026-11-18 (7.0.6) : boutique en ligne bientôt
+  // Chevauchement : mêmes articles, dates communes, pas de cumul -> la plus avantageuse pour le client
+  if(dOk&&fms>dms){
+    var conf=[];
+    ((typeof LX_PROMOS!=="undefined"&&LX_PROMOS)||[]).forEach(function(o){
+      if(!o||o.supprime_le||o.en_pause===true||(F.id&&String(o.id)===String(F.id))) return;
+      var od=_lxPromoMs(o.debut), of=_lxPromoMs(o.fin); if(!(od<fms&&dms<of)||!(of>now)) return;
+      [["svc",S],["prod",Pd]].forEach(function(k){ k[1].forEach(function(a){
+        var art={type:k[0]==="svc"?"service":"produit", id:Number(a.id), cat:a.cat==null?null:String(a.cat)}; if(!_lxPromoCibleOk(o,art)) return;
+        var px=_lxCentimes(a.p), ra=_lxPromoRemiseC(R.type,R.valeur,px), rb=_lxPromoRemiseC(o.type,o.valeur,px);
+        conf.push(escapeHtml(a.n||"")+" : « "+escapeHtml(o.nom||"")+" » ("+_lxpVal(o.type,o.valeur)+", −"+_lxpEur(rb)+") contre celle-ci (−"+_lxpEur(ra)+") → <b>"+(ra>rb?"celle-ci":ra<rb?"« "+escapeHtml(o.nom||"")+" »":"égalité : celle qui finit le plus tôt")+"</b>");
+      }); });
+    });
+    if(conf.length) w("o","<b>Chevauchement avec une autre promo</b> (pas de cumul, la plus avantageuse pour le client s’applique) :<br>• "+conf.slice(0,10).join("<br>• ")+(conf.length>10?"<br>… et "+(conf.length-10)+" autre"+(conf.length-10>1?"s":""):""));
+  }
+  return W;
+}
+function lxpMaj(sansListes){
+  var F=_LXP.F; if(!F) return;
+  var pv=document.getElementById("lxpLibPrev"); if(pv) pv.textContent="🎉 "+(String(F.libelle||"").trim()||String(F.nom||"").trim()||"Libellé de la promo");
+  var u=document.getElementById("lxpUnit"); if(u) u.textContent=F.type==="pct"?"%":"€";
+  var th=document.getElementById("lxpTypeHelp"); if(th) th.textContent=F.type==="pct"?"Pourcentage retiré du prix de chaque article (arrondi au centime).":F.type==="montant"?"Montant retiré du prix de chaque article (jamais en dessous de 0 €).":"Chaque article concerné est vendu à ce prix. Surtout utile article par article.";
+  if(!sansListes){ lxpArticles("svc"); lxpArticles("prod"); }
+  var W=lxpControles(F), bloq=W.some(function(x){ return x.c==="r"; }), ic={r:"⛔",o:"⚠",b:"ℹ",g:"✔"};
+  var R=_lxpLigne(F), S=F.svc.on?_lxpArticlesDe(R,"svc"):[], Pd=F.prod.on?_lxpArticlesDe(R,"prod"):[];
+  if(!bloq&&(S.length||Pd.length)) W.unshift({c:"g",t:"Rien de bloquant."});
+  var we=document.getElementById("lxpWarn"); if(we) we.innerHTML=W.map(function(x){ return '<div class="lxp-w '+x.c+'">'+ic[x.c]+' <div>'+x.t+'</div></div>'; }).join("");
+  var sm=document.getElementById("lxpSum");
+  if(sm){ var tot=S.length+Pd.length, rem=0; S.concat(Pd).forEach(function(a){ rem+=_lxPromoRemiseC(R.type,R.valeur,_lxCentimes(a.p)); });
+    var dd=lxInstantVersParis(R.debut), ff=_lxpFinParis(R.fin);
+    sm.innerHTML="<b>"+S.length+"</b> prestation"+(S.length>1?"s":"")+" · <b>"+Pd.length+"</b> produit"+(Pd.length>1?"s":"")+(dd&&ff?"<br>du "+_lxpDateTxt(dd)+" au "+_lxpDateTxt(ff):"")+(tot?"<br>remise moyenne : <b>"+_lxpEur(Math.floor((rem*2+tot)/(tot*2)))+"</b> par article":""); }
+  var sv=document.getElementById("lxpSave"); if(sv){ sv.disabled=bloq||_LXP.envoi; sv.style.opacity=(bloq||_LXP.envoi)?.45:1; }
+  var er=document.getElementById("lxpErr"); if(er) er.innerHTML=_LXP.err?'<div class="lxp-w r">⛔ <div>'+escapeHtml(_LXP.err)+'</div></div>':"";
+}
+function lxpEnregistrer(){
+  var F=_LXP.F; if(!F||_LXP.envoi) return;
+  lxpLire(); var W=lxpControles(F); if(W.some(function(x){ return x.c==="r"; })){ lxpMaj(); return; }
+  if(typeof lxPromosEcrire!=="function"){ _LXP.err="Fonction indisponible : rechargez l’application."; lxpMaj(true); return; }
+  var row=_lxpLigne(F); _LXP.envoi=true; _LXP.err=""; lxpMaj(true);
+  lxPromosEcrire(F.id?"modifier":"creer", F.id, row).then(function(r){
+    _LXP.envoi=false;
+    if(r&&r.ok){ if(typeof toast==="function") toast("Promo enregistrée","success"); _LXP.tab=lxPromoStatut(r.ligne||row); _LXP.F=null; var _st=window._navStack||[]; if(_st.length&&_st[_st.length-1]==="promos") goBack(); else go("promos"); return; }
+    _LXP.err="Non enregistré — "+((r&&r.message)||"erreur")+"."; lxpMaj(true);
+    if(typeof toast==="function") toast("⚠️ Promo non enregistrée","error");
+  });
 }
 
 // Update promo percentage display
@@ -31681,6 +31873,260 @@ function printAcompteReceipt(tkNum,amount,apptId){
   setTimeout(function(){w.print();},300);
 }
 
+// === 2026-11-18 (7.0.6, lot 3a) : remise de ligne (it.remise, montant en € TTC de toute la ligne) ===
+// Clés de TRAVAIL du panier : it._lxPct (remise saisie en %), it._lxEur (remise saisie en €, avant plafond), it._lxPromo (promo posée
+// par lxPromoPoser). Elles n'entrent JAMAIS dans le ticket enregistré : ses lignes sont construites par LISTE BLANCHE (savedItems,
+// _doFinalPayExecuteSync) -> ni items, ni empreinte, ni raw_data, ni file de secours. Elles sont en revanche recopiées dans les
+// tickets EN ATTENTE (savePendingTicket, mise en attente automatique : copie complète de _tk.items, document non fiscal) pour
+// que la remise suive encore la quantité à la reprise ; un poste en 7.0.5 qui reprend ce ticket les ignore.
+// Remise MANUELLE : calcul de la 7.0.5 (doApplyRemise) conservé à l'identique, arrondi compris (voir _lxRemiseLigneFixer).
+function _lxRemiseLigneFixer(it, type, v){
+  delete it._lxEur;
+  if(!(Number(it.price)*Number(it.qty)>0)){ it.remise=0; delete it._lxPct; return false; }
+  if(type==="eur"){ it.remise=Math.min(v,it.price*it.qty); delete it._lxPct; }
+  else { var pct=Math.min(v,100); it.remise=Math.round(it.price*it.qty*pct/100*100)/100; if(pct>0) it._lxPct=pct; else delete it._lxPct; }
+  return true;
+}
+// Quantité changée : remise en % (saisie, carte d'abonnement, promo) recalculée comme si elle était posée à la nouvelle quantité ;
+// remise en € : montant SAISI (it._lxEur) plafonné au brut de la nouvelle quantité (il revient quand la quantité remonte).
+function _lxRemiseLigneRecalc(it){
+  if(!it||it.isSep) return;
+  var brut=(Number(it.price)||0)*(Number(it.qty)||0);
+  if(!(brut>0)) return;
+  var P=it._lxPromo;
+  if(P&&P.etat==="auto"){ _lxRemiseLigneFixer(it,"eur",_lxPromoMontantLigne(it,P)); return; }
+  if(it.carteAboRemise&&Number(it.carteAboPct)>0){ it.remise=Math.round(brut*Number(it.carteAboPct)/100*100)/100; return; }
+  if(Number(it._lxPct)>0){ it.remise=Math.round(brut*Math.min(Number(it._lxPct),100)/100*100)/100; return; }
+  var bC=_lxCentimes(it.price)*(Number(it.qty)||0);
+  if(Number(it._lxEur)>0){ it.remise=Math.min(_lxCentimes(it._lxEur), bC)/100; return; }
+  if(_lxCentimes(it.remise)>bC) it.remise=bC/100;
+}
+// --- Promotions : point d'entrée UNIQUE de la pose automatique (7.0.6) ---
+// Accès aux données des promos : ICI SEULEMENT. Renvoie null (aucune promo) ou
+// {id, nom, type:"pct"|"montant"|"prix_fixe", valeur, cumulable}. type : "prestation" | "forfait" | "produit".
+// 2026-11-18 (7.0.6, lot 3b) : branchée sur les promos de l'établissement (LX_PROMOS, lignes promos_etab chargées avec les
+// autres données et gardées sur l'appareil). Calcul local = lx_prive.promo_applicable (contrat § 3), canal « caisse ».
+// prix : prix unitaire réel de la ligne (prestation « à partir de ») ; absent = prix catalogue.
+function lxPromoTrouver(type, id, instant, prix){
+  try{
+    var art=_lxPromoArticle(type, id); if(!art) return null;
+    var q=(instant instanceof Date)?instant.getTime():(instant!=null&&instant!==""?Date.parse(instant):Date.now());
+    if(!isFinite(q)) q=Date.now();
+    var pc=(prix!=null&&prix!==""&&isFinite(Number(prix)))?_lxCentimes(prix):null;
+    var R=lxPromoCalcul((typeof LX_PROMOS!=="undefined"&&Array.isArray(LX_PROMOS))?LX_PROMOS:[], art, q, "caisse", pc, 1);
+    if(!R) return null;
+    var P=R.promo;
+    return {id:P.id, nom:String(P.nom||P.libelle||"Promo"), libelle:String(P.libelle||""), type:P.type, valeur:Number(P.valeur), cumulable:P.cumulable===true, remiseUnitaire:R.remise_unitaire_c/100};
+  }catch(_e){ return null; }
+}
+// Promos chargées (LX_PROMOS : lignes de la table promos_etab, format de la base ; cf. luxyra-supabase.js lxPromosCharger)
+var LX_PROMOS=(typeof window!=="undefined"&&Array.isArray(window.LX_PROMOS))?window.LX_PROMOS:[];
+function _lxCentimes(x){ var n=Number(x); return isFinite(n)?Math.round(n*100):0; }
+// Article du catalogue, comme le serveur le lit (services : prix, categorie, prix_sur_devis ; produits : prix, categorie).
+// Les forfaits (table forfaits) ne sont jamais ciblés : seules les prestations et les produits le sont (contrat § 0).
+function _lxPromoArticle(type, id){
+  if(id==null||id==="") return null;
+  var L=(type==="prestation"||type==="service")?((typeof SVC!=="undefined"&&SVC)||[]):(type==="produit"?((typeof PRODS!=="undefined"&&PRODS)||[]):null);
+  if(!L) return null;
+  for(var i=0;i<L.length;i++){ var a=L[i]; if(a&&String(a.id)===String(id))
+    return {type:(type==="produit"?"produit":"service"), id:Number(a.id), prixC:_lxCentimes(a.p), cat:(a.cat==null?null:String(a.cat)), devis:(type!=="produit"&&a.devis===true)}; }
+  return null;
+}
+// Remise UNITAIRE en centimes, arithmétique entière (lx_prive.r2 : demi-centime vers le haut), bornée à [0, prix].
+// pxC : prix unitaire en centimes ; v : valeur de la promo (numeric(10,2)).
+function _lxPromoRemiseC(type, v, pxC){
+  var vh=Math.round((Number(v)||0)*100), r;
+  if(!(pxC>0)||!(vh>0)) return 0;
+  if(type==="pct") r=Math.floor((pxC*vh+5000)/10000); else if(type==="montant") r=vh; else if(type==="prix_fixe") r=pxC-vh; else return 0;
+  return Math.max(0, Math.min(pxC, r));
+}
+// Article ciblé par la promo : « tout », catégorie EXACTE, ou n° dans la liste du BON type (prestation n°12 ≠ produit n°12)
+function _lxPromoCibleOk(p, art){
+  var s=(art.type==="service"), mode=s?p.cible_services:p.cible_produits, cats=(s?p.services_categories:p.produits_categories)||[], ids=(s?p.services_ids:p.produits_ids)||[];
+  return (mode==="tout")||(mode==="categories"&&art.cat!=null&&cats.map(String).indexOf(String(art.cat))>=0)||(mode==="articles"&&ids.map(Number).indexOf(Number(art.id))>=0);
+}
+function _lxPromoMs(x){ if(x==null||x==="") return NaN; if(typeof x==="number") return x; if(x instanceof Date) return x.getTime(); var s=String(x).replace(" ","T"); if(/[+-]\d\d$/.test(s)) s+=":00"; return Date.parse(s); }
+// Calcul local IDENTIQUE à lx_prive.promo_applicable (contrat § 3) : sélection (établissement, non supprimée, non en pause,
+// debut <= instant < fin, canal coché, cible du bon type), remise unitaire la plus forte, puis fin la plus proche,
+// cree_le le plus ancien, id. Sur devis, prix <= 0, remise 0 : aucune promo. Les instants sont comparés en valeur absolue
+// (millisecondes) : aucun effet du fuseau de l'appareil. art : {type:"service"|"produit", id, prixC, cat, devis}.
+function lxPromoCalcul(promos, art, quandMs, canal, prixC, qte){
+  if(!art||art.devis) return null;
+  if(["site","resa","boutique","caisse"].indexOf(canal)<0) return null;
+  var q=Number(qte); if(qte==null) q=1; if(!(q>0)) return null;
+  var px=(prixC!=null)?Math.round(Number(prixC)):Math.round(Number(art.prixC));
+  if(!(px>0)) return null;
+  var sal=(typeof _salonId!=="undefined"&&_salonId)?String(_salonId):null;
+  var best=null, bestR=0, bF=0, bC=0;
+  (promos||[]).forEach(function(p){
+    if(!p||p.supprime_le||p.en_pause===true) return;
+    if(sal&&p.salon_id&&String(p.salon_id)!==sal) return;
+    var d=_lxPromoMs(p.debut), f=_lxPromoMs(p.fin);
+    if(!(d<=quandMs&&quandMs<f)) return;
+    if(p["canal_"+canal]!==true) return;
+    if(!_lxPromoCibleOk(p, art)) return;
+    var r=_lxPromoRemiseC(p.type, p.valeur, px); if(!(r>0)) return;
+    var c=_lxPromoMs(p.cree_le); if(!isFinite(c)) c=Infinity;
+    var mieux=!best||r>bestR||(r===bestR&&(f<bF||(f===bF&&(c<bC||(c===bC&&String(p.id)<String(best.id))))));
+    if(mieux){ best=p; bestR=r; bF=f; bC=c; }
+  });
+  if(!best) return null;
+  return {promo:best, prix_c:px, remise_unitaire_c:bestR, prix_net_unitaire_c:px-bestR, quantite:q, remise_ligne_c:Math.floor(bestR*q+0.5)};
+}
+// Heure de Paris, quel que soit le fuseau de l'appareil. Décalage (minutes) de Europe/Paris à un instant.
+function _lxParisDecalage(ms){
+  try{ var o={}; new Intl.DateTimeFormat("en-GB",{timeZone:"Europe/Paris",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit",hourCycle:"h23"}).formatToParts(new Date(ms)).forEach(function(x){ o[x.type]=x.value; });
+    var w=Date.UTC(+o.year,+o.month-1,+o.day,+o.hour%24,+o.minute,+o.second); var dd=Math.round((w-Math.floor(ms/1000)*1000)/60000); if(dd===60||dd===120) return dd; }catch(_e){}
+  // repli : règle européenne (heure d'été du dernier dimanche de mars 01:00 UTC au dernier dimanche d'octobre 01:00 UTC)
+  var y=new Date(ms).getUTCFullYear(), dim=function(m){ var t=Date.UTC(y,m+1,0,1); return t-new Date(t).getUTCDay()*86400000; };
+  return (ms>=dim(2)&&ms<dim(9))?120:60;
+}
+// Date (AAAA-MM-JJ) + heure (HH:MM[:SS]) de Paris -> instant (Date). Heure inexistante (passage à l'heure d'été) ou ambiguë
+// (retour à l'heure d'hiver) : heure normale (UTC+1), comme PostgreSQL (« AT TIME ZONE 'Europe/Paris' »).
+function lxParisVersInstant(ymd, hm){
+  var m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ymd||"")), h=/^(\d{1,2}):(\d{2})(?::(\d{2}))?/.exec(String(hm==null?"00:00":hm));
+  if(!m||!h) return null;
+  var w=Date.UTC(+m[1],+m[2]-1,+m[3],+h[1],+h[2],+(h[3]||0));
+  var ok=[]; [60,120].forEach(function(dec){ var t=w-dec*60000; if(_lxParisDecalage(t)===dec) ok.push(t); });
+  return new Date(ok.length===1?ok[0]:w-60*60000);
+}
+// Instant -> {ymd, hm} en heure de Paris
+function lxInstantVersParis(x){
+  var ms=_lxPromoMs(x); if(!isFinite(ms)) return null;
+  var d=new Date(ms+_lxParisDecalage(ms)*60000), p=function(n){ return (n<10?"0":"")+n; };
+  return {ymd:d.getUTCFullYear()+"-"+p(d.getUTCMonth()+1)+"-"+p(d.getUTCDate()), hm:p(d.getUTCHours())+":"+p(d.getUTCMinutes())};
+}
+// Chaîne ISO avec décalage (contrat § 0 : jamais toISOString d'une date locale de l'appareil)
+function lxParisIso(ymd, hm){
+  var t=lxParisVersInstant(ymd, hm); if(!t) return null; var ms=t.getTime(), dec=_lxParisDecalage(ms), x=lxInstantVersParis(ms);
+  return x.ymd+"T"+x.hm+":00+"+(dec===120?"02":"01")+":00";
+}
+function _lxPromoRemiseUnitaire(P, prix){
+  return _lxPromoRemiseC(P&&P.type, P&&P.valeur, _lxCentimes(prix))/100; // 2026-11-18 (lot 3b) : arithmétique entière, identique au serveur
+}
+// Remise de la ligne : remise unitaire arrondie au centime x quantité ; promo « cumulable » + carte : carte calculée sur le reste.
+function _lxPromoMontantLigne(it, P){
+  var q=Number(it.qty)||1, brutC=_lxCentimes(it.price)*q;
+  var remC=Math.floor(_lxPromoRemiseC(P.type, P.valeur, _lxCentimes(it.price))*q+0.5);
+  if(P.cumulable&&P.carte&&Number(P.carte.pct)>0) remC=remC+Math.floor(((brutC-remC)*Math.round(Number(P.carte.pct)*100)+5000)/10000);
+  return Math.max(0, Math.min(remC, brutC))/100;
+}
+// Instant d'un rendez-vous : date + heure de PARIS (avant : heure de l'appareil)
+function _lxPromoInstant(date, heure){ try{ if(date){ var d=lxParisVersInstant(String(date).slice(0,10), String(heure||"12:00").slice(0,5)); if(d&&!isNaN(d.getTime())) return d; } }catch(_e){} return new Date(); }
+// 2026-11-18 (7.0.6, lot 4) : RDV pris EN LIGNE avec une promo. La remise a été calculée par le SERVEUR à la réservation
+// (rdv_online.promo_detail, jour de la prestation) et déjà déduite du prix enregistré : elle est posée sur la ligne comme une
+// remise saisie en €, SANS relancer le moteur de promos (lxPromoPoser ignore les RDV en ligne) : jamais deux fois la promo.
+// Rien d'autre n'est ajouté à la ligne (clé de travail _lxEur seulement, jamais enregistrée). Total du panier :
+//  - une prestation (ligne au prix enregistré, remises déjà déduites) : prix catalogue + remise = catalogue - prix enregistré,
+//    même total qu'avant ; seulement si le prix n'a pas été modifié depuis la réservation ;
+//  - plusieurs prestations (lignes au prix catalogue) : la remise promo de chaque prestation sur SA ligne (même n°, même prix).
+// Sans promo, données absentes (base pas encore migrée) ou RDV modifié : panier de la 7.0.5 inchangé. Renvoie le nb de lignes.
+function _lxPromoRdvEnLigne(cartItems, a){
+  if(!a||!(a.isOnline||a.onlineId)||!a.onlineId||!Array.isArray(cartItems)) return 0;
+  var m=null; try{ var R=window.RDV_ONLINE||[]; for(var i=0;i<R.length;i++){ if(R[i]&&R[i].id===a.onlineId){ m=R[i]; break; } } }catch(_e){}
+  var D=m&&m.promoDetail;
+  if(!m||!(_lxCentimes(m.remisePromo)>0)||!D||!Array.isArray(D.lignes)||!D.lignes.length) return 0;
+  var libre=function(it, sid, pxC){ return it&&!it.isSep&&!it.isProd&&!it.isPack&&!it.isCarteAbo&&!it._lxPromo&&!(Number(it.remise)>0)&&(Number(it.qty)||1)===1
+    &&String(it.sId)===String(sid)&&_lxCentimes(it.price)===pxC; };
+  var n=0;
+  if(D.lignes.length===1){
+    var l=D.lignes[0], catC=_lxCentimes(l&&l.prix_catalogue), netC=_lxCentimes(m.svcPrix);
+    if(!(_lxCentimes(l&&l.remise_promo)>0)||!(catC>netC)||netC<0) return 0;
+    if(_lxCentimes(D.service_prix)!==netC||_lxCentimes(a.pr)!==netC) return 0; // prix modifié depuis la réservation : rien
+    for(var j=0;j<cartItems.length;j++){ var it=cartItems[j];
+      if(libre(it, l.service_id, netC)){ it.price=catC/100; _lxRemiseLigneFixer(it,"eur",(catC-netC)/100); it._lxEur=(catC-netC)/100; return 1; } }
+    return 0;
+  }
+  var pris=[];
+  D.lignes.forEach(function(l){
+    var rC=_lxCentimes(l&&l.remise_promo), catC=_lxCentimes(l&&l.prix_catalogue); if(!(rC>0)||!(catC>0)) return;
+    for(var j=0;j<cartItems.length;j++){ var it=cartItems[j];
+      if(pris.indexOf(j)<0&&libre(it, l.service_id, catC)){ pris.push(j); _lxRemiseLigneFixer(it,"eur",Math.min(rC,catC)/100); it._lxEur=Math.min(rC,catC)/100; n++; return; } }
+  });
+  return n;
+}
+// Appelée à chaque AJOUT de prestation / forfait / produit. Jamais : bon cadeau, séance ou vente de pack, carte d'abonnement vendue,
+// article libre, acompte, ligne technique, commande Click & Collect. contexte : {source:"caisse"|"rdv", enLigne, instant}.
+// Non cumulable : la plus avantageuse pour le client entre la promo et la carte d'abonnement de la ligne.
+function lxPromoPoser(ligne, contexte){
+  try{
+    var it=ligne, C=contexte||{};
+    if(!it||typeof it!=="object"||it.isSep||it._lxPromo) return false;
+    if(it.isBon||it.isPack||it.packSeance||it.isCarteAbo||it.isLibre||it.isAcompte||it.isAcompteDeduct||it.isAcompteData||it.isAcompteCancel||it.isRetenue||it.isRetour
+       ||it.isCagnotteCredit||it.isCagnotteUse||it.isCaCredit||it.isCaDiscount||it.ccCommandeId||C.source==="cc") return false;
+    if(C.source==="rdv"&&C.enLigne) return false; // RDV en ligne : prix de la réservation, jamais une seconde promo
+    var type=it.isProd?"produit":(it.isForfait?"forfait":"prestation");
+    var id=it.isProd?it.prodId:(it.isForfait?(it.forfaitId!=null?it.forfaitId:it.forfaitIdx):it.sId);
+    if(id==null||id==="") return false;
+    if(!((Number(it.price)||0)*(Number(it.qty)||1)>0)) return false;
+    var carte=(it.carteAboRemise&&Number(it.carteAboPct)>0)?{pct:Number(it.carteAboPct),remise:Number(it.remise)||0}:null;
+    if(!carte&&(Number(it.remise)||0)>0) return false; // remise déjà présente (RDV) : gardée
+    var _q=C.instant||new Date(), _qMs=(_q instanceof Date)?_q.getTime():Date.parse(_q);
+    var P=lxPromoTrouver(type, id, _q, it.price); // 2026-11-18 (lot 3b) : prix réel de la ligne
+    if(!P||!(_lxPromoRemiseUnitaire(P, it.price)>0)){
+      // 2026-11-18 (vérif. finale A9) : prestation « à partir de » sans promo au prix de départ : instant gardé (mémoire de l'écran,
+      // jamais enregistré) pour réévaluer la promo au prix final saisi (_lxPromoAuPrixReel), comme lx_prive.promo_applicable(p_prix).
+      if(it.apartir&&type==="prestation"&&isFinite(_qMs)&&typeof LX_PROMOS!=="undefined"&&Array.isArray(LX_PROMOS)&&LX_PROMOS.length) it._lxPromoQuand=_qMs;
+      return false;
+    }
+    var L={id:P.id, nom:String(P.nom||"Promo"), type:P.type, valeur:Number(P.valeur), cumulable:!!P.cumulable, etat:"auto", carte:carte};
+    if(it.apartir&&isFinite(_qMs)) L.quand=_qMs; // 2026-11-18 (A9) : instant de la pose (prestation « à partir de » seulement)
+    var rem=_lxPromoMontantLigne(it, L);
+    if(carte&&!L.cumulable&&!(rem>carte.remise+0.004)) return false; // carte plus avantageuse : gardée
+    it._lxPromo=L;
+    if(carte){ it.carteAboRemise=false; it.carteAboPct=0; }
+    _lxRemiseLigneFixer(it, "eur", rem); // même mécanisme que la remise manuelle en €
+    return true;
+  }catch(_e){ return false; }
+}
+// 2026-11-18 (7.0.6, vérif. finale A9) : prix final d'une prestation « à partir de » saisi en caisse. Règle du serveur
+// (lx_prive.promo_applicable, p_prix = prix réel) : la promo est choisie et calculée AU PRIX FINAL de la ligne, à l'instant de la
+// pose (jour du RDV ou de l'ajout). Un prix fixe donne donc toujours ce prix (40 € relevé à 80 €, prix fixe 30 € : remise 50 €) ;
+// un prix fixe sans effet au prix de départ peut s'appliquer au prix final, et la promo la plus avantageuse peut changer.
+// Remise retirée ou modifiée à la main, remise saisie, RDV en ligne : rien ne change. Rien d'enregistré en plus dans le ticket.
+function _lxPromoAuPrixReel(it){
+  try{
+    if(!it) return;
+    var P=it._lxPromo, q=P?P.quand:it._lxPromoQuand;
+    if(P&&P.etat!=="auto") return;
+    if(!P&&(q==null||(!(it.carteAboRemise&&Number(it.carteAboPct)>0)&&(Number(it.remise)||0)>0))) return;
+    if(P&&q==null){ _lxRemiseLigneFixer(it,"eur",_lxPromoMontantLigne(it,P)); return; }
+    if(P){ delete it._lxPromo; delete it._lxPct; delete it._lxEur; if(P.carte){ it.carteAboRemise=true; it.carteAboPct=P.carte.pct; } }
+    it.remise=(it.carteAboRemise&&Number(it.carteAboPct)>0)?Math.round((Number(it.price)||0)*(Number(it.qty)||1)*Number(it.carteAboPct)/100*100)/100:0;
+    delete it._lxPromoQuand;
+    if(!lxPromoPoser(it,{source:"caisse", instant:new Date(q)})&&!it._lxPromoQuand) it._lxPromoQuand=q;
+  }catch(_e){}
+}
+function _lxPromoDroit(libelle, suite){
+  if(typeof hasPermission==="function"&&!hasPermission("discount")){ if(typeof requireAdmin==="function"){ requireAdmin(libelle, suite); } return false; }
+  return true;
+}
+function lxPromoRetirer(idx){
+  if(!_lxPromoDroit("Retirer une promo", function(){ lxPromoRetirer(idx); })) return;
+  var it=_tk&&_tk.items?_tk.items[idx]:null, P=it&&it._lxPromo; if(!P||P.etat==="retiree"){ showCaisse(); return; }
+  var av=Number(it.remise)||0; P.etat="retiree"; delete it._lxPct; delete it._lxEur;
+  if(P.carte){ it.carteAboRemise=true; it.carteAboPct=P.carte.pct; it.remise=Math.round((Number(it.price)||0)*(Number(it.qty)||1)*P.carte.pct/100*100)/100; } else it.remise=0;
+  try{ if(typeof auditLog==="function") auditLog("REMISE_PROMO_RETIREE","Ticket en cours : "+String(it.name||"")+" promo "+P.nom+" ("+P.id+") -"+av.toFixed(2)+"E -> -"+(Number(it.remise)||0).toFixed(2)+"E"); }catch(_eA){}
+  _lxReglementTotalAJour(); showCaisse();
+}
+function lxPromoRemettre(idx){
+  if(!_lxPromoDroit("Remettre une promo", function(){ lxPromoRemettre(idx); })) return;
+  var it=_tk&&_tk.items?_tk.items[idx]:null, P=it&&it._lxPromo; if(!P||P.etat==="auto"){ showCaisse(); return; }
+  var av=Number(it.remise)||0; P.etat="auto";
+  if(P.carte){ it.carteAboRemise=false; it.carteAboPct=0; }
+  _lxRemiseLigneFixer(it, "eur", _lxPromoMontantLigne(it, P));
+  try{ if(typeof auditLog==="function") auditLog("REMISE_PROMO_REMISE","Ticket en cours : "+String(it.name||"")+" promo "+P.nom+" ("+P.id+") -"+av.toFixed(2)+"E -> -"+(Number(it.remise)||0).toFixed(2)+"E"); }catch(_eA){}
+  _lxReglementTotalAJour(); showCaisse();
+}
+// Écran de caisse seulement (le ticket imprimé garde « Remise »)
+function _lxPromoLigneEcran(it, idx){
+  var P=it&&it._lxPromo; if(!P) return "";
+  var b='style="background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);color:#fff;border-radius:6px;padding:2px 8px;font-size:10px;cursor:pointer"';
+  var h='<div style="display:flex;align-items:center;gap:6px;padding:0 12px 6px 48px;font-size:11px;color:#f06292">';
+  if(P.etat!=="retiree") h+='<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">🏷 Promo : '+escapeHtml(P.nom)+(P.etat==="modif"?" (modifiée)":"")+'</span><button '+b+' onclick="addItemRemise('+idx+')">Modifier</button><button '+b+' onclick="lxPromoRetirer('+idx+')">Retirer</button>';
+  else h+='<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.7">🏷 Promo « '+escapeHtml(P.nom)+' » retirée</span><button '+b+' onclick="lxPromoRemettre('+idx+')">Remettre</button>';
+  return h+'</div>';
+}
 // === Helper : modifier la quantité d'un item du panier (−/+ buttons) ===
 function _posItemQty(idx, delta){
   if(!_tk || !Array.isArray(_tk.items) || !_tk.items[idx]) return;
@@ -31691,6 +32137,7 @@ function _posItemQty(idx, delta){
     _tk.items.splice(idx, 1);
   } else {
     it.qty = newQty;
+    _lxRemiseLigneRecalc(it); // 2026-11-18 (7.0.6) : remise en % recalculée, remise en € plafonnée
   }
   showCaisse();
 }
@@ -31715,11 +32162,15 @@ function _consolidateCartItems(cartItems){
       var sameSId = (ex.sId||null) === (it.sId||null);
       var sameProd = (ex.prodId||null) === (it.prodId||null);
       var samePrice = Math.abs((Number(ex.price)||0) - (Number(it.price)||0)) < 0.001;
-      var sameRemise = Math.abs((Number(ex.remise)||0) - (Number(it.remise)||0)) < 0.001;
+      // 2026-11-18 (7.0.6) : remise UNITAIRE comparée (centimes, produit en croix) ; avant : remise de la ligne déjà fusionnée
+      // (3 lignes identiques remisées donnaient 2 lignes). Lignes sans remise : comparaison inchangée (0 = 0).
+      var sameRemise = _lxCentimes(ex.remise)*(Number(it.qty)||1) === _lxCentimes(it.remise)*(Number(ex.qty)||1);
       var sameType = (!!ex.isProd) === (!!it.isProd) && (!!ex.isPack) === (!!it.isPack) && (!!ex.isCarteAbo) === (!!it.isCarteAbo);
       var sameName = String(ex.name||"") === String(it.name||"");
       if(sameSId && sameProd && samePrice && sameRemise && sameType && sameName){
         ex.qty = (Number(ex.qty)||1) + (Number(it.qty)||1);
+        // 2026-11-18 (7.0.6) : les remises des deux lignes sont additionnées (avant : celle de la 2e ligne était perdue)
+        if((Number(ex.remise)||0)>0 || (Number(it.remise)||0)>0) ex.remise = (_lxCentimes(ex.remise) + _lxCentimes(it.remise))/100;
         merged = true;
         break;
       }
@@ -31815,6 +32266,8 @@ function mD(id, mode){
     // Cas C : RDV simple
     cartItems=[{sId:a.sId,name:sv?sv.n:"Prestation",price:a.pr,qty:1,remise:0}];
   }
+  // 2026-11-18 (7.0.6) : promo d'une réservation en ligne = remise du serveur posée sur la ligne (jamais le moteur de promos)
+  try{ _lxPromoRdvEnLigne(cartItems, a); }catch(_ePrl){}
   // === Consolidation : fusionne les items identiques en une ligne avec quantité ===
   cartItems = _consolidateCartItems(cartItems);
   // 2026-10-10 : RDV à domicile réservé en ligne -> frais de déplacement ajoutés automatiquement
@@ -31864,6 +32317,10 @@ function mD(id, mode){
   }
   _tk={step:3,stId:a.stId,cId:a.cId,items:cartItems,comment:"",remise:0,apptId:id,acompte:acomp,acompteMode:a.acompteMode||"",acompteTkNum:a.acompteTkNum||null,_linkedApptId:linkedApptId};
   try{ _lxMarquerAPartir(_tk.items, [a, linkedRdv]); }catch(_eAz){} // 2026-10-15 : lignes « à partir de » pré-remplies au minimum, modifiables
+  // 2026-11-18 (7.0.6) : promo du jour de la prestation sur les lignes du RDV saisi dans l'application (jamais sur un RDV en ligne,
+  // dont le prix est celui de la réservation, ni sur une ligne qui a déjà une remise) ; aucune promo tant que lxPromoTrouver renvoie null.
+  try{ var _pmR=a; _tk.items.forEach(function(it){ if(it&&it.isSep){ _pmR=linkedRdv||a; return; }
+    lxPromoPoser(it,{source:"rdv", enLigne:!!(_pmR&&(_pmR.isOnline||_pmR.onlineId)), instant:_lxPromoInstant(_pmR&&_pmR.date, _pmR&&_pmR.time)}); }); }catch(_ePm){}
   // 2026-10-14 (NF525 acompte en ligne) : acompte en ligne du nouveau modèle (ticket scellé au paiement) -> déduit comme un
   // acompte versé au salon (cf. _lxAcompteSalonAmount). Le n° du ticket d'acompte est vérifié/complété avant le scellement
   // (doFinalPayExecute -> _lxAcompteEnLigneAvantEncaissement).
@@ -32007,8 +32464,9 @@ function showClientHistoryFromCaisse(cId){
           h += '<td style="padding:6px 4px;text-align:right;color:rgba(255,255,255,.25)">—</td>';
           h += '<td style="padding:6px 10px;text-align:right;font-weight:700;color:#fff">'+pX.toFixed(2)+'€</td></tr>';
         }
-        // Ligne remise RDV si > 0
-        if(totRemise > 0){
+        // Ligne remise RDV si > 0 — 2026-11-18 (7.0.6) : remise du ticket seule (les remises de ligne sont dans la colonne « Remise »)
+        if(hasItems) totRemise = Math.round((totRemise - _lxTkRemisesLignes(a))*100)/100;
+        if(totRemise > 0.004){
           h += '<tr style="border-top:1px solid rgba(255,255,255,.06)"><td colspan="4" style="padding:6px 10px;text-align:right;color:#4caf50;font-weight:600">Remise ticket :</td><td style="padding:6px 10px;text-align:right;color:#4caf50;font-weight:700">-'+totRemise.toFixed(2)+'€</td></tr>';
         }
         h += '</tbody></table>';
@@ -32260,6 +32718,7 @@ function showCaisse(){
       h+='<div '+_remOnclick+' style="text-align:right;cursor:'+_remCursor+';color:'+(it.remise>0?"#4caf50":"rgba(255,255,255,.45)")+';text-decoration:'+(it.carteAboRemise?"none":"underline dotted")+';text-underline-offset:3px">'+(it.carteAboRemise&&it.carteAboPct?'<div style="font-size:10px">\ud83d\udcb3-'+it.carteAboPct+'%</div><div style="font-size:9px;color:rgba(76,175,80,.7)">-'+it.remise.toFixed(2)+'</div>':it.remise>0?"-"+it.remise.toFixed(2):"+ Remise")+'</div>';
       h+='<div style="text-align:right;font-weight:700;color:#fff">'+itTotal.toFixed(2)+'</div>';
       h+='</div>';
+      if(it._lxPromo) h+=_lxPromoLigneEcran(it, idx); // 2026-11-18 (7.0.6) : « Promo : nom », Modifier / Retirer (écran seulement)
     }
     h+='</div>';
     // Remise ticket
@@ -32671,6 +33130,7 @@ function tkAddForfait(){
 function doAddTkForfait(idx){
   var f=FORFAITS[idx];if(!f)return;
   var ni={sId:null,name:f.n,price:f.p,qty:1,remise:0,isForfait:true,forfaitId:f.id};
+  lxPromoPoser(ni,{source:"caisse"}); // 2026-11-18 (7.0.6)
   if(window._tkAddForClient){
     var ii=-1;for(var i=0;i<_tk.items.length;i++){if(_tk.items[i].isSep&&_tk.items[i].sepCId===window._tkAddForClient)ii=i;}
     if(ii>=0){var ei=_tk.items.length;for(var j=ii+1;j<_tk.items.length;j++){if(_tk.items[j].isSep){ei=j;break;}}_tk.items.splice(ei,0,ni);}
@@ -32914,6 +33374,7 @@ function _lxPrixAPartir(idx){
       var appliquer=function(){
         var avant=Number(it.price)||0; it.price=x;
         if(it.carteAboRemise&&Number(it.carteAboPct)>0) it.remise=Math.round(x*Number(it.carteAboPct)/100*100)/100;
+        _lxPromoAuPrixReel(it); // 2026-11-18 (7.0.6, vérif. finale A9) : promo réévaluée au prix final, règle du serveur
         try{ if(typeof auditLog==="function"&&Math.abs(avant-x)>0.004) auditLog("PRIX_A_PARTIR_DE","Ticket en cours : "+String(it.name||"")+" "+avant.toFixed(2)+"E -> "+x.toFixed(2)+"E (minimum "+mini.toFixed(2)+"E)"); }catch(_eA){}
         showCaisse();
       };
@@ -32972,7 +33433,7 @@ function posAddService(sId, _prixDevis){
   // Check if already in ticket
   for(var i=0;i<_tk.items.length;i++){
     if(!sv.devis&&!sv.apartir&&_tk.items[i].sId===sId&&!_tk.items[i].isSep&&!_tk.items[i].isProd&&!_tk.items[i].isPack){ // 2026-10-15 : « à partir de » = une ligne par prestation (prix propre)
-      _tk.items[i].qty++;showCaisse();return;
+      _tk.items[i].qty++;_lxRemiseLigneRecalc(_tk.items[i]);showCaisse();return; // 2026-11-18 (7.0.6) : remise suit la quantité
     }
   }
   var remAuto=0;var remPct=0;
@@ -32985,6 +33446,7 @@ function posAddService(sId, _prixDevis){
   var _px=sv.devis?_prixDevis:sv.p; if(sv.devis&&carteA&&remPct>0) remAuto=Math.round(_px*remPct/100*100)/100;
   var _ni={sId:sId,name:sv.n,price:_px,qty:1,remise:remAuto,carteAboRemise:remAuto>0,carteAboPct:remPct,devis:!!sv.devis};
   if(sv.apartir&&!sv.devis){ _ni.apartir=true; _ni.prixMin=Number(sv.p)||0; } // 2026-10-15 : prix minimum, modifiable avant paiement
+  lxPromoPoser(_ni,{source:"caisse"}); // 2026-11-18 (7.0.6) : promo éventuelle (aucune tant que lxPromoTrouver renvoie null)
   _tk.items.push(_ni);
   showCaisse();
 }
@@ -33001,10 +33463,12 @@ function posAddProduct(pId){
   if(!pr)return;
   for(var i=0;i<_tk.items.length;i++){
     if(_tk.items[i].prodId===pId&&_tk.items[i].isProd){
-      _tk.items[i].qty++;showCaisse();return;
+      _tk.items[i].qty++;_lxRemiseLigneRecalc(_tk.items[i]);showCaisse();return; // 2026-11-18 (7.0.6)
     }
   }
-  _tk.items.push({sId:null,name:pr.n,price:getProdPrice(pr),qty:1,remise:0,isProd:true,prodId:pr.id});
+  var _niP={sId:null,name:pr.n,price:getProdPrice(pr),qty:1,remise:0,isProd:true,prodId:pr.id};
+  lxPromoPoser(_niP,{source:"caisse"}); // 2026-11-18 (7.0.6)
+  _tk.items.push(_niP);
   showCaisse();
 }
 function filterPosGrid(val){
@@ -34176,6 +34640,7 @@ function doAddTkSvc(svcId, _prixDevis){
   if(sv.devis && _prixDevis===undefined){ var _fc=window._tkAddForClient; window._tkAddForClient=null; _lxPrixDevis(sv, function(x){ window._tkAddForClient=_fc; doAddTkSvc(svcId, x); }); return; }
   var ni={sId:svcId,name:sv.n,price:(sv.devis?_prixDevis:sv.p),qty:1,remise:0,devis:!!sv.devis};
   if(sv.apartir&&!sv.devis){ ni.apartir=true; ni.prixMin=Number(sv.p)||0; } // 2026-10-15
+  lxPromoPoser(ni,{source:"caisse"}); // 2026-11-18 (7.0.6)
   if(window._tkAddForClient){var ii=-1;for(var i=0;i<_tk.items.length;i++){if(_tk.items[i].isSep&&_tk.items[i].sepCId===window._tkAddForClient)ii=i;}if(ii>=0){var ei=_tk.items.length;for(var j=ii+1;j<_tk.items.length;j++){if(_tk.items[j].isSep){ei=j;break;}}_tk.items.splice(ei,0,ni);}else{_tk.items.push(ni);}window._tkAddForClient=null;}else{_tk.items.push(ni);}
   showCaisse();
 }
@@ -34301,6 +34766,7 @@ function tkAddProductCat(cat){
 function doAddTkProd(idx){
   var p=PRODS[idx];if(!p)return;
   var ni={sId:null,name:p.n,price:getProdPrice(p),qty:1,remise:0,isProd:true,prodId:p.id};
+  lxPromoPoser(ni,{source:"caisse"}); // 2026-11-18 (7.0.6)
   if(window._tkAddForClient){var ii=-1;for(var i=0;i<_tk.items.length;i++){if(_tk.items[i].isSep&&_tk.items[i].sepCId===window._tkAddForClient)ii=i;}if(ii>=0){var ei=_tk.items.length;for(var j=ii+1;j<_tk.items.length;j++){if(_tk.items[j].isSep){ei=j;break;}}_tk.items.splice(ei,0,ni);}else{_tk.items.push(ni);}window._tkAddForClient=null;}else{_tk.items.push(ni);}
   showCaisse();
 }
@@ -34351,9 +34817,12 @@ function doApplyRemise(idx,type){
   var v=parseFloat(document.getElementById("remVal").value)||0;
   if(!isFinite(v)||v<0) v=0; // 2026-10-14 audit : remise négative refusée (elle augmentait le prix sans trace)
   var it=_tk.items[idx]; if(!it){ showCaisse(); return; }
-  if(!(Number(it.price)*Number(it.qty)>0)){ it.remise=0; showCaisse(); return; } // pas de remise sur une ligne nulle / négative
-  if(type==="eur"){it.remise=Math.min(v,it.price*it.qty);}
-  else{var pct=Math.min(v,100);it.remise=Math.round(it.price*it.qty*pct/100*100)/100;}
+  var _pmAv=Number(it.remise)||0;
+  // pas de remise sur une ligne nulle / négative ; 2026-11-18 (7.0.6) : calcul inchangé, déplacé dans _lxRemiseLigneFixer (% gardé pour la quantité)
+  if(!_lxRemiseLigneFixer(it,type,v)){ showCaisse(); return; }
+  if(type==="eur"&&v>0) it._lxEur=v; // 2026-11-18 (7.0.6) : montant saisi gardé pour la quantité (clé de travail, jamais dans le ticket enregistré)
+  // 2026-11-18 (7.0.6) : remise d'une promo modifiée par l'opérateur -> tracée
+  if(it._lxPromo&&it._lxPromo.etat!=="retiree"){ it._lxPromo.etat="modif"; try{ if(typeof auditLog==="function") auditLog("REMISE_PROMO_MODIFIEE","Ticket en cours : "+String(it.name||"")+" promo "+it._lxPromo.nom+" ("+it._lxPromo.id+") -"+_pmAv.toFixed(2)+"E -> -"+(Number(it.remise)||0).toFixed(2)+"E"); }catch(_eA){} }
   _lxReglementTotalAJour();
   showCaisse();
 }
@@ -34707,6 +35176,7 @@ function _lxFidAvantReglement(suite){
     htm+='<div style="font-size:34px;margin-bottom:6px">\ud83c\udfc6</div><h2 style="color:var(--gold)">Remise fid\u00e9lit\u00e9 disponible</h2>';
     htm+='<div style="font-size:14px;margin-bottom:4px"><strong>'+cNameH(cl)+'</strong> a atteint '+pts+'/'+seuil+' points.</div>';
     htm+='<div style="font-size:13px;color:rgba(255,255,255,.65);margin-bottom:14px">Remise de <strong style="color:var(--gold)">\u2212'+amt.toFixed(2)+' \u20ac</strong>. D\u00e9cidez <strong>avant</strong> le r\u00e8glement pour que le montant \u00e0 encaisser soit le bon.</div>';
+    htm+=_lxFidArbitrageNote(); // 2026-11-18 (7.0.6)
     htm+='<div style="display:flex;flex-direction:column;gap:8px">';
     htm+='<button class="btn bg" style="width:100%;padding:13px" onclick="cM();applyFidEarly(\''+cl.id+'\','+amt+',0);var f=window._lxFidSuite;window._lxFidSuite=null;f&&f();">\u2705 Appliquer \u00b7 compteur \u00e0 0</button>';
     htm+='<button class="btn" style="width:100%;padding:13px;background:rgba(200,168,78,.15);color:var(--gold);border:1px solid rgba(200,168,78,.3)" onclick="cM();applyFidEarly(\''+cl.id+'\','+amt+',1);var f=window._lxFidSuite;window._lxFidSuite=null;f&&f();">\u2705 Appliquer \u00b7 compteur \u00e0 1</button>';
@@ -35222,7 +35692,8 @@ function doFinalPay(method){
   // Case 1: Client has reached the threshold -> propose discount
   if(currentPoints>=fidSeuil){
     // 2026-10-17 audit réglages (#47) : montant fixe plafonné à la base éligible (« s'applique sur » respecté), comme lxFidRewardAmount
-    var remiseAmt=fidType==="pourcentage"?Math.round(lxFidEligibleTotal()*fidVal/100*100)/100:Math.min(Number(fidVal)||0, lxFidEligibleTotal());
+    var remiseAmt=_lxFidArbitrage()?lxFidRewardAmount():(fidType==="pourcentage"?Math.round(lxFidEligibleTotal()*fidVal/100*100)/100:Math.min(Number(fidVal)||0, lxFidEligibleTotal()));  // 2026-11-18 (7.0.6) : arbitrage promo / fidélité
+    var _fidNul=_lxFidArbitrageNul(); // 2026-11-18 (7.0.6, A7) : promo plus avantageuse, remise fidélité à 0 € : rien à appliquer, compteur gardé
     var htm='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-width:420px">';
     // Bandeau info clients skipp\u00e9s pour cause de carte abo (multi-client)
     if(_tk._fidSkippedAbo && _tk._fidSkippedAbo.length){
@@ -35235,10 +35706,12 @@ function doFinalPay(method){
     htm+='<div style="padding:14px;background:rgba(200,168,78,.1);border:1px solid rgba(200,168,78,.3);border-radius:10px;margin-bottom:14px">';
     htm+='<div style="font-size:12px;color:rgba(255,255,255,.5)">Remise '+fidVal+fidU+' bonus fid\u00e9lit\u00e9</div>';
     htm+='<div style="font-size:28px;font-weight:900;color:var(--gold)">-'+remiseAmt.toFixed(2)+' \u20ac</div></div>';
+    htm+=_lxFidArbitrageNote(); // 2026-11-18 (7.0.6)
+    if(_fidNul) htm+=_lxFidNulNote();
     htm+='<div style="display:flex;flex-direction:column;gap:8px">';
-    htm+='<button class="btn bg" style="width:100%;padding:14px;font-size:14px;text-align:left" onclick="doFidDiscount(\''+cId+'\','+remiseAmt+',0,\''+method+'\')"><strong>\u2705 Appliquer la remise \u2192 compteur \u00e0 0</strong><br><span style="font-size:11px;color:rgba(255,255,255,.5)">(La remise est appliqu\u00e9e et le compteur fid\u00e9lit\u00e9 repart de z\u00e9ro)</span></button>';
-    htm+='<button class="btn" style="width:100%;padding:14px;font-size:14px;text-align:left;background:rgba(200,168,78,.15);color:var(--gold);border:1px solid rgba(200,168,78,.3)" onclick="doFidDiscount(\''+cId+'\','+remiseAmt+',1,\''+method+'\')"><strong>\u2705 Appliquer la remise \u2192 compteur \u00e0 1</strong><br><span style="font-size:11px;color:rgba(255,255,255,.4)">(La remise est appliqu\u00e9e et ce passage compte d\u00e9j\u00e0 comme 1er point)</span></button>';
-    htm+='<button class="btn" style="width:100%;padding:14px;font-size:12px;text-align:left;background:rgba(255,255,255,.04);color:rgba(255,255,255,.5)" onclick="doFidSkip(\''+cId+'\',\''+method+'\')"><strong>\u274c Ne pas appliquer la remise</strong><br><span style="font-size:11px;color:rgba(255,255,255,.3)">(Pas de remise, pas de point ajout\u00e9. La remise sera repropos\u00e9e au prochain encaissement)</span></button>';
+    if(!_fidNul) htm+='<button class="btn bg" style="width:100%;padding:14px;font-size:14px;text-align:left" onclick="doFidDiscount(\''+cId+'\','+remiseAmt+',0,\''+method+'\')"><strong>\u2705 Appliquer la remise \u2192 compteur \u00e0 0</strong><br><span style="font-size:11px;color:rgba(255,255,255,.5)">(La remise est appliqu\u00e9e et le compteur fid\u00e9lit\u00e9 repart de z\u00e9ro)</span></button>';
+    if(!_fidNul) htm+='<button class="btn" style="width:100%;padding:14px;font-size:14px;text-align:left;background:rgba(200,168,78,.15);color:var(--gold);border:1px solid rgba(200,168,78,.3)" onclick="doFidDiscount(\''+cId+'\','+remiseAmt+',1,\''+method+'\')"><strong>\u2705 Appliquer la remise \u2192 compteur \u00e0 1</strong><br><span style="font-size:11px;color:rgba(255,255,255,.4)">(La remise est appliqu\u00e9e et ce passage compte d\u00e9j\u00e0 comme 1er point)</span></button>';
+    htm+='<button class="btn" style="width:100%;padding:14px;font-size:12px;text-align:left;background:rgba(255,255,255,.04);color:rgba(255,255,255,.5)" onclick="doFidSkip(\''+cId+'\',\''+method+'\')"><strong>'+(_fidNul?'\u23ed\ufe0f Continuer sans remise fid\u00e9lit\u00e9':'\u274c Ne pas appliquer la remise')+'</strong><br><span style="font-size:11px;color:rgba(255,255,255,.3)">(Pas de remise, pas de point ajout\u00e9. La remise sera repropos\u00e9e au prochain encaissement)</span></button>';
     htm+='</div>';
     htm+='</div></div>';
     document.getElementById("modal").innerHTML=htm;
@@ -35285,7 +35758,9 @@ function doFidSkip(cId,method){
   doFinalPay(method);
 }
 function doFidDiscount(cId,amount,resetTo,method){
+  if(!(Number(amount)>0)&&_lxFidArbitrageNul()){ doFidSkip(cId,method); return; } // 2026-11-18 (7.0.6, A7) : 0 € -> compteur gardé
   if(!_tk._fidResults)_tk._fidResults={};
+  _lxFidPromoRetirerPourFid(cId); // 2026-11-18 (7.0.6) : promo retirée là où la remise fidélité est plus avantageuse
   _tk._fidResults[cId]={action:"discount",amount:amount,resetTo:resetTo};
   _tk.remise=(_tk.remise||0)+amount;
   _tk.remiseAuto=(Number(_tk.remiseAuto)||0)+amount; // FIX 2026-08-31 : part non manuelle, protegee de l'ecrasement par une remise saisie
@@ -35318,7 +35793,85 @@ function _lxFidType(){
   return (!SC.fideliteType||SC.fideliteType==="pourcentage")?"pourcentage":"montant";
 }
 window._lxFidType=_lxFidType;
+// === 2026-11-18 (7.0.6, lot 3b) : PROMO / REMISE FIDÉLITÉ (mode « passages ») — la plus avantageuse pour le client ===
+// Une ligne en promo NON cumulable (posée automatiquement, non modifiée) ne reçoit pas la remise fidélité. Au règlement, on
+// compare toutes les façons de faire (garder ou retirer la promo de chaque ligne concernée) et on retient celle qui donne la
+// plus grosse remise totale au client (promos gardées + remise fidélité) ; à égalité, les promos sont gardées.
+// Sans ligne en promo non cumulable : calcul 7.0.5 inchangé (lxFidEligibleTotal / lxFidRewardAmount).
+function _lxFidPromoLignes(){
+  var L=[]; ((_tk&&_tk.items)||[]).forEach(function(it,i){ var P=it&&it._lxPromo; if(P&&P.etat==="auto"&&P.cumulable!==true&&!it.isSep&&(Number(it.remise)||0)>0) L.push(i); }); return L;
+}
+// Remise de la ligne si la promo est retirée (carte d'abonnement remise en place, sinon 0), comme lxPromoRetirer
+function _lxFidRemiseSansPromo(it){
+  var P=it._lxPromo; if(P&&P.carte&&Number(P.carte.pct)>0) return Math.round((Number(it.price)||0)*(Number(it.qty)||1)*Number(P.carte.pct)/100*100)/100; return 0;
+}
+// opt (mode « CA cumulé », remise débloquée au seuil) : {type:"pourcentage"|"montant", val, sur:"tout"} ; absent = mode « passages ».
+function _lxFidArbitrage(opt){
+  try{
+    if(!_tk||!_tk.items) return null;
+    var L=_lxFidPromoLignes(); if(!L.length) return null;
+    var FC=window.FIDCONF||{}, SC=window.SITE_CONFIG||{}, sur=opt?opt.sur:(FC.remiseSur||"prestations");
+    var type=opt?opt.type:_lxFidType(), val=opt?Number(opt.val):Number(FC.remise||SC.fideliteValeur||10);
+    var k=L.length, nb=(k<=10)?(1<<k):2, best=null;
+    for(var m=0;m<nb;m++){
+      var mask=(k<=10)?m:(m?(1<<k)-1:0), retire={}, lignes=0, b=0;
+      L.forEach(function(idx,j){ if(mask&(1<<j)) retire[idx]=1; });
+      _tk.items.forEach(function(it,i){
+        if(!it||it.isSep) return;
+        var enPromo=L.indexOf(i)>=0, rem=enPromo?(retire[i]?_lxFidRemiseSansPromo(it):(Number(it.remise)||0)):(Number(it.remise)||0);
+        if(enPromo) lignes+=rem;
+        if(enPromo&&!retire[i]) return; // promo gardée, non cumulable : hors assiette fidélité
+        if(sur!=="tout"&&(it.isProd||it.prodId||it.isPack||it.isCarteAbo)) return;
+        b+=(it.price||0)*(it.qty||1)-rem;
+      });
+      b=Math.max(0,Math.round(b*100)/100);
+      var fid=type==="pourcentage"?Math.round(b*val/100*100)/100:Math.min(val,b);
+      var tot=Math.round((lignes+fid)*100)/100, n=Object.keys(retire).length;
+      if(!best||tot>best.total+0.004||(Math.abs(tot-best.total)<=0.004&&n<best.retirer.length)) best={total:tot, montant:fid, retirer:Object.keys(retire).map(Number)};
+    }
+    return best;
+  }catch(_e){ return null; }
+}
+// Retire la promo des lignes choisies par l'arbitrage (sans droit « remise » : en faveur du client), tracé.
+function _lxFidPromoRetirerPourFid(cId, opt){
+  var A=_lxFidArbitrage(opt); if(!A||!A.retirer.length) return [];
+  var ids=[];
+  A.retirer.forEach(function(i){
+    var it=_tk.items[i], P=it&&it._lxPromo; if(!P||P.etat!=="auto") return;
+    var av=Number(it.remise)||0; P.etat="retiree"; P.parFid=String(cId||""); delete it._lxPct; delete it._lxEur;
+    if(P.carte){ it.carteAboRemise=true; it.carteAboPct=P.carte.pct; } it.remise=_lxFidRemiseSansPromo(it);
+    ids.push(i);
+    try{ if(typeof auditLog==="function") auditLog("REMISE_PROMO_RETIREE","Ticket en cours : "+String(it.name||"")+" promo "+P.nom+" ("+P.id+") -"+av.toFixed(2)+"E -> -"+(Number(it.remise)||0).toFixed(2)+"E (remise fid\u00e9lit\u00e9 plus avantageuse pour le client)"); }catch(_eA){}
+  });
+  return ids;
+}
+// Annulation de la remise fidélité : les promos retirées pour elle reviennent
+function _lxFidPromoRemettre(cId){
+  ((_tk&&_tk.items)||[]).forEach(function(it){
+    var P=it&&it._lxPromo; if(!P||P.etat!=="retiree"||P.parFid!==String(cId||"")) return;
+    P.etat="auto"; delete P.parFid; if(P.carte){ it.carteAboRemise=false; it.carteAboPct=0; }
+    _lxRemiseLigneFixer(it,"eur",_lxPromoMontantLigne(it,P));
+    try{ if(typeof auditLog==="function") auditLog("REMISE_PROMO_REMISE","Ticket en cours : "+String(it.name||"")+" promo "+P.nom+" ("+P.id+") remise en place (remise fid\u00e9lit\u00e9 annul\u00e9e)"); }catch(_eA){}
+  });
+}
+// 2026-11-18 (7.0.6, vérif. finale A7) : arbitrage dont la remise fidélité vaut 0 € (la promo, non cumulable, est plus avantageuse
+// pour le client et l'assiette restante est nulle) : la récompense n'est NI appliquée NI consommée (compteur, CA cumulé gardés).
+// Sans ligne en promo non cumulable : toujours faux (comportement 7.0.5 inchangé).
+function _lxFidArbitrageNul(opt){ var A=_lxFidArbitrage(opt); return !!(A&&!(Number(A.montant)>0)); }
+function _lxFidCaTotal(){ var t=0; ((_tk&&_tk.items)||[]).forEach(function(it){ if(!it.isSep) t+=it.price*it.qty-(it.remise||0); }); return t-((_tk&&_tk.remise)||0); } // même total que doFinalPay
+function _lxFidNulNote(){ return '<div style="font-size:12px;color:#f8bbd0;background:rgba(233,30,99,.08);border:1px solid rgba(233,30,99,.3);border-radius:8px;padding:8px 10px;margin:0 0 12px;text-align:left;line-height:1.45">\ud83c\udff7 La promo en cours est plus avantageuse pour le client : la remise fid\u00e9lit\u00e9 vaudrait 0,00 \u20ac sur ce ticket. Elle n\u2019est pas utilis\u00e9e : le compteur du client est gard\u00e9 et la remise sera repropos\u00e9e au prochain passage.</div>'; }
+// Texte d'information des fenêtres de remise fidélité (vide sans ligne en promo non cumulable)
+function _lxFidArbitrageNote(opt){
+  var A=_lxFidArbitrage(opt); if(!A) return "";
+  var noms=function(ix){ return ix.map(function(i){ return escapeHtml(String((_tk.items[i]&&_tk.items[i].name)||"")); }).join(", "); };
+  var garde=_lxFidPromoLignes().filter(function(i){ return A.retirer.indexOf(i)<0; });
+  var t="";
+  if(A.retirer.length) t+="Plus avantageux pour le client : la remise fid\u00e9lit\u00e9 remplace la promo sur "+noms(A.retirer)+". ";
+  if(garde.length) t+="Promo gard\u00e9e (non cumulable, plus avantageuse) : "+noms(garde)+" ne compte pas dans la remise fid\u00e9lit\u00e9.";
+  return t?'<div style="font-size:12px;color:#f8bbd0;background:rgba(233,30,99,.08);border:1px solid rgba(233,30,99,.3);border-radius:8px;padding:8px 10px;margin:0 0 12px;text-align:left;line-height:1.45">\ud83c\udff7 '+t+'</div>':"";
+}
 function lxFidRewardAmount(){
+  var _arbF=_lxFidArbitrage(); if(_arbF) return _arbF.montant; // 2026-11-18 (7.0.6) : lignes en promo non cumulable
   var FC=window.FIDCONF||{}, SC=window.SITE_CONFIG||{};
   var type=_lxFidType(); // 2026-10-14 audit
   var val=Number(FC.remise||SC.fideliteValeur||10);
@@ -35336,6 +35889,7 @@ function lxFidUseReward(cId){
   htm+='<h2 style="color:var(--gold)">Remise fidélité</h2>';
   htm+='<div style="font-size:14px;margin-bottom:4px"><strong>'+cNameH(cl)+'</strong></div>';
   htm+='<div style="font-size:13px;color:rgba(255,255,255,.6);margin-bottom:14px">Remise de <strong style="color:var(--gold)">−'+amt.toFixed(2)+' €</strong> (sur '+surTxt+').<br>Que faire du compteur après ?</div>';
+  htm+=_lxFidArbitrageNote(); // 2026-11-18 (7.0.6)
   htm+='<div style="display:flex;flex-direction:column;gap:8px">';
   htm+='<button class="btn bg" style="width:100%;padding:14px;text-align:left" onclick="cM();applyFidEarly(\''+cId+'\','+amt+',0)"><strong>✅ Appliquer · compteur à 0</strong><br><span style="font-size:11px;color:rgba(255,255,255,.5)">La remise est posée, le compteur repart de zéro</span></button>';
   htm+='<button class="btn" style="width:100%;padding:14px;text-align:left;background:rgba(200,168,78,.15);color:var(--gold);border:1px solid rgba(200,168,78,.3)" onclick="cM();applyFidEarly(\''+cId+'\','+amt+',1)"><strong>✅ Appliquer · compteur à 1</strong><br><span style="font-size:11px;color:rgba(255,255,255,.4)">Ce passage compte déjà comme 1er point</span></button>';
@@ -35344,8 +35898,10 @@ function lxFidUseReward(cId){
   document.getElementById("modal").innerHTML=htm;
 }
 function applyFidEarly(cId,amount,resetTo){
+  if(!(Number(amount)>0)&&_lxFidArbitrageNul()) return; // 2026-11-18 (7.0.6, A7) : 0 € -> rien d'appliqué, compteur gardé
   if(!_tk._fidResults)_tk._fidResults={};
   if(_tk._fidResults[cId])return; // anti-double
+  _lxFidPromoRetirerPourFid(cId); // 2026-11-18 (7.0.6) : promo retirée là où la remise fidélité est plus avantageuse
   _tk._fidResults[cId]={action:"discount",amount:amount,resetTo:resetTo};
   _tk.remise=(_tk.remise||0)+amount;
   _tk.remiseAuto=(Number(_tk.remiseAuto)||0)+amount; // FIX 2026-08-31 : part non manuelle, protegee de l'ecrasement par une remise saisie
@@ -35359,11 +35915,13 @@ function lxFidUndoReward(cId){
     _tk.remiseAuto=Math.max(0,Math.round(((Number(_tk.remiseAuto)||0)-(fr.amount||0))*100)/100); // 2026-10-14 audit : la part « automatique » protégée suit l'annulation (sinon la remise revenait à la saisie suivante)
     _tk._fidDiscountApplied=Math.max(0,(_tk._fidDiscountApplied||0)-(fr.amount||0));
     delete _tk._fidResults[cId];
+    _lxFidPromoRemettre(cId); // 2026-11-18 (7.0.6) : promos retirées pour la fidélité remises en place
     try{ _lxReglementTotalAJour(); }catch(_eRg){}
   }
   _tk.step=5; showCaisse();
 }
 function applyFidDiscount(amount,method){
+  _lxFidPromoRetirerPourFid(""); // 2026-11-18 (7.0.6)
   _tk.remise=(_tk.remise||0)+amount;
   _tk.remiseAuto=(Number(_tk.remiseAuto)||0)+amount; // FIX 2026-08-31 : part non manuelle, protegee de l'ecrasement par une remise saisie
   _tk._fidHandled=true;
@@ -35441,6 +35999,10 @@ function doFidCagnotteUse(cId, useAmt, newCredit, method){
 // À chaque ticket : total ajouté à cl.caTotal.
 // Quand caTotal >= seuil : on propose une remise et on remet à 0.
 // =====================================================================
+// 2026-11-18 (7.0.6) : la remise débloquée au seuil du « CA cumulé » est une remise fidélité sur ce ticket -> même arbitrage que les
+// « passages » (lignes en promo non cumulable : promo gardée hors assiette, ou retirée si la remise fidélité est plus avantageuse).
+// Sans ligne en promo non cumulable : calcul 7.0.5 inchangé. Assiette : tout le ticket (comme la remise CA de la 7.0.5).
+function _lxFidCaOpt(){ var FC=window.FIDCONF||{}; return {type:(FC.caType||"amount")==="percent"?"pourcentage":"montant", val:Number(FC.caRemise)||25, sur:"tout"}; }
 function lxFidShowCA(cId, cl, total, method){
   var FC=window.FIDCONF||{};
   var seuil=Number(FC.caSeuil)||500;
@@ -35452,7 +36014,8 @@ function lxFidShowCA(cId, cl, total, method){
 
   // === Cas 1 : seuil ATTEINT après ce ticket → propose remise ===
   if(newTotal>=seuil){
-    var remiseAmt=caType==="percent"?Math.round(total*caRemise/100*100)/100:caRemise;
+    var _arbCA=_lxFidArbitrage(_lxFidCaOpt()); // 2026-11-18 (7.0.6) : null sans ligne en promo non cumulable
+    var remiseAmt=_arbCA?_arbCA.montant:(caType==="percent"?Math.round(total*caRemise/100*100)/100:caRemise);
     var htm='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-width:440px">';
     htm+='<div style="font-size:36px;margin-bottom:8px">🏆</div>';
     htm+='<h2 style="color:var(--gold)">Seuil de fidélité atteint !</h2>';
@@ -35462,8 +36025,11 @@ function lxFidShowCA(cId, cl, total, method){
     htm+='<div style="font-size:11px;color:rgba(255,255,255,.4);margin-top:6px">Seuil : '+seuil.toFixed(2)+' €</div>';
     htm+='<div style="font-size:24px;font-weight:900;color:var(--gold);margin-top:8px">Remise '+caRemise+caU+' débloquée</div>';
     htm+='<div style="font-size:13px;color:rgba(255,255,255,.7);margin-top:4px">soit <strong>-'+remiseAmt.toFixed(2)+' €</strong></div></div>';
+    if(_arbCA) htm+=_lxFidArbitrageNote(_lxFidCaOpt()); // 2026-11-18 (7.0.6)
+    var _caNul=!!(_arbCA&&!(Number(remiseAmt)>0)); // 2026-11-18 (7.0.6, A7) : remise 0 € -> seulement « Reporter » (CA cumulé gardé)
+    if(_caNul) htm+=_lxFidNulNote();
     htm+='<div style="display:flex;flex-direction:column;gap:8px">';
-    htm+='<button class="btn bg" style="width:100%;padding:14px;font-size:14px;text-align:left" onclick="doFidCaDiscount(\''+cId+'\','+remiseAmt+',\''+method+'\')"><strong>✅ Appliquer la remise → compteur à 0</strong><br><span style="font-size:11px;color:rgba(255,255,255,.5)">Remise immédiate de '+remiseAmt.toFixed(2)+' € · CA cumulé remis à zéro</span></button>';
+    if(!_caNul) htm+='<button class="btn bg" style="width:100%;padding:14px;font-size:14px;text-align:left" onclick="doFidCaDiscount(\''+cId+'\','+remiseAmt+',\''+method+'\')"><strong>✅ Appliquer la remise → compteur à 0</strong><br><span style="font-size:11px;color:rgba(255,255,255,.5)">Remise immédiate de '+remiseAmt.toFixed(2)+' € · CA cumulé remis à zéro</span></button>';
     htm+='<button class="btn" style="width:100%;padding:14px;font-size:12px;text-align:left;background:rgba(255,255,255,.04);color:rgba(255,255,255,.5)" onclick="doFidCaCredit(\''+cId+'\','+total+',\''+method+'\')"><strong>⏭️ Reporter la remise</strong><br><span style="font-size:11px;color:rgba(255,255,255,.3)">Pas de remise maintenant · CA cumulé continue à croître : '+newTotal.toFixed(2)+' €</span></button>';
     htm+='</div></div></div>';
     document.getElementById("modal").innerHTML=htm;
@@ -35494,7 +36060,9 @@ function doFidCaCredit(cId, ticketTotal, method){
 }
 
 function doFidCaDiscount(cId, remiseAmt, method){
+  if(!(Number(remiseAmt)>0)&&_lxFidArbitrageNul(_lxFidCaOpt())){ doFidCaCredit(cId, _lxFidCaTotal(), method); return; } // 2026-11-18 (7.0.6, A7)
   if(!_tk._fidResults)_tk._fidResults={};
+  _lxFidPromoRetirerPourFid(cId, _lxFidCaOpt()); // 2026-11-18 (7.0.6) : promo retirée là où la remise fidélité est plus avantageuse
   _tk._fidResults[cId]={action:"ca_discount", remise:remiseAmt};
   _tk.remise=(_tk.remise||0)+remiseAmt;
   _tk.remiseAuto=(Number(_tk.remiseAuto)||0)+remiseAmt; // FIX 2026-08-31 : part non manuelle, protegee de l'ecrasement par une remise saisie
@@ -35943,7 +36511,7 @@ function _doFinalPayExecuteSync(method){
         // NF525: chain this ticket
         chainTicket(AP[i]);
         // Build ticket HTML and attach for Supabase storage
-        try{AP[i].ticketHtml=buildTicketHTML(AP[i],false);}catch(e){}
+        try{AP[i].ticketHtml=buildTicketHTML(AP[i],false,true);}catch(e){} // 2026-11-18 (7.0.6) : true = ticket scellé maintenant (rendu 7.0.6)
         if(typeof saveAppointment==="function")saveAppointment(AP[i]);
         if(typeof saveTicketToDb==="function")saveTicketToDb(AP[i]); // NF525: table tickets DB
         window._lastSealedApptId=AP[i].id; // FIX 2026-07-11 : source du recu (ecran + impression)
@@ -35981,7 +36549,7 @@ function _doFinalPayExecuteSync(method){
     // NF525: chain this ticket
     chainTicket(newTk);
     // Build ticket HTML and attach for Supabase storage
-    try{newTk.ticketHtml=buildTicketHTML(newTk,false);}catch(e){}
+    try{newTk.ticketHtml=buildTicketHTML(newTk,false,true);}catch(e){} // 2026-11-18 (7.0.6) : true = ticket scellé maintenant (rendu 7.0.6)
     AP.push(newTk);
     // FIX 2026-05-27 : caisse directe -> relier/cloturer la rdv_online correspondante (resa fantome)
     if(typeof _lxFindOnlineRdvForTicket==="function"){ var _roB=_lxFindOnlineRdvForTicket(newTk); if(_roB&&typeof _lxMarkOnlineRdvDone==="function") _lxMarkOnlineRdvDone(_roB, newTk.tkNum); }
@@ -36854,7 +37422,7 @@ function exportTicketsCSV(){
 // (caractères 3, 7, 13 et 19 de la signature base64url), version du logiciel, nombre de lignes,
 // duplicatas numérotés. La signature est calculée côté serveur ; le ticket papier en reprend l'extrait.
 // =====================================================================
-var LX_VERSION="7.0.5", LX_CAISSE="C01"; // 2026-11-12 (7.0.5, MINEURE) : compteur local des n° de ticket jamais repoussé par la série du serveur (900001+, paiements en ligne) ni par une ligne 90000x refusée (au chargement, nextTicketNum, _lxProchainTkNum) ; rien d'autre ne change (enregistré, scellé, imprimé, exporté) ; 2026-11-07 (7.0.4, MINEURE) : impression directe USB ESC/POS + tiroir-caisse ouvert seulement pour les espèces ; mode désactivé par défaut = impression inchangée ; contenu du ticket inchangé (texte tiré de buildTicketHTML après n° légal / signature / enregistrement du duplicata) ; 2026-11-06 (7.0.3, MINEURE) : impression plus rapide — la signature n'est plus attendue 3,5 s (elle n'arrivait jamais à temps), le n° légal garde son attente ; contenu imprimé inchangé ; // 2026-11-06 (7.0.2, MINEURE) : réglages d'impression par appareil (A4 couleur / noir et blanc, ticket 80 / 58 mm, taille du texte, logo converti, aperçu Luxyra, format des Z, ticket d'essai sans valeur), rappel de la note de prestation dès 25 € ; MISE EN PAGE SEULEMENT, contenu du ticket inchangé (buildTicketHTML, classes CSS ajoutées), aucune donnée ni fonction NF525 modifiée ; // 2026-11-06 (7.0.1, MINEURE, accord d'Alexandre) : original imprimé une seule fois puis duplicata enregistré (reçu de fin d'encaissement), n° légal et signature aussi sur l'original d'une vente directe, « Conserver 6 ans » retiré du ticket client, commune d'une prestation à domicile ; aucun format d'empreinte, chaînage, signature, numérotation ni fonction serveur modifié ; // 2026-11-05 (7.0.0) : VERSION MAJEURE (BOI § 340) — requalification des évolutions de sécurisation 6.4 → 6.8.10, nouvelle attestation (racine 7), aucun changement fonctionnel de la caisse ; // 2026-11-05 (6.8.10) : contre-audits 6.8.9 / franchise et audit des problèmes anciens — trace serveur des tickets provisoires renvoyée (JET 125), liste des provisoires figée dans la Z, bons cadeaux à 0 % conservés, table unique des moyens de paiement, n° légal dans le compte client, duplicata de Z strict, PS retiré, config en objet. // 2026-11-05 (6.8.9) : audit v2 — trame « simulation » en mode test, prix unitaire, suivi des tickets provisoires, purge d'essai sans coupure de déclencheur. // 2026-11-05 (6.8.8) : n° légal imprimé, notice et contrôle serveur des archives (audit du 05/11). // 2026-10-29 (-9) : 6.8.7 = factures clients, réserves du contre-audit du lot 4 (lot 4b) : bon à usage unique = ligne « Bon cadeau … (réglé lors de l'achat du bon) » (jamais une remise, TVA acquittée à la vente du bon), remise de ligne détaillée (prix unitaire brut, remise, net) sur la facture et le XML EN 16931, numérotation F-/A- unique expliquée ; aucun calcul de caisse modifié (version MINEURE, dossier docs/dossier-attestation-version-mineure-6.8.7.md) ; 2026-10-28 (-8) : 6.8.6 = protections après enregistrement (lot 4 de l'audit indépendant : M4 colonnes figées des tickets, annulation = contre-ticket ; M10 bons cadeaux : solde dérivé des tickets, journal scellé ; M9 conditions des devis ; mineurs : FEC test, rapport / FEC, lien bon-ticket, Stripe, arrondis, factures clients). // 2026-10-28 : 6.8.5 = règle TVA UNIQUE dans tous les documents (lot 3 de l'audit indépendant, constats M1/M2/M3) : HT et TVA = somme, par taux, des montants enregistrés sur chaque ticket (Z, clôtures, rapport, Excel, ZIP, FEC, EBP / Quadratus, e-mail au comptable, statistiques) ; une ligne de TVA par taux sur le ticket imprimé et le duplicata ; ventilation figée dans le ticket (raw_data.lxTva, hors empreinte) ; documents d'une période passée calculés avec les valeurs ENREGISTRÉES (jamais au taux actuel). Formats d'empreinte, chaînage, signatures, numérotation et JET inchangés (BOI-TVA-DECLA-30-10-30 § 340 : version MINEURE). 2026-10-28 (-6) : 6.8.4 = corrections du contre-audit 3 (6.8.0 à 6.8.3 jamais publiées) : forçage de clôture soumis à un délai serveur de 5 minutes entre deux contrôles (contrôle refait au moment du forçage, heure possible affichée), journées retenues de plus de 60 jours signalées sur la carte « Caisse » (déblocage par l'administrateur Luxyra). 2026-10-28 (-5) : 6.8.3 = corrections du contre-audit final (6.8.0 à 6.8.2 jamais publiées) : journée retenue (ventes encaissées non transmises) -> Z refusée avec cause et marche à suivre, forçage tracé par un administrateur (lx_z_forcer), clôtures dans l'ordre des dates, carte « Caisse » de l'accueil ; date réelle d'une vente reportée SCELLÉE dans le ticket (items[0].lxRep, champ couvert par l'empreinte, format inchangé) ; exports à la date du journal avec la liste des ventes reportées ; seuil de version du serveur 6.8.3 (BOI-TVA-DECLA-30-10-30 § 340 : version MINEURE). 2026-10-28 (-4) : 6.8.2 = corrections du contre-audit (6.8.0 et 6.8.1 jamais publiées) : un ticket encaissé n'est plus jamais abandonné par la file de secours (vente d'une journée déjà close enregistrée sur la journée ouverte, date réelle de vente en mention ; clôture forcée = ticket gardé en file), seuil de version de référence du serveur ; formats de hash, chaînage, signatures et clôtures inchangés (BOI-TVA-DECLA-30-10-30 § 340 : version MINEURE). 2026-10-28 (-3) : 6.8.1 = corrections de l'audit de la 6.8.0 (jamais publiée) : version transmise dans chaque ticket (raw_data.lxVersion) et contrôlée par le serveur, série de n° imprimés propre au serveur (900001+) exclue du compteur des appareils ; formats de hash, chaînage et signatures inchangés (BOI-TVA-DECLA-30-10-30 § 340). 2026-10-28 (-2) : 6.8.0 = version MINEURE (recettes encaissées en ligne enregistrées par le serveur au paiement confirmé, avec la MÊME chaîne de numérotation, empreinte, sceau et signature ; BOI-TVA-DECLA-30-10-30 § 340 : aucune fonction d'inaltérabilité, de sécurisation, de conservation ou d'archivage modifiée). 6.7.0 = version MINEURE (bons cadeaux à usage unique / multiple, CGI art. 256 ter) : formats de hash, chaînage et signatures inchangés (BOI-TVA-DECLA-30-10-30 § 340)
+var LX_VERSION="7.0.6", LX_CAISSE="C01"; // 2026-11-18 (7.0.6, MINEURE, « Promos ») : pose automatique, à l'ajout d'un article en promo, d'une remise de ligne EXISTANTE (it.remise, modifiable ou retirable, tracée) ; remise d'une réservation en ligne en promo reprise du serveur (rdv_online.promo_detail) sur la ligne, sans nouveau calcul ; trois corrections de la remise de ligne (plus de double affichage « REMISE TICKET », remise suivie à la quantité, fusion des lignes) ; aucune donnée nouvelle enregistrée dans le ticket (items, raw_data, ticket_html : ticket imprimé « Remise ») ; formats d'empreinte, chaînage, signature et numérotation inchangés ; // 2026-11-12 (7.0.5, MINEURE) : compteur local des n° de ticket jamais repoussé par la série du serveur (900001+, paiements en ligne) ni par une ligne 90000x refusée (au chargement, nextTicketNum, _lxProchainTkNum) ; rien d'autre ne change (enregistré, scellé, imprimé, exporté) ; 2026-11-07 (7.0.4, MINEURE) : impression directe USB ESC/POS + tiroir-caisse ouvert seulement pour les espèces ; mode désactivé par défaut = impression inchangée ; contenu du ticket inchangé (texte tiré de buildTicketHTML après n° légal / signature / enregistrement du duplicata) ; 2026-11-06 (7.0.3, MINEURE) : impression plus rapide — la signature n'est plus attendue 3,5 s (elle n'arrivait jamais à temps), le n° légal garde son attente ; contenu imprimé inchangé ; // 2026-11-06 (7.0.2, MINEURE) : réglages d'impression par appareil (A4 couleur / noir et blanc, ticket 80 / 58 mm, taille du texte, logo converti, aperçu Luxyra, format des Z, ticket d'essai sans valeur), rappel de la note de prestation dès 25 € ; MISE EN PAGE SEULEMENT, contenu du ticket inchangé (buildTicketHTML, classes CSS ajoutées), aucune donnée ni fonction NF525 modifiée ; // 2026-11-06 (7.0.1, MINEURE, accord d'Alexandre) : original imprimé une seule fois puis duplicata enregistré (reçu de fin d'encaissement), n° légal et signature aussi sur l'original d'une vente directe, « Conserver 6 ans » retiré du ticket client, commune d'une prestation à domicile ; aucun format d'empreinte, chaînage, signature, numérotation ni fonction serveur modifié ; // 2026-11-05 (7.0.0) : VERSION MAJEURE (BOI § 340) — requalification des évolutions de sécurisation 6.4 → 6.8.10, nouvelle attestation (racine 7), aucun changement fonctionnel de la caisse ; // 2026-11-05 (6.8.10) : contre-audits 6.8.9 / franchise et audit des problèmes anciens — trace serveur des tickets provisoires renvoyée (JET 125), liste des provisoires figée dans la Z, bons cadeaux à 0 % conservés, table unique des moyens de paiement, n° légal dans le compte client, duplicata de Z strict, PS retiré, config en objet. // 2026-11-05 (6.8.9) : audit v2 — trame « simulation » en mode test, prix unitaire, suivi des tickets provisoires, purge d'essai sans coupure de déclencheur. // 2026-11-05 (6.8.8) : n° légal imprimé, notice et contrôle serveur des archives (audit du 05/11). // 2026-10-29 (-9) : 6.8.7 = factures clients, réserves du contre-audit du lot 4 (lot 4b) : bon à usage unique = ligne « Bon cadeau … (réglé lors de l'achat du bon) » (jamais une remise, TVA acquittée à la vente du bon), remise de ligne détaillée (prix unitaire brut, remise, net) sur la facture et le XML EN 16931, numérotation F-/A- unique expliquée ; aucun calcul de caisse modifié (version MINEURE, dossier docs/dossier-attestation-version-mineure-6.8.7.md) ; 2026-10-28 (-8) : 6.8.6 = protections après enregistrement (lot 4 de l'audit indépendant : M4 colonnes figées des tickets, annulation = contre-ticket ; M10 bons cadeaux : solde dérivé des tickets, journal scellé ; M9 conditions des devis ; mineurs : FEC test, rapport / FEC, lien bon-ticket, Stripe, arrondis, factures clients). // 2026-10-28 : 6.8.5 = règle TVA UNIQUE dans tous les documents (lot 3 de l'audit indépendant, constats M1/M2/M3) : HT et TVA = somme, par taux, des montants enregistrés sur chaque ticket (Z, clôtures, rapport, Excel, ZIP, FEC, EBP / Quadratus, e-mail au comptable, statistiques) ; une ligne de TVA par taux sur le ticket imprimé et le duplicata ; ventilation figée dans le ticket (raw_data.lxTva, hors empreinte) ; documents d'une période passée calculés avec les valeurs ENREGISTRÉES (jamais au taux actuel). Formats d'empreinte, chaînage, signatures, numérotation et JET inchangés (BOI-TVA-DECLA-30-10-30 § 340 : version MINEURE). 2026-10-28 (-6) : 6.8.4 = corrections du contre-audit 3 (6.8.0 à 6.8.3 jamais publiées) : forçage de clôture soumis à un délai serveur de 5 minutes entre deux contrôles (contrôle refait au moment du forçage, heure possible affichée), journées retenues de plus de 60 jours signalées sur la carte « Caisse » (déblocage par l'administrateur Luxyra). 2026-10-28 (-5) : 6.8.3 = corrections du contre-audit final (6.8.0 à 6.8.2 jamais publiées) : journée retenue (ventes encaissées non transmises) -> Z refusée avec cause et marche à suivre, forçage tracé par un administrateur (lx_z_forcer), clôtures dans l'ordre des dates, carte « Caisse » de l'accueil ; date réelle d'une vente reportée SCELLÉE dans le ticket (items[0].lxRep, champ couvert par l'empreinte, format inchangé) ; exports à la date du journal avec la liste des ventes reportées ; seuil de version du serveur 6.8.3 (BOI-TVA-DECLA-30-10-30 § 340 : version MINEURE). 2026-10-28 (-4) : 6.8.2 = corrections du contre-audit (6.8.0 et 6.8.1 jamais publiées) : un ticket encaissé n'est plus jamais abandonné par la file de secours (vente d'une journée déjà close enregistrée sur la journée ouverte, date réelle de vente en mention ; clôture forcée = ticket gardé en file), seuil de version de référence du serveur ; formats de hash, chaînage, signatures et clôtures inchangés (BOI-TVA-DECLA-30-10-30 § 340 : version MINEURE). 2026-10-28 (-3) : 6.8.1 = corrections de l'audit de la 6.8.0 (jamais publiée) : version transmise dans chaque ticket (raw_data.lxVersion) et contrôlée par le serveur, série de n° imprimés propre au serveur (900001+) exclue du compteur des appareils ; formats de hash, chaînage et signatures inchangés (BOI-TVA-DECLA-30-10-30 § 340). 2026-10-28 (-2) : 6.8.0 = version MINEURE (recettes encaissées en ligne enregistrées par le serveur au paiement confirmé, avec la MÊME chaîne de numérotation, empreinte, sceau et signature ; BOI-TVA-DECLA-30-10-30 § 340 : aucune fonction d'inaltérabilité, de sécurisation, de conservation ou d'archivage modifiée). 6.7.0 = version MINEURE (bons cadeaux à usage unique / multiple, CGI art. 256 ter) : formats de hash, chaînage et signatures inchangés (BOI-TVA-DECLA-30-10-30 § 340)
 window.LX_SIG_CACHE=window.LX_SIG_CACHE||{};
 function _lxSigExtrait(sg){ sg=String(sg||""); return [3,7,13,19].map(function(i){ return sg.charAt(i-1)||""; }).join(""); }
 async function _lxSignerMaintenant(){
@@ -37053,7 +37621,48 @@ function lxRetirerLigne(idx){
   try{ var it=_tk&&_tk.items&&_tk.items[idx]; if(it&&!it.isSep&&!it.isAcompteData&&typeof auditLog==="function") auditLog("ANNULATION_LIGNE",(it.name||"Ligne")+" — "+((Number(it.price)||0)*(Number(it.qty)||1)).toFixed(2)+" € (avant encaissement)"); }catch(_e){}
   _tk.items.splice(idx,1); showCaisse();
 }
-function buildTicketHTML(a, isDuplicate){
+// 2026-11-18 (7.0.6) : « REMISE TICKET » ne reprend plus les remises de ligne (déjà imprimées sous chaque ligne).
+// AUCUNE marque n'est ajoutée au ticket : le HTML conservé (ticket_html, raw_data.ticketHtml, file de secours) d'un ticket sans
+// remise de ligne est identique au caractère près à celui de la 7.0.5 (les deux rendus coïncident alors).
+// Duplicata : les deux rendus des lignes de remise sont construits (7.0.5 = code d'origine À L'IDENTIQUE ; 7.0.6) et l'on garde
+// celui que contient l'original conservé (a.ticketHtml). Original absent ou non reconnu : rendu 7.0.5 (ce que la 7.0.5 imprimait),
+// sauf ticket horodaté (a.ts, enregistré à l'encaissement) à partir de LX_TK_RENDU_REMISE_DEPUIS (vide = jamais).
+// Montants, totaux, TVA : identiques dans les deux rendus.
+var LX_TK_RENDU_REMISE_DEPUIS="";
+function _lxTkRemisesLignes(a){ var c=0; ((a&&a.items)||[]).forEach(function(it){ if(it&&!it.isSep) c+=_lxCentimes(it.remise); }); return c/100; }
+// Lignes « REMISE TICKET », « REMISE / BON CADEAU », « BON CADEAU » du ticket. nouveau faux : code 7.0.5 inchangé.
+function _lxTkLignesRemiseG(a, nouveau){
+  var h="";
+    var _bonV=Number(a.bonVenduRemise)||0, _bonO=Number(a.offertRemise)||0, _codes=[], _codesO=[];
+    (a.payments||[]).forEach(function(p){ var m=String(p&&p.method||""); var mm=m.match(/^Bon cadeau r\u00e9gl\u00e9 (.+)$/); if(mm) _codes.push(mm[1]); var mo=m.match(/^Offert (.+)$/); if(mo) _codesO.push(mo[1]); });
+  if(!nouveau){
+    var _man=Math.round(((Number(a.remise)||0)-_bonV-_bonO)*100)/100;
+    if(!_bonV && !_bonO && _codes.length && a.remise>0){ h+="<tr><td>1</td><td colspan=\"2\" style=\"font-weight:700\">REMISE / BON CADEAU</td><td style=\"text-align:right\">-"+a.remise.toFixed(2)+"</td></tr>"; return h; }
+    if(_man>0.004) h+="<tr><td>1</td><td colspan=\"2\" style=\"font-weight:700\">REMISE TICKET</td><td style=\"text-align:right\">-"+_man.toFixed(2)+"</td></tr>";
+  } else {
+    // a.remise enregistré = remises de ligne + remise du ticket -> ici la remise du ticket seule (centimes entiers)
+    var _remGc=_lxCentimes(a.remise)-_lxCentimes(_lxTkRemisesLignes(a)), _remG=_remGc/100, _manN=(_remGc-_lxCentimes(_bonV)-_lxCentimes(_bonO))/100;
+    if(!_bonV && !_bonO && _codes.length && a.remise>0){ if(_remGc>0) h+="<tr><td>1</td><td colspan=\"2\" style=\"font-weight:700\">REMISE / BON CADEAU</td><td style=\"text-align:right\">-"+_remG.toFixed(2)+"</td></tr>"; return h; }
+    if(_manN>0.004) h+="<tr><td>1</td><td colspan=\"2\" style=\"font-weight:700\">REMISE TICKET</td><td style=\"text-align:right\">-"+_manN.toFixed(2)+"</td></tr>";
+  }
+    if(_bonV>0) h+="<tr><td>1</td><td colspan=\"2\" style=\"font-weight:700\">BON CADEAU "+(_codes.join(", ")||"")+" (D\u00c9J\u00c0 ENCAISS\u00c9 \u00c0 LA VENTE)</td><td style=\"text-align:right\">-"+_bonV.toFixed(2)+"</td></tr>";
+    if(_bonO>0) h+="<tr><td>1</td><td colspan=\"2\" style=\"font-weight:700\">BON CADEAU OFFERT "+(_codesO.join(", ")||"")+"</td><td style=\"text-align:right\">-"+_bonO.toFixed(2)+"</td></tr>";
+  return h;
+}
+// Rendu 7.0.6 ? force : ticket que l'on scelle (encaissement 7.0.6). Sinon : l'original conservé décide (voir plus haut).
+function _lxTkRenduNouveau(a, force){
+  if(force===true) return true;
+  var rA=_lxTkLignesRemiseG(a,false), rN=_lxTkLignesRemiseG(a,true);
+  if(rA===rN) return false; // sans remise de ligne (ou sans écart) : rendus identiques
+  var o=a&&a.ticketHtml;
+  if(typeof o==="string"&&o.length>0){
+    if(rA&&o.indexOf(rA)>=0) return false;
+    if(rN?o.indexOf(rN)>=0:(o.indexOf("lxTkLig")>=0&&o.indexOf(">REMISE TICKET<")<0&&o.indexOf(">REMISE / BON CADEAU<")<0)) return true;
+  }
+  var d=String(LX_TK_RENDU_REMISE_DEPUIS||""), t=Date.parse(String((a&&a.ts)||"")), td=Date.parse(d);
+  return !!(d&&isFinite(td)&&isFinite(t)&&t>=td);
+}
+function buildTicketHTML(a, isDuplicate, _lxScelle){
   var cl=gC(a.cId),sty=gT(a.stId);
   var clN=apptClientLabel(a);
   var total=a.pr;
@@ -37164,15 +37773,7 @@ function buildTicketHTML(a, isDuplicate){
     h+="<tr><td>1</td><td style=\"font-weight:700\">"+(sv?sv.n.toUpperCase():"PRESTATION")+"</td><td style=\"text-align:right;padding-right:4px\">"+Number(total).toFixed(2)+"</td><td style=\"text-align:right\">"+Number(total).toFixed(2)+"</td></tr>";
   }
   // 2026-10-12 : un bon cadeau utilisé n'est pas une remise commerciale -> ligne dédiée et explicite.
-  (function(){
-    var _bonV=Number(a.bonVenduRemise)||0, _bonO=Number(a.offertRemise)||0, _codes=[], _codesO=[];
-    (a.payments||[]).forEach(function(p){ var m=String(p&&p.method||""); var mm=m.match(/^Bon cadeau r\u00e9gl\u00e9 (.+)$/); if(mm) _codes.push(mm[1]); var mo=m.match(/^Offert (.+)$/); if(mo) _codesO.push(mo[1]); });
-    var _man=Math.round(((Number(a.remise)||0)-_bonV-_bonO)*100)/100;
-    if(!_bonV && !_bonO && _codes.length && a.remise>0){ h+="<tr><td>1</td><td colspan=\"2\" style=\"font-weight:700\">REMISE / BON CADEAU</td><td style=\"text-align:right\">-"+a.remise.toFixed(2)+"</td></tr>"; return; }
-    if(_man>0.004) h+="<tr><td>1</td><td colspan=\"2\" style=\"font-weight:700\">REMISE TICKET</td><td style=\"text-align:right\">-"+_man.toFixed(2)+"</td></tr>";
-    if(_bonV>0) h+="<tr><td>1</td><td colspan=\"2\" style=\"font-weight:700\">BON CADEAU "+(_codes.join(", ")||"")+" (D\u00c9J\u00c0 ENCAISS\u00c9 \u00c0 LA VENTE)</td><td style=\"text-align:right\">-"+_bonV.toFixed(2)+"</td></tr>";
-    if(_bonO>0) h+="<tr><td>1</td><td colspan=\"2\" style=\"font-weight:700\">BON CADEAU OFFERT "+(_codesO.join(", ")||"")+"</td><td style=\"text-align:right\">-"+_bonO.toFixed(2)+"</td></tr>";
-  })();
+  h+=_lxTkLignesRemiseG(a, _lxTkRenduNouveau(a, _lxScelle===true)); // 2026-11-18 (7.0.6) : rendu 7.0.5 ou 7.0.6, voir _lxTkRenduNouveau
   h+="</table>";
 
   // Total HT

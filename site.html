@@ -318,6 +318,14 @@ html{overflow-x:hidden;overflow-x:clip}
 .tarif-row-price{font-family:var(--f1);font-weight:800;font-size:18px;color:var(--gold);min-width:80px;text-align:right}
 .tarif-row-cta{padding:8px 14px;border-radius:8px;background:rgba(212,168,67,.1);border:1.5px solid var(--gold);color:var(--gold);font-weight:700;font-size:12px;cursor:pointer;font-family:var(--f2);transition:all .2s;letter-spacing:.5px;white-space:nowrap}
 .tarif-row-cta:hover{background:var(--gold);color:#0a0a0a;transform:translateY(-1px)}
+/* 2026-11-18 (7.0.6) : promos de l'établissement (prix barré, prix promo, date de fin) */
+.lxp-old{display:block;font-size:12.5px;font-weight:400;color:var(--text3);text-decoration:line-through;font-family:var(--f2)}
+.lxp-new{display:block;color:#f06292;white-space:nowrap}
+.lxp-ap{display:block;font-size:11px;font-weight:700;font-family:var(--f2)}
+.lxp-until{display:block;font-size:10.5px;font-weight:700;color:#f06292;font-family:var(--f2);white-space:nowrap}
+.lxp-tag{display:inline-block;background:#e91e63;color:#fff;font-size:10.5px;font-weight:800;padding:2px 7px;border-radius:6px;margin-left:6px;vertical-align:middle;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lxp-ref{font-size:11px;color:var(--text3);margin-top:4px;line-height:1.35}
+.tarif-row-price{line-height:1.15}
 
 /* Anciennes classes tarif (compat si jamais utilisées ailleurs) */
 .tarif-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
@@ -688,6 +696,47 @@ function lxPrixTxt(s){
   if(s.devis) return "Sur devis";
   return (s.apartir?"\u00e0 partir de ":"")+(Number(s.p)||0).toFixed(2).replace(".",",")+" \u20ac";
 }
+// 2026-11-18 (7.0.6) : promos de l'établissement affichées sur la page publique (RPC lx_promos_publiques, canal « site »,
+// calcul du serveur). Aucune promo (ou base pas encore migrée) : affichage 7.0.5 inchangé.
+var LX_PROMOS_SITE={};
+function lxPromosSiteCharger(rows){
+  LX_PROMOS_SITE={};
+  (Array.isArray(rows)?rows:[]).forEach(function(r){
+    if(!r||(r.article_type!=="service"&&r.article_type!=="produit")||r.article_id==null) return;
+    if(!(Math.round(Number(r.remise_unitaire)*100)>0)||!isFinite(Number(r.prix_promo))||!isFinite(Date.parse(r.fin))) return;
+    LX_PROMOS_SITE[r.article_type+":"+r.article_id]=r;
+  });
+}
+// Promo d'un article, seulement si elle porte sur le prix affiché (catalogue relu en même temps) et n'est pas finie
+function lxPromoSite(type, id, prix){
+  var r=LX_PROMOS_SITE[type+":"+id]; if(!r) return null;
+  if(prix!=null&&Math.round(Number(r.prix_catalogue)*100)!==Math.round(Number(prix)*100)) return null;
+  if(Date.parse(r.fin)<=Date.now()) return null;
+  return r;
+}
+function lxEurTxt(x){ return (Math.round(Number(x)*100)/100).toFixed(2).replace(".",",")+" €"; }
+// « jusqu'au 31 décembre » : fin EXCLUE -> dernier instant = fin - 1 s, en heure de Paris ; heure ajoutée si la promo
+// ne s'arrête pas à minuit, année ajoutée si ce n'est pas l'année en cours.
+function lxPromoJusquau(fin){
+  var ms=Date.parse(fin); if(!isFinite(ms)) return "";
+  var d=new Date(ms-1000), o={};
+  try{ new Intl.DateTimeFormat("fr-FR",{timeZone:"Europe/Paris",year:"numeric",month:"long",day:"numeric",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}).formatToParts(d).forEach(function(x){ o[x.type]=x.value; }); }
+  catch(_e){ o={day:String(d.getDate()),month:["janvier","février","mars","avril","mai","juin","juillet","août","septembre","octobre","novembre","décembre"][d.getMonth()],year:String(d.getFullYear()),hour:String(d.getHours()),minute:String(d.getMinutes())}; }
+  var an=""; try{ an=(String(o.year)!==String(_lxParisNow().getFullYear()))?" "+o.year:""; }catch(_e2){}
+  var hm=("0"+o.hour).slice(-2)+":"+("0"+o.minute).slice(-2);
+  return "jusqu’au "+(+o.day)+" "+o.month+an+(hm!=="23:59"?" à "+hm:"");
+}
+// Prix d'une prestation (tarifs, étape 1) : prix barré (prix catalogue) + prix promo + date de fin ; sinon lxPrixTxt
+function lxPrixHtml(s){
+  var r=(s&&!s.devis&&!s.isForfait)?lxPromoSite("service",s.id,s.p):null;
+  if(!r) return lxPrixTxt(s);
+  var ap=s.apartir?"à partir de ":"";
+  return '<span class="lxp-old">'+ap+lxEurTxt(r.prix_catalogue)+'</span><span class="lxp-new">'+(ap?'<span class="lxp-ap">'+ap+'</span>':'')+lxEurTxt(r.prix_promo)+'</span><span class="lxp-until">'+escapeHtmlSimple(lxPromoJusquau(r.fin))+'</span>';
+}
+function lxPromoTagHtml(s){
+  var r=(s&&!s.devis&&!s.isForfait)?lxPromoSite("service",s.id,s.p):null;
+  return r?'<span class="lxp-tag">🎉 '+escapeHtmlSimple(String(r.libelle||"Promo").slice(0,40))+'</span>':'';
+}
 function lxItemAPartir(it){ return !!(it&&(it.apartir||(it.svc&&it.svc.apartir))); }
 function lxAPartir(){ return !!(booking.items&&booking.items.some(lxItemAPartir)); }
 function lxApPfx(it){ return (it?lxItemAPartir(it):lxAPartir())?"\u00e0 partir de ":""; }
@@ -715,10 +764,93 @@ function bookingTotals(){
     fraisDepl=Number(booking.clientAdr.frais_mt)||0;
     prixFinal=Math.round((prixFinal+fraisDepl)*100)/100;
   }
+  // 2026-11-18 (7.0.6) : prix calculé par le SERVEUR pour ce jour, cette heure et cette carte (lx_prix_resa : promo du jour de
+  // la prestation, carte valable ce jour-là), le même calcul que celui que la base enregistre et que le worker contrôle au
+  // paiement. Sans réponse du serveur (base pas encore migrée, réseau) : calcul 7.0.5 ci-dessus, inchangé.
+  var S=lxPxCourant(), remisePromo=0;
+  booking.pxServeur=false; booking.pxLignes=null;
+  if(S){
+    prix=Math.round(Number(S.base)*100)/100; booking.totalPrix=prix;
+    remise=Math.round(Number(S.remise_carte)*100)/100;
+    remisePromo=Math.round(Number(S.remise_promo)*100)/100;
+    prixFinal=Math.round((Number(S.service_prix)+fraisDepl)*100)/100;
+    booking.pxServeur=true; booking.pxLignes=Array.isArray(S.lignes)?S.lignes:[]; booking.pxCartePct=lxPxCartePct();
+  }
+  booking.remisePromo=remisePromo;
   booking.remiseCarte=remise;
   booking.fraisDepl=fraisDepl;
   booking.prixFinal=prixFinal;
-  return {dur:booking.duration,prix:prix,remise:remise,fraisDepl:fraisDepl,prixFinal:prixFinal};
+  return {dur:booking.duration,prix:prix,remise:remise,fraisDepl:fraisDepl,prixFinal:prixFinal,remisePromo:remisePromo,serveur:!!S};
+}
+// ---- 2026-11-18 (7.0.6) : prix de la réservation par le serveur (lx_prix_resa, contrat 7.0.6 § 4.2) ----
+var LX_PX={cle:null,data:null,enCours:null,cleEnCours:null,absente:false,partie2:null};
+// % de la carte d'abonnement si elle est valable LE JOUR DU RENDEZ-VOUS (la base compare date_expiration au jour du RDV)
+function lxPxCartePct(){
+  if(typeof CLIENT_CARTE_ABO==="undefined"||!CLIENT_CARTE_ABO) return 0;
+  var pct=Number(CLIENT_CARTE_ABO.remiseServices); if(!(pct>0)) return 0;
+  var e=CLIENT_CARTE_ABO.dateExp?String(CLIENT_CARTE_ABO.dateExp).slice(0,10):null;
+  if(e&&booking.date&&e<booking.date) return 0;
+  return Math.min(pct,100);
+}
+// Arguments de lx_prix_resa : exactement les prestations que la réservation enverra (items, sinon service_id)
+function lxPxParams(){
+  if(!salonId||!booking.date||!booking.time) return null;
+  var p={p_salon:salonId,p_date:String(booking.date).slice(0,10),p_heure:String(booking.time).slice(0,5),p_carte_pct:lxPxCartePct()};
+  var its=bookingItemsPayload();
+  if(its&&its.length) p.p_items=its; else if(booking.svcId) p.p_service_id=booking.svcId; else return null;
+  return p;
+}
+function lxPxCourant(){ try{ var p=lxPxParams(); var c=p?JSON.stringify(p):null; return (c&&LX_PX.cle===c&&LX_PX.data)?LX_PX.data:null; }catch(_e){ return null; } }
+// Partie 2 de la base (la réservation enregistre la promo) : colonne rdv_online.remise_promo_montant présente.
+// Sans elle, une promo renvoyée par lx_prix_resa n'est PAS appliquée par la base : on garde le calcul 7.0.5.
+// Renvoie true / false (connu, gardé en mémoire) ou null (inconnu : réseau, erreur passagère ; rien n'est gardé, redemandé
+// au calcul suivant). 2026-11-18 (7.0.6, vérif. finale A5) : avant, un échec passager valait « sans promo » pour ces paramètres.
+function lxPxPartie2(){
+  if(LX_PX.partie2!==null) return Promise.resolve(LX_PX.partie2);
+  return Promise.resolve(sb.from("rdv_online").select("remise_promo_montant").limit(0)).then(function(r){
+    if(r&&!r.error){ LX_PX.partie2=true; return true; }
+    var c=r&&r.error&&String(r.error.code||""); if(c==="42703"||c==="PGRST204"){ LX_PX.partie2=false; return false; }
+    return null;
+  },function(){ return null; });
+}
+function _lxPxAttente(pr, ms){
+  if(!(ms>0)) return pr;
+  return Promise.race([pr, new Promise(function(res){ setTimeout(function(){ res(null); }, ms); })]);
+}
+// Demande le prix au serveur (une fois par jeu de paramètres) ; ms = attente maximale (le calcul continue au-delà
+// et met le récapitulatif à jour s'il est affiché). Renvoie la réponse, ou null (calcul 7.0.5).
+// frais (2026-11-18, vérif. finale A6) : relit le serveur même si ces paramètres sont déjà connus (à l'envoi : promo créée,
+// modifiée ou supprimée depuis l'affichage). Sans réponse exploitable, la valeur déjà connue est gardée.
+function lxPrixResaCharger(ms, frais){
+  var p=lxPxParams(), c=p?JSON.stringify(p):null;
+  if(!c||LX_PX.absente||typeof sb==="undefined"||!sb||typeof sb.rpc!=="function") return Promise.resolve(null);
+  if(LX_PX.cle===c&&!frais) return Promise.resolve(LX_PX.data);
+  if(LX_PX.cleEnCours===c&&LX_PX.enCours) return _lxPxAttente(LX_PX.enCours, ms);
+  LX_PX.cleEnCours=c;
+  var pr=Promise.resolve().then(function(){ return sb.rpc("lx_prix_resa",p); }).then(function(r){
+    var d=(r&&!r.error&&r.data&&typeof r.data==="object"&&!Array.isArray(r.data)&&isFinite(Number(r.data.service_prix))&&isFinite(Number(r.data.base)))?r.data:null;
+    var e=r&&r.error, code=e?String(e.code||""):"";
+    if(e&&(code==="PGRST202"||code==="42883"||Number(r.status)===404)){ LX_PX.absente=true; return {fin:true,data:null}; } // base 7.0.5 : fonction absente
+    if(!d) return {fin:false,data:null}; // réseau, erreur passagère : redemandé au prochain affichage
+    if(!(Number(d.remise_promo)>0)) return {fin:true,data:d};
+    return lxPxPartie2().then(function(ok){ return ok===null?{fin:false,data:null}:{fin:true,data:ok?d:null}; }); // inconnu : pas mis en cache (A5)
+  }).then(function(x){ return x; },function(){ return {fin:false,data:null}; }).then(function(x){
+    if(LX_PX.cleEnCours===c){ LX_PX.enCours=null; LX_PX.cleEnCours=null; if(x.fin){ LX_PX.cle=c; LX_PX.data=x.data; } }
+    try{ lxBkResumeMaj(); }catch(_e){}
+    return x.data;
+  });
+  LX_PX.enCours=pr;
+  return _lxPxAttente(pr, ms);
+}
+// Lignes « Promo » du récapitulatif (libellé échappé), une par prestation en promo
+function lxPxLignesPromoHtml(){
+  var h='', L=booking.pxLignes||[], multi=booking.items&&booking.items.length>1;
+  L.forEach(function(l){
+    var r=Math.round(Number(l&&l.remise_promo)*100)/100; if(!(r>0)) return;
+    var it=(booking.items||[])[Number(l.ordre)]||null, lib=(l.promo&&l.promo.libelle)?String(l.promo.libelle):"Promo";
+    h+='<div class="summary-row" style="color:#f06292;font-weight:700"><span>🎉 Promo : '+escapeHtmlSimple(lib)+(multi&&it?' <span style="font-weight:400;font-size:11px">('+escapeHtmlSimple(it.nom)+')</span>':'')+'</span><span class="v">-'+r.toFixed(2).replace(".",",")+' €</span></div>';
+  });
+  return h;
 }
 
 // Géocodage adresse via API BAN (gouv.fr)
@@ -1089,7 +1221,8 @@ async function loadSalon(){
       tc: sb.from("collaborateurs_public").select("id,nom,initiales,couleur,horaires,horaires_overrides,pause,competences,inactif,date_depart,actif,photo_visible").eq("salon_id",salonId).eq("actif",true),
       tcImg: sb.from("collaborateurs_public").select("id,img").eq("salon_id",salonId).eq("actif",true).or("photo_visible.is.null,photo_visible.eq.true"),
       sv: sb.from("services").select("*").eq("salon_id",salonId).eq("actif",true).eq("show_site",true).order("ordre",{ascending:true,nullsFirst:false}).order("nom",{ascending:true}),
-      pr: sb.from("produits_public").select("id,nom,prix,categorie,img,stock,actif,for_sale,coup_coeur,contenance,description,promo_actif,promo_prix,promo_debut,promo_fin,promo_label").eq("salon_id",salonId).order("nom"), // 31/10 lot D : colonnes publiques seulement (plus de prix d'achat / PAMP exposés)
+      pr: sb.from("produits_public").select("id,nom,prix,categorie,img,stock,actif,for_sale,coup_coeur,contenance,description").eq("salon_id",salonId).order("nom"), // 31/10 lot D : colonnes publiques seulement (plus de prix d'achat / PAMP exposés) ; 18/11 (7.0.6) : anciennes colonnes promo_* plus lues (promos = lx_promos_publiques)
+      pp: sb.rpc("lx_promos_publiques",{p_salon:salonId,p_canal:"site"}), // 2026-11-18 (7.0.6) : promos du moment (absente avant la migration : ignorée)
       avis: sb.from("avis_public").select("id, nom, note, texte, date, created_at, salon_reply, salon_reply_at, note_accueil, note_proprete, note_cadre, note_qualite, photos").eq("salon_id",salonId).order("created_at",{ascending:false}).limit(20)
     };
     Object.keys(_P).forEach(function(k){ _P[k]=Promise.resolve(_P[k]).catch(function(e){ return {data:null,error:e}; }); });
@@ -1328,7 +1461,9 @@ async function loadSalon(){
     
     // 5. Products
     var pr=await _P.pr;
-    if(pr.data)PRODUCTS=pr.data.map(function(p){return{id:p.id,n:p.nom,p:Number(p.prix),cat:p.categorie,img:p.img||p.image||"",stk:(p.stock==null?null:Number(p.stock)),actif:p.actif,forSale:p.for_sale,cc:(p.coup_coeur===true),/* 2026-10-16 : case « Disponible en Click & Collect » (colonne coup_coeur) */contenance:p.contenance||null,description:p.description||null,promoActif:p.promo_actif||false,promoPrix:p.promo_prix!=null?Number(p.promo_prix):null,promoDebut:p.promo_debut||null,promoFin:p.promo_fin||null,promoLabel:p.promo_label||null};});
+    if(pr.data)PRODUCTS=pr.data.map(function(p){return{id:p.id,n:p.nom,p:Number(p.prix),cat:p.categorie,img:p.img||p.image||"",stk:(p.stock==null?null:Number(p.stock)),actif:p.actif,forSale:p.for_sale,cc:(p.coup_coeur===true),/* 2026-10-16 : case « Disponible en Click & Collect » (colonne coup_coeur) */contenance:p.contenance||null,description:p.description||null};});
+    // 2026-11-18 (7.0.6) : promos de la page publique (erreur ou fonction absente : aucune promo affichée)
+    try{ var _pp=await _P.pp; lxPromosSiteCharger(_pp&&!_pp.error?_pp.data:null); }catch(_ePp){ lxPromosSiteCharger(null); }
     
     // 5b. Avis clients (note moyenne déjà dans SALON.note_moyenne, mais on charge la liste pour affichage)
     window.SALON_AVIS=[];
@@ -2203,11 +2338,11 @@ function renderSite(){
         var isOnDemand=(s.bookOnline===false); // 01/11 S3c : vaut aussi pour un forfait non réservable en ligne (libellé seulement)
         h+='<div class="tarif-row"'+((_lxLong&&_ix>=LX_CAT_VISIBLES)?' data-lx-plus="1" style="display:none"':'')+'>';
         h+='<div class="tarif-row-left">';
-        h+='<div class="tarif-row-name">'+(isForf?'\ud83d\udce6 ':'')+escapeHtmlSimple(s.n)+'</div>';
+        h+='<div class="tarif-row-name">'+(isForf?'\ud83d\udce6 ':'')+escapeHtmlSimple(s.n)+lxPromoTagHtml(s)+'</div>';
         h+='<div class="tarif-row-meta">\u23f1 '+(s._dur||30)+' min'+(isForf?' \u00b7 Forfait':'')+(isOnDemand?' \u00b7 Sur demande':'')+'</div>';
         h+='</div>';
         h+='<div class="tarif-row-right">';
-        h+='<div class="tarif-row-price">'+lxPrixTxt(s)+'</div>';
+        h+='<div class="tarif-row-price">'+lxPrixHtml(s)+'</div>';
         if(SITE_CFG.resa && !isForf){
           if(isOnDemand && SITE_CFG.acceptRdvSurMesure){
             h+='<button class="tarif-row-cta" style="background:transparent;border:1px solid var(--gold);color:var(--gold)" onclick="openSurMesureModal('+s.id+')">Demander</button>';
@@ -2243,8 +2378,8 @@ function renderSite(){
       h+='<div style="text-align:center;padding:40px;color:var(--text3)">Aucun produit disponible pour le moment</div>';
     }else{
       // 2026-10-16 : sélection par famille (barre de familles + recherche + promos)
-      var _today=_lxParisYmd();
-      var _promoOk=function(p){return p.promoActif&&p.promoPrix&&(!p.promoDebut||p.promoDebut<=_today)&&(!p.promoFin||p.promoFin>=_today);};
+      // 2026-11-18 (7.0.6) : promo d'un produit = lx_promos_publiques (canal « page publique ») ; anciennes colonnes promo_* plus lues
+      var _promoOk=function(p){return !!lxPromoSite("produit",p.id,p.p);};
       var prodCats={};shopProds.forEach(function(p){var c=(p.cat&&String(p.cat).trim())||'Autres';if(!prodCats[c])prodCats[c]=[];prodCats[c].push(p);});
       var _catKeys=Object.keys(prodCats).sort(function(a,b){if(a==='Autres')return 1;if(b==='Autres')return -1;return a.localeCompare(b,'fr',{sensitivity:'base'});});
       var _nbPromo=shopProds.filter(_promoOk).length;
@@ -2260,9 +2395,11 @@ function renderSite(){
         h+='<div class="shop-fam-t">'+escapeHtmlSimple(cat)+' <small>'+prodCats[cat].length+' produit'+(prodCats[cat].length>1?'s':'')+'</small></div>';
         h+='<div class="prod-grid">';
         prodCats[cat].forEach(function(p){
-          var _isPromo=p.promoActif&&p.promoPrix&&(!p.promoDebut||p.promoDebut<=_lxParisYmd())&&(!p.promoFin||p.promoFin>=_lxParisYmd());
+          var _pp=lxPromoSite("produit",p.id,p.p), _isPromo=!!_pp;
+          // Prix barré = prix de RÉFÉRENCE (plus bas des 30 jours avant la promo, fourni par le serveur) ; absent : pas de prix barré
+          var _ref=(_pp&&_pp.prix_reference_30j!=null&&isFinite(Number(_pp.prix_reference_30j))&&Number(_pp.prix_reference_30j)>Number(_pp.prix_promo))?Number(_pp.prix_reference_30j):null;
           h+='<div class="prod-card" style="position:relative" data-promo="'+(_isPromo?1:0)+'" data-q="'+escapeAttrSimple(((p.n||'')+' '+(p.cat||'')+' '+(p.description||'')+' '+(p.contenance||'')).toLowerCase())+'">';
-          if(_isPromo)h+='<div style="position:absolute;top:8px;right:8px;background:#e91e63;color:#fff;font-size:11px;font-weight:800;padding:4px 8px;border-radius:8px;z-index:2;box-shadow:0 2px 8px rgba(0,0,0,.3)">\ud83c\udf89 '+(p.promoLabel?escapeHtmlSimple(String(p.promoLabel).slice(0,40))+' \u00b7 ':'')+'-'+Math.round((1-p.promoPrix/p.p)*100)+'%</div>'; // 2026-10-17 audit r\u00e9glages (#51) : libell\u00e9 promo affich\u00e9
+          if(_isPromo)h+='<div style="position:absolute;top:8px;right:8px;max-width:calc(100% - 16px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:#e91e63;color:#fff;font-size:11px;font-weight:800;padding:4px 8px;border-radius:8px;z-index:2;box-shadow:0 2px 8px rgba(0,0,0,.3)">\ud83c\udf89 '+escapeHtmlSimple(String(_pp.libelle||"Promo").slice(0,40))+(_ref?' \u00b7 -'+Math.round((1-Number(_pp.prix_promo)/_ref)*100)+'%':'')+'</div>'; // 2026-11-18 (7.0.6) : % calculé sur le prix de référence
           if(p.img)h+='<div class="prod-img"><img src="'+escapeAttrSimple(p.img)+'" loading="lazy" alt="'+escapeAttrSimple(p.n||"Produit")+'" draggable="false"></div>';
           else h+='<div class="prod-img">\ud83e\uddf4</div>';
           h+='<div class="prod-body">';
@@ -2270,7 +2407,10 @@ function renderSite(){
           h+='<div class="prod-cat">'+escapeHtmlSimple(p.cat)+'</div>';
           if(p.description)h+='<div style="font-size:12px;color:rgba(255,255,255,.65);margin-top:6px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">'+escapeHtmlSimple(p.description)+'</div>';
           if(_isPromo){
-            h+='<div class="prod-price"><span style="font-size:13px;text-decoration:line-through;color:var(--text3);font-weight:400;margin-right:6px">'+p.p.toFixed(2).replace(".",",")+' \u20ac</span><span style="color:#e91e63">'+p.promoPrix.toFixed(2).replace(".",",")+' \u20ac</span></div>';
+            h+='<div class="prod-price">'+(_ref?'<span style="font-size:13px;text-decoration:line-through;color:var(--text3);font-weight:400;margin-right:6px">'+lxEurTxt(_ref)+'</span>':'')+'<span style="color:#e91e63">'+lxEurTxt(_pp.prix_promo)+'</span></div>';
+            h+='<div class="lxp-ref"><span style="color:#f06292;font-weight:700">'+escapeHtmlSimple(lxPromoJusquau(_pp.fin))+'</span>'+(_ref?' \u00b7 prix barr\u00e9 : prix le plus bas des 30 jours pr\u00e9c\u00e9dant la promotion':'')+'</div>';
+            // Boutique en ligne : promos pas encore appliquées aux commandes (canal « boutique » à venir) -> dit clairement
+            h+='<div class="lxp-ref">Prix promo en \u00e9tablissement. Commande en ligne au prix normal ('+lxEurTxt(p.p)+').</div>';
           } else {
             h+='<div class="prod-price">'+p.p.toFixed(2).replace(".",",")+' \u20ac</div>';
           }
@@ -2623,11 +2763,11 @@ function renderBookingStep1(){
       var _lxCache=(_lxLong&&_ix>=LX_CAT_VISIBLES&&!isSel);
       h+='<div class="tarif-row'+(isSel?' tarif-row-selected':'')+'"'+(_lxCache?' data-lx-plus="1"':'')+(isOnDemand?(_lxCache?' style="display:none"':''):' onclick="toggleService('+s.id+')" style="cursor:pointer'+(_lxCache?';display:none':'')+'"')+'>';
       h+='<div class="tarif-row-left">';
-      h+='<div class="tarif-row-name">'+(isSel?'<span style="color:var(--gold)">\u2713 </span>':'')+escapeHtmlSimple(s.n)+'</div>';
+      h+='<div class="tarif-row-name">'+(isSel?'<span style="color:var(--gold)">\u2713 </span>':'')+escapeHtmlSimple(s.n)+lxPromoTagHtml(s)+'</div>';
       h+='<div class="tarif-row-meta">\u23f1 '+dur+' min'+(isOnDemand?' \u00b7 Sur demande':'')+'</div>';
       h+='</div>';
       h+='<div class="tarif-row-right">';
-      h+='<div class="tarif-row-price">'+lxPrixTxt(s)+'</div>';
+      h+='<div class="tarif-row-price">'+lxPrixHtml(s)+'</div>';
       if(isOnDemand){
         if(SITE_CFG.acceptRdvSurMesure){
           h+='<button class="tarif-row-cta" style="background:transparent;border:1px solid var(--gold);color:var(--gold)" onclick="event.stopPropagation();openSurMesureModal('+s.id+')">Demander</button>';
@@ -3709,45 +3849,44 @@ function renderTimeSlots(dateStr){
 
 function selectTime(time){
   booking.time=time;
-  renderBookingStep4();
+  // 2026-11-18 (7.0.6) : prix du serveur pour ce jour et cette heure (attente courte), puis récapitulatif.
+  // Réponse plus tardive : le récapitulatif est mis à jour sur place (lxBkResumeMaj), sans effacer la saisie.
+  var fait=false, aff=function(){ if(fait) return; fait=true; renderBookingStep4(); };
+  try{ lxPrixResaCharger(1500).then(aff,aff); }catch(_e){ aff(); }
 }
 
-function renderBookingStep4(){
+// 2026-11-18 (7.0.6) : récapitulatif (prix, remises, acompte) et boutons de l'étape 4 construits à part pour être
+// mis à jour sur place quand le prix du serveur arrive (sans toucher aux champs saisis). Contenu 7.0.5 inchangé
+// sans promo ; lignes « Promo : … » ajoutées quand le serveur en applique une.
+function lxBkResumeHtml(t){
   var collab=booking.collab;
-  var t=bookingTotals();
-  var totalPrix=t.prix;
-  var totalDur=t.dur;
-  var prixFinal=t.prixFinal;
-  var remiseCarte=t.remise;
-  var hasCarte=remiseCarte>0;
+  var totalPrix=t.prix, totalDur=t.dur, prixFinal=t.prixFinal, remiseCarte=t.remise, remisePromo=Number(t.remisePromo)||0;
+  var hasCarte=remiseCarte>0, hasRemise=hasCarte||remisePromo>0;
   var hasMulti=booking.items&&booking.items.length>1;
-  var h='<div class="step active">';
-  h+='<div class="step-header"><div class="step-num">4</div><div class="step-title">Vos coordonn\u00e9es</div></div>';
-
-  // Summary
-  h+='<div class="summary">';
+  var h='';
   if(hasMulti){
     h+='<div class="summary-row" style="font-weight:800;color:var(--gold);border-bottom:1px solid rgba(200,168,78,.2)"><span>Prestations</span><span class="v">'+booking.items.length+' \u25be</span></div>';
     booking.items.forEach(function(it){
       h+='<div class="summary-row" style="padding-left:8px;font-size:13px"><span>\u2022 '+escapeHtmlSimple(it.nom)+' <span style="color:var(--text3);font-size:11px">('+(Number(it.duree)||0)+' min)</span></span><span class="v">'+lxApPfx(it)+(Number(it.prix)||0).toFixed(2).replace(".",",")+' \u20ac</span></div>';
     });
     h+='<div class="summary-row" style="font-weight:700"><span>Dur\u00e9e totale</span><span class="v">'+totalDur+' min</span></div>';
-    h+='<div class="summary-row"'+(hasCarte?' style="color:var(--text3)"':' style="font-weight:700"')+'><span>'+(hasCarte?"Sous-total":"Prix total")+'</span><span class="v">'+lxApPfx()+totalPrix.toFixed(2).replace(".",",")+' \u20ac</span></div>';
+    h+='<div class="summary-row"'+(hasRemise?' style="color:var(--text3)"':' style="font-weight:700"')+'><span>'+(hasRemise?"Sous-total":"Prix total")+'</span><span class="v">'+lxApPfx()+totalPrix.toFixed(2).replace(".",",")+' \u20ac</span></div>';
   }else{
     var svc=(booking.items&&booking.items[0])||{nom:booking.svc?booking.svc.n:"",prix:booking.svc?booking.svc.p:0,duree:totalDur};
     h+='<div class="summary-row"><span>Prestation</span><span class="v">'+escapeHtmlSimple(svc.nom)+'</span></div>';
-    h+='<div class="summary-row"'+(hasCarte?' style="color:var(--text3)"':'')+'><span>'+(hasCarte?"Sous-total":"Prix")+'</span><span class="v">'+lxApPfx()+(Number(svc.prix)||0).toFixed(2).replace(".",",")+' \u20ac</span></div>';
+    h+='<div class="summary-row"'+(hasRemise?' style="color:var(--text3)"':'')+'><span>'+(hasRemise?"Sous-total":"Prix")+'</span><span class="v">'+lxApPfx()+(Number(svc.prix)||0).toFixed(2).replace(".",",")+' \u20ac</span></div>';
   }
   h+=lxApNotice(); // 2026-10-15
+  if(remisePromo>0) h+=lxPxLignesPromoHtml(); // 2026-11-18 (7.0.6) : promo du jour du rendez-vous (calcul du serveur)
   // Ligne remise carte d'abonnement
   if(hasCarte){
-    h+='<div class="summary-row" style="color:#4caf50;font-weight:700"><span>\ud83d\udcb3 Carte '+escapeHtmlSimple(CLIENT_CARTE_ABO.carteNom)/* 2026-10-17 audit réglages (#65) */+' (-'+CLIENT_CARTE_ABO.remiseServices+'%)</span><span class="v">-'+remiseCarte.toFixed(2).replace(".",",")+' \u20ac</span></div>';
+    h+='<div class="summary-row" style="color:#4caf50;font-weight:700"><span>\ud83d\udcb3 Carte '+escapeHtmlSimple(CLIENT_CARTE_ABO?CLIENT_CARTE_ABO.carteNom:"abonnement")/* 2026-10-17 audit réglages (#65) */+(CLIENT_CARTE_ABO?' (-'+CLIENT_CARTE_ABO.remiseServices+'%)':'')+'</span><span class="v">-'+remiseCarte.toFixed(2).replace(".",",")+' \u20ac</span></div>';
   }
   // Ligne frais d\u00e9placement
   if(booking.lieu==='domicile' && t.fraisDepl>0){
     h+='<div class="summary-row" style="color:#63b3ed"><span>\ud83c\udfe0 Frais de d\u00e9placement</span><span class="v">+'+t.fraisDepl.toFixed(2).replace(".",",")+' \u20ac</span></div>';
   }
-  if(hasCarte || (booking.lieu==='domicile' && t.fraisDepl>0)){
+  if(hasRemise || (booking.lieu==='domicile' && t.fraisDepl>0)){
     h+='<div class="summary-row" style="font-weight:800;color:var(--gold);border-top:1px solid rgba(200,168,78,.2);padding-top:8px"><span>Total \u00e0 payer</span><span class="v">'+prixFinal.toFixed(2).replace(".",",")+' \u20ac</span></div>';
   }
   h+='<div class="summary-row"><span>'+getCollabLabel()+'</span><span class="v">'+(collab?escapeHtmlSimple(collab.n):"Pas de pr\u00e9f\u00e9rence")/* 2026-10-17 audit réglages (#65) */+'</span></div>';
@@ -3765,7 +3904,72 @@ function renderBookingStep4(){
       if(_pa.pct>0 && _pa.heures!==-1 && _pa.rembourse) h+='<div style="font-size:11px;color:var(--text3);text-align:center">En cas d\u0027annulation plus tardive : '+_pa.pct+' % de l\u0027acompte rembours\u00e9</div>';
     }
   }
-  h+='</div>';
+  booking._prixAffiche=_lxPxPrestations(t); // 2026-11-18 (7.0.6) : comparé à l'envoi (prix du serveur arrivé entre-temps)
+  return h;
+}
+function lxBkBoutonsHtml(t){
+  var h='';
+  h+='<button class="btn btn-outline" onclick="renderBookingStep3()">\u25c0 Retour</button>';
+  // FIX 2026-05-12 : router via submitWithStripe() qui detecte modeCaution=empreinte/acompte/aucun
+  var _modeC = SITE_CFG.modeCaution || "aucun"; // 2026-10-14 audit : déjà ramené à « aucun » sans Stripe
+  var acompte=SITE_CFG.acompte?lxCalcAcompte(t.prixFinal):undefined;
+  // 2026-10-10 : RDV à domicile -> demande à valider par le professionnel ; l'acompte éventuel se règle
+  // ensuite via un lien envoyé après acceptation (pas de paiement pour un déplacement non confirmé).
+  if(booking.lieu==='domicile'){
+    h+='<button class="btn btn-gold" style="flex:1" onclick="submitBooking()">Envoyer ma demande</button>';
+  } else if(_modeC==="empreinte"){
+    h+='<button class="btn btn-gold" style="flex:1" onclick="submitWithStripe()">Pre-autoriser '+(Number(SITE_CFG.empreinteMontant)||30).toFixed(2).replace(".",",")+' € et confirmer</button>';
+  } else if(_modeC==="acompte"){
+    // FIX 2026-05-12 (acompte) : check explicite sur _modeC pour ne pas dependre du legacy
+    var _prixForAc = t.prixFinal || t.prix || 0;
+    var _acomCalc = lxCalcAcompte(_prixForAc); // 2026-10-14 audit : calcul unique, plafonné au prix
+    if(_acomCalc > 0){
+      h+='<button class="btn btn-gold" style="flex:1" onclick="submitWithStripe()">💳 Payer acompte '+_acomCalc.toFixed(2).replace(".",",")+' € et confirmer</button>';
+    } else {
+      h+='<button class="btn btn-gold" style="flex:1" onclick="submitBooking()">Confirmer le rendez-vous</button>';
+    }
+  } else if(SITE_CFG.acompte&&acompte>0){
+    h+='<button class="btn btn-gold" style="flex:1" onclick="submitWithStripe()">\ud83d\udcb3 Payer l\u0027acompte et confirmer</button>';
+  }else{
+    h+='<button class="btn btn-gold" style="flex:1" onclick="submitBooking()">Confirmer le rendez-vous</button>';
+  }
+  return h;
+}
+// Prix des prestations après remises, en centimes (hors frais de déplacement, validés à part par l'adresse)
+function _lxPxPrestations(t){ return Math.round(((Number(t.prixFinal)||0)-(Number(t.fraisDepl)||0))*100); }
+// Prix du serveur arrivé (ou changé) pendant que l'étape 4 est affichée : récapitulatif et boutons mis à jour sur place
+function lxBkResumeMaj(){
+  var el=document.getElementById("lxBkResume"), bt=document.getElementById("lxBkBoutons");
+  if(!el||!bt||_lxEnvoiResa) return false;
+  var t=bookingTotals();
+  if(_lxPxPrestations(t)===booking._prixAffiche && el.getAttribute("data-px")===(t.serveur?"1":"0")) return false;
+  el.innerHTML=lxBkResumeHtml(t); el.setAttribute("data-px",t.serveur?"1":"0"); bt.innerHTML=lxBkBoutonsHtml(t);
+  return true;
+}
+// À l'envoi : prix du serveur attendu (au plus 4 s) ; s'il diffère de celui affiché, on le montre et on demande de valider
+async function _lxPxAvantEnvoi(){
+  try{ await lxPrixResaCharger(4000, true); }catch(_e){} // 2026-11-18 (A6) : relu au clic (promo créée / supprimée depuis l'affichage)
+  var t=bookingTotals();
+  if(booking._prixAffiche!=null && _lxPxPrestations(t)!==booking._prixAffiche){
+    var el=document.getElementById("lxBkResume"), bt=document.getElementById("lxBkBoutons");
+    if(el&&bt){ el.innerHTML=lxBkResumeHtml(t); el.setAttribute("data-px",t.serveur?"1":"0"); bt.innerHTML=lxBkBoutonsHtml(t); }
+    showAlert("Le prix de votre rendez-vous a \u00e9t\u00e9 mis \u00e0 jour : v\u00e9rifiez le r\u00e9capitulatif puis confirmez.","info");
+    return false;
+  }
+  return true;
+}
+
+function renderBookingStep4(){
+  var t=bookingTotals();
+  var totalPrix=t.prix;
+  var prixFinal=t.prixFinal;
+  var h='<div class="step active">';
+  h+='<div class="step-header"><div class="step-num">4</div><div class="step-title">Vos coordonn\u00e9es</div></div>';
+
+  // Summary (2026-11-18, 7.0.6 : lxBkResumeHtml)
+  h+='<div class="summary" id="lxBkResume" data-px="'+(t.serveur?"1":"0")+'">'+lxBkResumeHtml(t)+'</div>';
+  // 2026-11-18 (7.0.6) : prix du serveur pas encore connu pour ces paramètres (carte chargée, nouveau créneau) -> demandé
+  if(!t.serveur){ try{ lxPrixResaCharger(0); }catch(_ePx){} }
   
   // Carte d'abonnement suggestion (if salon has cards and client has none)
   if(window.SITE_CARTES_ABO&&window.SITE_CARTES_ABO.length>0&&!CLIENT_CARTE_ABO){
@@ -3859,31 +4063,8 @@ function renderBookingStep4(){
   }
   h+='<div class="fg"><label for="bkMsg">Message (optionnel)</label><textarea id="bkMsg" rows="2" placeholder="Pr\u00e9cisions, souhaits..."></textarea></div>';
   
-  h+='<div style="display:flex;gap:10px;margin-top:16px">';
-  h+='<button class="btn btn-outline" onclick="renderBookingStep3()">\u25c0 Retour</button>';
-  // FIX 2026-05-12 : router via submitWithStripe() qui detecte modeCaution=empreinte/acompte/aucun
-  var _modeC = SITE_CFG.modeCaution || "aucun"; // 2026-10-14 audit : déjà ramené à « aucun » sans Stripe
-  // 2026-10-10 : RDV à domicile -> demande à valider par le professionnel ; l'acompte éventuel se règle
-  // ensuite via un lien envoyé après acceptation (pas de paiement pour un déplacement non confirmé).
-  if(booking.lieu==='domicile'){
-    h+='<button class="btn btn-gold" style="flex:1" onclick="submitBooking()">Envoyer ma demande</button>';
-  } else if(_modeC==="empreinte"){
-    h+='<button class="btn btn-gold" style="flex:1" onclick="submitWithStripe()">Pre-autoriser '+(Number(SITE_CFG.empreinteMontant)||30).toFixed(2).replace(".",",")+' € et confirmer</button>';
-  } else if(_modeC==="acompte"){
-    // FIX 2026-05-12 (acompte) : check explicite sur _modeC pour ne pas dependre du legacy
-    var _prixForAc = (typeof bookingTotals==="function") ? (bookingTotals().prixFinal || bookingTotals().prix || 0) : 0;
-    var _acomCalc = lxCalcAcompte(_prixForAc); // 2026-10-14 audit : calcul unique, plafonné au prix
-    if(_acomCalc > 0){
-      h+='<button class="btn btn-gold" style="flex:1" onclick="submitWithStripe()">💳 Payer acompte '+_acomCalc.toFixed(2).replace(".",",")+' € et confirmer</button>';
-    } else {
-      h+='<button class="btn btn-gold" style="flex:1" onclick="submitBooking()">Confirmer le rendez-vous</button>';
-    }
-  } else if(SITE_CFG.acompte&&acompte>0){
-    h+='<button class="btn btn-gold" style="flex:1" onclick="submitWithStripe()">\ud83d\udcb3 Payer l\u0027acompte et confirmer</button>';
-  }else{
-    h+='<button class="btn btn-gold" style="flex:1" onclick="submitBooking()">Confirmer le rendez-vous</button>';
-  }
-  h+='</div></div>';
+  h+='<div style="display:flex;gap:10px;margin-top:16px" id="lxBkBoutons">'+lxBkBoutonsHtml(t)+'</div>';
+  h+='</div>';
   document.getElementById("bookingFlow").innerHTML=h;
 }
 
@@ -3944,6 +4125,7 @@ async function _lxSubmitBookingImpl(){
   var pre=document.getElementById("bkPre").value.trim();
   var email=document.getElementById("bkEmail").value.trim();
   try{await _lxFetchAcompteMode(email, tel);}catch(e){}
+  if(!(await _lxPxAvantEnvoi())) return; // 2026-11-18 (7.0.6) : prix du serveur arrivé entre-temps -> montré avant d'envoyer
   var msg=document.getElementById("bkMsg").value.trim();
 
   var t=bookingTotals();
@@ -3951,6 +4133,7 @@ async function _lxSubmitBookingImpl(){
   var totalPrix=t.prix;
   var prixFinal=t.prixFinal;
   var remiseCarte=t.remise;
+  var remisePromo=Number(t.remisePromo)||0; // 2026-11-18 (7.0.6)
   var primaryNom=bookingPrimaryNom();
   var itemsPayload=bookingItemsPayload();
   // Refresh availability from DB before submitting (prevents stale data)
@@ -3976,7 +4159,8 @@ async function _lxSubmitBookingImpl(){
     client_online_id:null,client_luxyra_id:CLIENT?CLIENT.id:null,
     service_id:booking.svcId,service_nom:primaryNom,service_prix:prixFinal,
     items:itemsPayload,
-    carte_abo_id:(remiseCarte>0&&CLIENT_CARTE_ABO)?CLIENT_CARTE_ABO.id:null,
+    // 2026-11-18 (7.0.6) : prix du serveur -> carte transmise dès qu'elle vaut ce jour-là (le serveur choisit promo ou carte)
+    carte_abo_id:((t.serveur?booking.pxCartePct>0:remiseCarte>0)&&CLIENT_CARTE_ABO)?CLIENT_CARTE_ABO.id:null,
     remise_carte_montant:remiseCarte,
     collaborateur_id:booking.collabId,collaborateur_nom:booking.collab?booking.collab.n:null,
     date_rdv:booking.date,heure_rdv:booking.time,duree_minutes:dur,
@@ -4016,12 +4200,15 @@ async function _lxSubmitBookingImpl(){
       booking.items.forEach(function(it){
         h+='<div class="summary-row" style="padding-left:8px;font-size:13px"><span>\u2022 '+escapeHtmlSimple(it.nom)+'</span><span class="v">'+lxApPfx(it)+(Number(it.prix)||0).toFixed(2).replace(".",",")+' \u20ac</span></div>';
       });
-      h+='<div class="summary-row"'+(remiseCarte>0?' style="color:var(--text3)"':' style="font-weight:700"')+'><span>'+(remiseCarte>0?"Sous-total":"Total")+' ('+dur+' min)</span><span class="v">'+lxApPfx()+totalPrix.toFixed(2).replace(".",",")+' \u20ac</span></div>';
+      h+='<div class="summary-row"'+((remiseCarte>0||remisePromo>0)?' style="color:var(--text3)"':' style="font-weight:700"')+'><span>'+((remiseCarte>0||remisePromo>0)?"Sous-total":"Total")+' ('+dur+' min)</span><span class="v">'+lxApPfx()+totalPrix.toFixed(2).replace(".",",")+' \u20ac</span></div>';
     }else{
       h+='<div class="summary-row"><span>Prestation</span><span class="v">'+escapeHtmlSimple(primaryNom)+'</span></div>';
     }
+    if(remisePromo>0) h+=lxPxLignesPromoHtml(); // 2026-11-18 (7.0.6)
     if(remiseCarte>0){
       h+='<div class="summary-row" style="color:#4caf50;font-weight:700"><span>\ud83d\udcb3 Carte '+escapeHtmlSimple(CLIENT_CARTE_ABO?CLIENT_CARTE_ABO.carteNom:"abonnement")+'</span><span class="v">-'+remiseCarte.toFixed(2).replace(".",",")+' \u20ac</span></div>';
+    }
+    if(remiseCarte>0||remisePromo>0){
       h+='<div class="summary-row" style="font-weight:800;color:var(--gold)"><span>Total \u00e0 payer</span><span class="v">'+lxApPfx()+prixFinal.toFixed(2).replace(".",",")+' \u20ac</span></div>';
     }
     h+=lxApNotice(); // 2026-10-15
@@ -4180,6 +4367,7 @@ async function _lxSubmitWithStripeImpl(){
   var pre=document.getElementById("bkPre").value.trim();
   var email=document.getElementById("bkEmail").value.trim();
   try{await _lxFetchAcompteMode(email, tel);}catch(e){}
+  if(!(await _lxPxAvantEnvoi())) return; // 2026-11-18 (7.0.6) : prix du serveur arrivé entre-temps -> montré avant de payer
   var msg=document.getElementById("bkMsg").value.trim();
 
   var t=bookingTotals();
@@ -4226,7 +4414,8 @@ async function _lxSubmitWithStripeImpl(){
       lieu: booking.lieu||'salon',
       // 2026-10-14 intégration : la base recalcule l'acompte avec la remise carte -> lui transmettre la carte
       // (sinon montant serveur sans remise != montant affiché, paiement refusé par le worker)
-      carte_abo_id:(booking.remiseCarte>0&&CLIENT_CARTE_ABO)?CLIENT_CARTE_ABO.id:null,
+      // 2026-11-18 (7.0.6) : avec le prix du serveur, carte transmise dès qu'elle vaut le jour du RDV (même choix promo / carte)
+      carte_abo_id:((t.serveur?booking.pxCartePct>0:booking.remiseCarte>0)&&CLIENT_CARTE_ABO)?CLIENT_CARTE_ABO.id:null,
       remise_carte_montant:booking.remiseCarte||0
     };
     // Branche selon mode : acompte (débit immédiat) ou empreinte (pré-autorisation)
@@ -4810,13 +4999,12 @@ function shopFiltrer(){
 function addToCart(prodId){
   var prod=null;for(var i=0;i<PRODUCTS.length;i++){if(PRODUCTS[i].id===prodId){prod=PRODUCTS[i];break;}}
   if(!prod)return;
-  // Determine effective price (promo or normal)
-  var _today=_lxParisYmd();
-  var _isPromo=prod.promoActif&&prod.promoPrix&&(!prod.promoDebut||prod.promoDebut<=_today)&&(!prod.promoFin||prod.promoFin>=_today);
-  var effPrice=_isPromo?prod.promoPrix:prod.p;
+  // 2026-11-18 (7.0.6) : prix du panier = prix catalogue, celui que le serveur (worker /api/cc/commande) fait payer ;
+  // les anciennes colonnes promo_* ne sont plus appliquées (promos de la boutique en ligne : à venir)
+  var effPrice=prod.p;
   var existing=null;for(var i=0;i<CART.length;i++){if(CART[i].id===prodId){existing=CART[i];break;}}
   if(existing){existing.qty++;existing.p=effPrice;}
-  else{CART.push({id:prod.id,n:prod.n,p:effPrice,qty:1,cat:prod.cat,isPromo:_isPromo,prixNormal:prod.p});}
+  else{CART.push({id:prod.id,n:prod.n,p:effPrice,qty:1,cat:prod.cat,isPromo:false,prixNormal:prod.p});}
   updateCartBadge();
   // Toast
   var toast=document.createElement("div");

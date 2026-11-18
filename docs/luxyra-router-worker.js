@@ -2398,10 +2398,13 @@ function ccCode() {
   let s = ""; for (const x of b) s += CC_ALPHABET[x % CC_ALPHABET.length];
   return s;
 }
+// 2026-11-18 (7.0.6 « Promos ») : prix d'une ligne de commande = prix CATALOGUE (produits.prix). Les anciennes colonnes
+// produits.promo_* ne sont plus appliquées (remplacées par les promos de l'établissement ; 0 produit concerné en production
+// au 18/11, colonnes gardées pour la 8.0.0) : jamais deux promos cumulées. Promos de la boutique en ligne : pas encore
+// (canal « boutique » désactivé dans l'application) ; le ticket des commandes payées en ligne, créé par le serveur
+// (lx_prive.recette_traiter, inchangé), porte une remise 0 par ligne et ne sait pas recevoir une remise de ligne exacte.
 function ccPrix(p) {
-  const today = new Date().toISOString().slice(0, 10);
-  const promo = p.promo_actif === true && p.promo_prix != null && (!p.promo_debut || p.promo_debut <= today) && (!p.promo_fin || p.promo_fin >= today);
-  return Math.round(Number(promo ? p.promo_prix : p.prix) * 100) / 100;
+  return Math.round(Number(p.prix) * 100) / 100;
 }
 function ccEsc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 function ccEur(n) { return (Number(n) || 0).toFixed(2).replace(".", ",") + " €"; }
@@ -2495,7 +2498,7 @@ async function handleCcCommande(request, env) {
     if (!demandes.length || demandes.length > 30) return jsonResponse({ error: "Panier vide ou invalide" }, 400);
     if (demandes.some((i) => i.qty > 20)) return jsonResponse({ error: "Quantité maximale : 20 par produit" }, 400);
     const ids = [...new Set(demandes.map((i) => i.id))];
-    const pr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/produits?select=id,nom,prix,promo_actif,promo_prix,promo_debut,promo_fin,stock,actif,for_sale,coup_coeur&salon_id=eq.${encodeURIComponent(b.salon_id)}&id=in.(${ids.join(",")})`, { headers: _sbHeaders(env) });
+    const pr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/produits?select=id,nom,prix,stock,actif,for_sale,coup_coeur&salon_id=eq.${encodeURIComponent(b.salon_id)}&id=in.(${ids.join(",")})`, { headers: _sbHeaders(env) });
     const prods = pr.ok ? await pr.json() : [];
     const items = []; let total = 0;
     for (const d of demandes) {

@@ -4,7 +4,7 @@
 // BUILD: 20260426-04 — fix CSS options dropdown lisibles
 window.__LUXYRA_BUILD = "20260426-04";
 // 2026-10-14 : version de la couche donnees, comparee par app.html (evite un melange ancienne/nouvelle version via le cache)
-window.LX_DATA_VERSION = "20261112-1"; // 12/11 (-1, 7.0.5) : compteur local des n° de ticket jamais repoussé par la série du serveur (900001+) ni par une ligne 90000x refusée ; // 05/11 (-11, 7.0.0 contre-audit) : historique des attestations, version unique LX_VERSION ; (-10, 7.0.0) : version majeure 7.0.0 (attestation racine 7, aucun changement fonctionnel) ; // 05/11 (-9, 6.8.10) : duplicata de Z avec clé idempotente (anti-rejeu serveur), registre provisoire verrouillé entre onglets ; // 05/11 (-8, 6.8.10) : contre-audit d3f72dd (bon offert sans « 293 B » chez un assujetti, registre provisoire sérialisé, délai duplicata Z, config en objet) ; // 05/11 (-7, 6.8.10) : contre-audits 6.8.9 + audit des problèmes anciens ; // 05/11 (-6, 6.8.9) : audit NF525 v2 (trame de fond mode test, prix unitaire, suivi des tickets provisoires ; couche données inchangée). // 05/11 (-5) : sortie de franchise programmée appliquée par le serveur (taux repris en mémoire sur chaque poste). // 05/11 (-4) : sortie de franchise de TVA guidée (seuils et date d effet, couche données inchangée). // 05/11 (-3) : empreintes serveur en UTF-8 (noms avec guillemet ou antislash acceptés au scellement), libellé d origine sans « n° » si n° légal inconnu. // 05/11 (6.8.8) : n° légal imprimé, notice et contrôle serveur des archives (audit du 05/11). // 04/11 (-11) : NF525 points 7-9 — Z jamais renumérotée si une Z plus récente est en base, proposition de duplicata après renumérotation (ancien n° mentionné) ; 04/11 (-10) : NF525 réserves a/b/c — Z en file jamais retirée sur un seul 23505, Z refusée pour son n° renumérotée (empreinte recalculée, ancien n° tracé), contre-ticket jamais à TVA 0 pour une vente avec TVA (annulation reportée hors ligne) ; 04/11 (-9) : Z « déjà enregistrée » seulement si même id ou même jour en base (jamais sur le seul n°), refus de n° = Z conservée en file, journée jamais rouverte si une Z du jour existe, contre-ticket : ventilation de l origine revalidée + journal scellé chargé, ticket refusé bloqué dès le 1er refus ; 04/11 (-8) : Z déjà enregistrée reconnue malgré un refus de numéro (renvoi, 2e poste), libellés de refus de Z distincts, refus définitifs de ticket (règlement / TVA) signalés ; // 04/11 (-7) : NF525 audit C — Z refusée par la base pour numéro hors séquence (LX_Z_NUM_IMPOSE) ou répartition des règlements différente du journal (LX_Z_REPARTITION) traitée comme les autres refus définitifs de Z (journée laissée ouverte, message) ; // 04/11 (-6) : solde du coffre calculé depuis les mouvements (report initial), annulation renvoyée une seule fois ; // 04/11 (-5) : caisse sérialisée, remise sans plancher, annulation renvoyée détectée ; // 04/11 (-4) : file de secours d une fiche avant l attente de chargement ; ancien (-3) : 04/11 (-3) : caisse fusionnée entre postes, écritures après chargement, instantané local complet, infos établissement champs modifiés seulement ; 04/11 (-2) : mention « sans préférence » jamais figée, panier repris sans règlement partiel ; 04/11 (-1) : fenêtres de nouveau à leur largeur d origine sur ordinateur (règle :where) ; 03/11 (-7) : audit A/B — RDV jamais ressuscités, consentements, fidélité source unique, panier persistant ; (-6) : contrat, empreinte contrôlée par le serveur + texte signé conservé (couche données inchangée) ; 03/11 (-5) : 03/11 (-5) : signature du contrat dans l'appli (bandeau propriétaire, couche données inchangée) ; 03/11 (-4) : reprise d abonnement après suppression du Kbis (5 ans) = nouveau délai de 15 jours ; 03/11 (-3) : copie d identité supprimée comptée comme reçue seulement si identité vérifiée (contre-audit RGPD I2) ;  03/11 (-2) : pièce d'identité supprimée après vérification (RGPD) = justificatif reçu, jamais de blocage ;  03/11 (-1) : glisser-déposer tactile protégé du rafraîchissement, note « confirmation déjà envoyée automatiquement », retour de date (force). 02/11 (-12) : case rétractation sans paiement + rappel dans les e-mails de confirmation, planning (case avant la pause, Encaissé direct en multi-jours, collaborateurs partis, retour de date) ; (-11) : planning, vue plusieurs jours = mêmes RDV que la vue 1 jour (encaissements directs, anciens collaborateurs) + case de grille dans une pause = heure exacte de la pause (couche données inchangée). 02/11 (-10) : planning, pause des forfaits touchable aussi en vue plusieurs jours (couche données inchangée). 02/11 (-9) : conformité (slugs cgu/dpa réservés, message refus offres SMS, commentaires anonymisés). 02/11 (-8) : planning, retour après création client depuis Nouveau RDV sur le bon collaborateur (contre-audit I1), libellés échappés (couche données inchangée). // 02/11 (-7) : 02/11 (-6) : planning, heures de chaque étape d un forfait + pause touchable (couche données inchangée). // 02/11 (-4) : réservations en ligne déjà au planning recalculées en entier au chargement (si étapes automatiques). // 02/11 (-3) : planning, réservation en ligne multi-prestations reprise en entier (couche données inchangée). // 02/11 (-2) : médiateur de la consommation (config_json.mediateur) relu. // 02/11 (-1) : offres refusées par le client (compte en ligne) lues (smsPub / emPub) et exclues des envois publicitaires. // 01/11 (-2) : annulation refusée par le serveur relue depuis meta (lxAnnulRefusee), lien de modification. // 01/11 (-1) : champs saisis par les clients sans < > " (audit global, lot S1). // 31/10 (-14) : vue établissement, garde-fou de navigation (window.open, liens et formulaires externes bloqués). // 31/10 (-13) : vue établissement, secrets jamais lus (vues lxv_*), opérateurs non chargés, ancienne vue luxyra.fr supprimée. // 31/10 (-12) : vue établissement sur vue.luxyra.fr (jeton de lecture 15 min, relais /sb, plus jamais la session admin). // 31/10 (-11) : vue admin, /api/stripe/fees retiré de la liste de lecture (refusé par le serveur). // 31/10 (-10) : factures Luxyra rendues par le serveur (FR complet). // 31/10 (-9) : e-mails en série espacés + nouvelle tentative, limite du jour affichée (couche données inchangée). Précédent -8 : // 31/10 (-8) : bons cadeaux, palettes + e-carte en caisse + formats A4. // 31/10 (-7) : tarif Fondateur sur l écran fin d essai. // 31/10 (-6) : bons cadeaux, échappement des champs acheteur (H1) + réserves R1-R7. // 2026-10-31 (-5) : modele des bons cadeaux (config_json.bonModele) lu au chargement. Precedent : "20261031-4"
+window.LX_DATA_VERSION = "20261118-1"; // 18/11 (-1, 7.0.6) : promos de l'établissement (lecture des promos, remise promo des réservations en ligne relue : remise_promo_montant, promo_detail) ; // 12/11 (-1, 7.0.5) : compteur local des n° de ticket jamais repoussé par la série du serveur (900001+) ni par une ligne 90000x refusée ; // 05/11 (-11, 7.0.0 contre-audit) : historique des attestations, version unique LX_VERSION ; (-10, 7.0.0) : version majeure 7.0.0 (attestation racine 7, aucun changement fonctionnel) ; // 05/11 (-9, 6.8.10) : duplicata de Z avec clé idempotente (anti-rejeu serveur), registre provisoire verrouillé entre onglets ; // 05/11 (-8, 6.8.10) : contre-audit d3f72dd (bon offert sans « 293 B » chez un assujetti, registre provisoire sérialisé, délai duplicata Z, config en objet) ; // 05/11 (-7, 6.8.10) : contre-audits 6.8.9 + audit des problèmes anciens ; // 05/11 (-6, 6.8.9) : audit NF525 v2 (trame de fond mode test, prix unitaire, suivi des tickets provisoires ; couche données inchangée). // 05/11 (-5) : sortie de franchise programmée appliquée par le serveur (taux repris en mémoire sur chaque poste). // 05/11 (-4) : sortie de franchise de TVA guidée (seuils et date d effet, couche données inchangée). // 05/11 (-3) : empreintes serveur en UTF-8 (noms avec guillemet ou antislash acceptés au scellement), libellé d origine sans « n° » si n° légal inconnu. // 05/11 (6.8.8) : n° légal imprimé, notice et contrôle serveur des archives (audit du 05/11). // 04/11 (-11) : NF525 points 7-9 — Z jamais renumérotée si une Z plus récente est en base, proposition de duplicata après renumérotation (ancien n° mentionné) ; 04/11 (-10) : NF525 réserves a/b/c — Z en file jamais retirée sur un seul 23505, Z refusée pour son n° renumérotée (empreinte recalculée, ancien n° tracé), contre-ticket jamais à TVA 0 pour une vente avec TVA (annulation reportée hors ligne) ; 04/11 (-9) : Z « déjà enregistrée » seulement si même id ou même jour en base (jamais sur le seul n°), refus de n° = Z conservée en file, journée jamais rouverte si une Z du jour existe, contre-ticket : ventilation de l origine revalidée + journal scellé chargé, ticket refusé bloqué dès le 1er refus ; 04/11 (-8) : Z déjà enregistrée reconnue malgré un refus de numéro (renvoi, 2e poste), libellés de refus de Z distincts, refus définitifs de ticket (règlement / TVA) signalés ; // 04/11 (-7) : NF525 audit C — Z refusée par la base pour numéro hors séquence (LX_Z_NUM_IMPOSE) ou répartition des règlements différente du journal (LX_Z_REPARTITION) traitée comme les autres refus définitifs de Z (journée laissée ouverte, message) ; // 04/11 (-6) : solde du coffre calculé depuis les mouvements (report initial), annulation renvoyée une seule fois ; // 04/11 (-5) : caisse sérialisée, remise sans plancher, annulation renvoyée détectée ; // 04/11 (-4) : file de secours d une fiche avant l attente de chargement ; ancien (-3) : 04/11 (-3) : caisse fusionnée entre postes, écritures après chargement, instantané local complet, infos établissement champs modifiés seulement ; 04/11 (-2) : mention « sans préférence » jamais figée, panier repris sans règlement partiel ; 04/11 (-1) : fenêtres de nouveau à leur largeur d origine sur ordinateur (règle :where) ; 03/11 (-7) : audit A/B — RDV jamais ressuscités, consentements, fidélité source unique, panier persistant ; (-6) : contrat, empreinte contrôlée par le serveur + texte signé conservé (couche données inchangée) ; 03/11 (-5) : 03/11 (-5) : signature du contrat dans l'appli (bandeau propriétaire, couche données inchangée) ; 03/11 (-4) : reprise d abonnement après suppression du Kbis (5 ans) = nouveau délai de 15 jours ; 03/11 (-3) : copie d identité supprimée comptée comme reçue seulement si identité vérifiée (contre-audit RGPD I2) ;  03/11 (-2) : pièce d'identité supprimée après vérification (RGPD) = justificatif reçu, jamais de blocage ;  03/11 (-1) : glisser-déposer tactile protégé du rafraîchissement, note « confirmation déjà envoyée automatiquement », retour de date (force). 02/11 (-12) : case rétractation sans paiement + rappel dans les e-mails de confirmation, planning (case avant la pause, Encaissé direct en multi-jours, collaborateurs partis, retour de date) ; (-11) : planning, vue plusieurs jours = mêmes RDV que la vue 1 jour (encaissements directs, anciens collaborateurs) + case de grille dans une pause = heure exacte de la pause (couche données inchangée). 02/11 (-10) : planning, pause des forfaits touchable aussi en vue plusieurs jours (couche données inchangée). 02/11 (-9) : conformité (slugs cgu/dpa réservés, message refus offres SMS, commentaires anonymisés). 02/11 (-8) : planning, retour après création client depuis Nouveau RDV sur le bon collaborateur (contre-audit I1), libellés échappés (couche données inchangée). // 02/11 (-7) : 02/11 (-6) : planning, heures de chaque étape d un forfait + pause touchable (couche données inchangée). // 02/11 (-4) : réservations en ligne déjà au planning recalculées en entier au chargement (si étapes automatiques). // 02/11 (-3) : planning, réservation en ligne multi-prestations reprise en entier (couche données inchangée). // 02/11 (-2) : médiateur de la consommation (config_json.mediateur) relu. // 02/11 (-1) : offres refusées par le client (compte en ligne) lues (smsPub / emPub) et exclues des envois publicitaires. // 01/11 (-2) : annulation refusée par le serveur relue depuis meta (lxAnnulRefusee), lien de modification. // 01/11 (-1) : champs saisis par les clients sans < > " (audit global, lot S1). // 31/10 (-14) : vue établissement, garde-fou de navigation (window.open, liens et formulaires externes bloqués). // 31/10 (-13) : vue établissement, secrets jamais lus (vues lxv_*), opérateurs non chargés, ancienne vue luxyra.fr supprimée. // 31/10 (-12) : vue établissement sur vue.luxyra.fr (jeton de lecture 15 min, relais /sb, plus jamais la session admin). // 31/10 (-11) : vue admin, /api/stripe/fees retiré de la liste de lecture (refusé par le serveur). // 31/10 (-10) : factures Luxyra rendues par le serveur (FR complet). // 31/10 (-9) : e-mails en série espacés + nouvelle tentative, limite du jour affichée (couche données inchangée). Précédent -8 : // 31/10 (-8) : bons cadeaux, palettes + e-carte en caisse + formats A4. // 31/10 (-7) : tarif Fondateur sur l écran fin d essai. // 31/10 (-6) : bons cadeaux, échappement des champs acheteur (H1) + réserves R1-R7. // 2026-10-31 (-5) : modele des bons cadeaux (config_json.bonModele) lu au chargement. Precedent : "20261031-4"
 // (historique) "20261028-3"; // 2026-10-28 (-3, Luxyra 6.8.1 : version de l'application transmise dans chaque ticket (raw_data.lxVersion, contrôlée par le serveur), série de n° imprimés propre au serveur (meta.tkNumServeur), copies serveur jamais réécrites, refus LX_APP_OBSOLETE / LX_TKNUM_SERIE_SERVEUR / LX_CC_DEJA_EN_CAISSE)
 // (historique) "20261028-2"; // 2026-10-28 (-2, Luxyra 6.8.0 : recettes en ligne enregistrées en caisse par le serveur — champs meta serveur / recetteKey…, refus définitif LX_CC_DEJA_EN_CAISSE)
 // (historique) "20261028-1"; // 2026-10-28 (-1 : bons cadeaux à usage unique / multiple — qualification TVA du bon (usage_tva, qualif_tva, repli historique), ticket v2 HT/TVA par ventilation de l'app, taux_tva 0 pour une vente de BUM seule, bonsUtil conservé dans appointments.meta) ; 2026-10-27 (-3 : rapport du mois en vrai PDF + correctifs d’exports comptables, app.html seulement ; -2 : envoi au comptable — FEC + pack Excel + rapport par défaut, ZIP en option, app.html seulement ; -1 : envoi automatique au comptable — changement dans app.html seulement, couche données inchangée) ; 2026-10-17 (-2 : audit réglages — taux TVA produits brut (tvaProduitsColonne), familles produit sans produit (pcats), ancien saveSalonConfig renommé ; -1 : retour / remboursement partiel — champs du ticket de retour conservés dans appointments.meta, refus définitif LX_RETOUR_REFUSE jamais rejoué, ticket de retour refusé au rejeu écarté de la caisse) ; 2026-10-16 (-1 : incident Z n°128 — 1 réservation en ligne = 1 entrée, Z refusée par la base si différente du journal, annotations correctives) ; 2026-10-15 (-3 : multi-appareils, champs modifiés seulement + lignes supprimées ailleurs jamais recréées ; -2 : plus aucun enregistrement muet, lxEcritureVerifiee ; -1 : « Prix à partir de » + sur devis sur les forfaits) ; 2026-10-14 (-8 : correctifs revue d intégration) intégration des audits (données, sécurité, planning, clients, caisse, site, réglages)
@@ -1066,6 +1066,7 @@ function _captureSnapshot(){
   snap.PRODS = (typeof PRODS !== "undefined") ? PRODS : [];
   snap.GC = (typeof GC !== "undefined") ? GC : [];
   snap.FOURNISSEURS = window.FOURNISSEURS || [];
+  snap.LX_PROMOS = Array.isArray(window.LX_PROMOS) ? window.LX_PROMOS : []; // 2026-11-18 (7.0.6)
   return snap;
 }
 
@@ -1096,6 +1097,7 @@ function _hydrateFromSnapshot(snap){
     if (Array.isArray(snap.PRODS) && snap.PRODS.length) window.PRODS = snap.PRODS;
     if (Array.isArray(snap.GC) && snap.GC.length) window.GC = snap.GC;
     if (Array.isArray(snap.FOURNISSEURS) && snap.FOURNISSEURS.length) window.FOURNISSEURS = snap.FOURNISSEURS;
+    if (Array.isArray(snap.LX_PROMOS) && !(window._lxPromosEtat && window._lxPromosEtat.charge)) window.LX_PROMOS = snap.LX_PROMOS; // 2026-11-18 (7.0.6)
     return true;
   } catch(e){ console.warn("[cache] hydrate failed:", e); return false; }
 }
@@ -1895,6 +1897,10 @@ function lxMapRdvOnlineRow(r) {
     distanceKm: (r.distance_km != null ? Number(r.distance_km) : null),
     fraisDepl: Number(r.frais_deplacement_montant) || 0,
     remiseCarte: Number(r.remise_carte_montant) || 0,
+    // 2026-11-18 (7.0.6) : promo de la réservation, calculée et déjà déduite de service_prix par le serveur (jour de la prestation).
+    // Colonnes absentes (base pas encore migrée) : 0 / null. Lues pour poser la remise sur la ligne à l'encaissement, jamais recalculées.
+    remisePromo: Number(r.remise_promo_montant) || 0,
+    promoDetail: (r.promo_detail && typeof r.promo_detail === "object" && !Array.isArray(r.promo_detail)) ? r.promo_detail : null,
     execRetract: r.exec_avant_retractation === true // 02/11/2026 (conformité L221-13) : demande expresse d'exécution avant la fin du délai de rétractation
   };
 }
@@ -2613,6 +2619,9 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
     try { if (typeof _lxPcatsFusion === "function") _lxPcatsFusion(); } catch(_ePc) {}
   }
   } catch(e) { console.warn("[loadSalonData] produits skipped", e); }
+
+  // 7a. 2026-11-18 (7.0.6) : promos de l'établissement -> LX_PROMOS (copie locale si la lecture échoue ; table absente = aucune promo)
+  try { await lxPromosCharger(); } catch(e) { console.warn("[loadSalonData] promos skipped", e); }
 
   // 7b. Charger fournisseurs → FOURNISSEURS[]
   window.FOURNISSEURS = [];
@@ -3819,6 +3828,93 @@ async function deleteAppointmentFromDb(apptId) {
     return { ok: false, error: { message: String((e && e.message) || e) } };
   }
 }
+
+// ============================================================
+// 2026-11-18 (7.0.6) : PROMOS DE L'ÉTABLISSEMENT (table promos_etab, contrat de données § 1.1)
+// Lecture : lignes non supprimées de l'établissement, gardées telles quelles (format de la base) dans LX_PROMOS
+// et dans une copie locale (lecture hors connexion, caisse). Écriture : insertion / modification (pause,
+// suppression douce) ; jamais de DELETE. Hors connexion : lecture depuis la copie locale, écriture refusée.
+// Aucune donnée de caisse ici : la remise est calculée en caisse (app.html, lxPromoCalcul) à partir de ces lignes.
+// ============================================================
+if (typeof window !== "undefined" && !Array.isArray(window.LX_PROMOS)) window.LX_PROMOS = [];
+window._lxPromosEtat = window._lxPromosEtat || { charge: false, le: 0, erreur: null, cache: false };
+function _lxPromosCle() { return "_lx_promos_" + String(_salonId || window._salonId || ""); }
+function _lxPromosCacheEcrire() { try { if (_salonId) localStorage.setItem(_lxPromosCle(), JSON.stringify({ le: Date.now(), lignes: window.LX_PROMOS || [] })); } catch (_e) {} }
+function _lxPromosCacheLire() {
+  try { var x = JSON.parse(localStorage.getItem(_lxPromosCle()) || "null"); if (x && Array.isArray(x.lignes)) return x; } catch (_e) {}
+  return null;
+}
+function _lxPromosHorsLigne() { return (typeof navigator !== "undefined" && navigator.onLine === false) || !_sb || !_salonId; }
+// opts.siPlusVieuxQue (ms) : ne relit la base que si la dernière lecture est plus ancienne (pas de sondage répété).
+async function lxPromosCharger(opts) {
+  opts = opts || {};
+  var E = window._lxPromosEtat;
+  if (opts.siPlusVieuxQue && E.charge && !E.cache && (Date.now() - E.le) < opts.siPlusVieuxQue) return { ok: true, deja: true };
+  if (_lxPromosHorsLigne()) {
+    var c0 = _lxPromosCacheLire(); if (c0) { window.LX_PROMOS = c0.lignes; E.charge = true; E.cache = true; E.le = c0.le || 0; }
+    E.erreur = "hors_ligne"; return { ok: false, horsLigne: true, cache: !!c0 };
+  }
+  try {
+    var r = await _sb.from("promos_etab").select("*").eq("salon_id", _salonId).is("supprime_le", null).order("debut", { ascending: false });
+    if (r.error) throw r.error;
+    window.LX_PROMOS = (r.data || []).filter(function (p) { return p && !p.supprime_le; });
+    E.charge = true; E.cache = false; E.le = Date.now(); E.erreur = null;
+    _lxPromosCacheEcrire();
+    return { ok: true };
+  } catch (e) {
+    var c = _lxPromosCacheLire(); if (c) { window.LX_PROMOS = c.lignes; E.charge = true; E.cache = true; E.le = c.le || 0; }
+    E.erreur = String((e && (e.message || e.details)) || e || "erreur");
+    try { console.warn("[promos] lecture impossible :", E.erreur); } catch (_e) {}
+    return { ok: false, error: e, cache: !!c };
+  }
+}
+if (typeof window !== "undefined") window.lxPromosCharger = lxPromosCharger;
+// Message clair pour une erreur renvoyée par la base (contraintes et déclencheur du contrat § 1).
+function lxPromosMessageErreur(err) {
+  var m = String((err && (err.message || err.details || err.hint)) || err || "");
+  var C = {
+    promos_etab_nom_ck: "le nom doit faire de 1 à 80 caractères", promos_etab_libelle_ck: "le libellé client doit faire de 1 à 40 caractères",
+    promos_etab_type_ck: "type de réduction inconnu", promos_etab_valeur_ck: "la valeur doit être supérieure à 0",
+    promos_etab_pct_ck: "un pourcentage ne peut pas dépasser 100 %", promos_etab_dates_ck: "la fin doit être après le début",
+    promos_etab_cible_s_ck: "choix des prestations invalide", promos_etab_cible_p_ck: "choix des produits invalide",
+    promos_etab_cible_ck: "choisissez au moins une prestation ou un produit", promos_etab_cible_s_detail_ck: "choisissez au moins une catégorie ou une prestation",
+    promos_etab_cible_p_detail_ck: "choisissez au moins une catégorie ou un produit", promos_etab_canal_ck: "cochez au moins un endroit où la promo s'applique",
+    promos_etab_operateur_ck: "nom de l'opérateur trop long"
+  };
+  for (var k in C) { if (m.indexOf(k) >= 0) return C[k]; }
+  if (/^Promo/.test(m)) return m;
+  if (/row-level security|permission denied|42501/i.test(m)) return "accès refusé";
+  if (/relation .*promos_etab.* does not exist|PGRST205|Could not find the table/i.test(m)) return "fonction pas encore disponible sur le serveur";
+  if (/failed to fetch|networkerror|network request failed|load failed|timeout/i.test(m)) return "problème de connexion";
+  return m || "erreur inconnue";
+}
+if (typeof window !== "undefined") window.lxPromosMessageErreur = lxPromosMessageErreur;
+// op : "creer" (champs complets) ou "modifier" (id + champs à changer : en_pause, supprime_le, ou la promo entière).
+// Renvoie { ok, ligne } ou { ok:false, message }. Jamais de DELETE (suppression douce, contrat § 1.1).
+async function lxPromosEcrire(op, id, champs) {
+  if (window._lxVueAdmin || window._archiveMode) return { ok: false, message: "Lecture seule : rien n'est enregistré ici." };
+  if (_lxPromosHorsLigne()) return { ok: false, horsLigne: true, message: "Hors connexion : la promo n'est pas enregistrée. Reconnectez-vous puis recommencez." };
+  var row = {}; Object.keys(champs || {}).forEach(function (k) { row[k] = champs[k]; });
+  var op_ = (typeof CURRENT_OPERATOR !== "undefined" && CURRENT_OPERATOR) ? ((CURRENT_OPERATOR.prenom || "") + (CURRENT_OPERATOR.nom ? " " + CURRENT_OPERATOR.nom : "")).trim() : "";
+  row.operateur_nom = (op_ || "Gestion").slice(0, 80);
+  try {
+    var r;
+    if (op === "creer") { row.salon_id = _salonId; delete row.id; r = await _sb.from("promos_etab").insert(row).select(); }
+    else { if (!id) return { ok: false, message: "promo introuvable" }; delete row.id; delete row.salon_id; r = await _sb.from("promos_etab").update(row).eq("id", id).eq("salon_id", _salonId).select(); }
+    if (r.error) throw r.error;
+    var ligne = (r.data && r.data[0]) || null;
+    if (!ligne) return { ok: false, message: "aucune modification acceptée par le serveur" };
+    var L = (window.LX_PROMOS || []).filter(function (p) { return String(p.id) !== String(ligne.id); });
+    if (!ligne.supprime_le) L.push(ligne);
+    window.LX_PROMOS = L; window._lxPromosEtat.le = Date.now(); window._lxPromosEtat.cache = false; window._lxPromosEtat.charge = true;
+    _lxPromosCacheEcrire();
+    return { ok: true, ligne: ligne };
+  } catch (e) {
+    try { if (typeof saveAuditEntry === "function") saveAuditEntry("DB_ERROR", JSON.stringify({ fn: "lxPromosEcrire", op: op, msg: String((e && e.message) || e) }).slice(0, 2000)); } catch (_e) {}
+    return { ok: false, message: lxPromosMessageErreur(e) };
+  }
+}
+if (typeof window !== "undefined") window.lxPromosEcrire = lxPromosEcrire;
 
 // Sauvegarder un produit
 // 2026-10-07 : mapper unique DB -> PRODS (+ reference pour la synchro entre appareils)
