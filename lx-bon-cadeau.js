@@ -321,7 +321,7 @@
   }
 
   // Document complet à imprimer. format : "carte" (85 x 55 à plier, sur A4) | "a6" (papier A6) | "a6a4" (A6 sur A4, traits de coupe)
-  // | "pleine" (bon pleine page A4) | "plie" (A4 plié en deux, recto simple)
+  // | "a6rv" (A6 recto-verso, 2 pages, cadre + filet couleur accent) | "pleine" (bon pleine page A4) | "plie" (A4 plié en deux, recto simple)
   function documentImpression(modele, bon, etab, format) {
     modele = modeleValide(modele) || "maison";
     var titre = "Carte cadeau " + esc(bon.code || "");
@@ -331,6 +331,17 @@
     if (format === "a6") {
       page = "@page{size:" + (paysage ? "148mm 105mm" : "105mm 148mm") + ";margin:0}";
       corps = '<div class="feuille a6">' + a6(modele, bon, etab, { mm: "1mm" }) + "</div>";
+    } else if (format === "a6rv") {
+      // 23/11 : carte A6 recto-verso complète (148 × 105 mm, 2 pages : recto puis verso). Cadre blanc + filet (couleur accent) voulu :
+      // la marge imposée par un téléphone / une tablette tombe dans le cadre (sans marge impossible depuis un mobile).
+      page = "@page{size:148mm 105mm;margin:0}";
+      var acc = esc(palette(etab.couleur, etab.palette).accent || "#C9A03A");
+      var rv = function (face) {
+        return '<div class="feuille a6rv"><div class="filet" style="border-color:' + acc + '"></div><div class="carte6">' +
+          carte(modele, face, bon, etab, { mm: "1.6mm", impression: true }) + "</div></div>";
+      };
+      corps = '<div class="aide rv-aide">Papier A6 (148 × 105 mm) à l’horizontale. Imprimante sans recto-verso automatique : imprimez la page 1, remettez la carte dans le bac en la retournant (bord court en haut), puis imprimez la page 2.</div>' +
+        rv("recto") + rv("verso");
     } else if (format === "a6a4") {
       // 31/10 (-2) : carte A6 centrée sur une feuille A4, avec traits de coupe (pour qui n'a que du papier A4)
       page = "@page{size:A4 portrait;margin:0}";
@@ -365,6 +376,11 @@
       ".feuille{box-sizing:border-box;background:#fff;margin:18px auto;box-shadow:0 4px 24px rgba(0,0,0,.18);position:relative;overflow:hidden}" +
       ".feuille.a4{width:210mm;height:296.5mm;padding-top:30mm;page-break-after:avoid;break-after:avoid}" +
       ".feuille.a6{width:fit-content}" +
+      ".feuille.a6rv{width:148mm;height:104.9mm;break-after:page;page-break-after:always}.feuille.a6rv:last-child{break-after:auto;page-break-after:auto}" +
+      ".a6rv .filet{position:absolute;left:3mm;top:3mm;right:3mm;bottom:3mm;border:.45mm solid}" +
+      ".a6rv .carte6{position:absolute;left:6mm;top:6mm;right:6mm;bottom:6mm;display:flex;align-items:center;justify-content:center}" +
+      ".aide.rv-aide{width:148mm;margin:14px auto 0;text-align:center}" +
+      "@media print{.aide.rv-aide{display:none}}" +
       ".feuille.a4l{width:297mm;height:209.5mm;page-break-after:avoid;break-after:avoid}" +
       ".feuille.pleine{padding:0;display:flex;align-items:center;justify-content:center}" +
       ".feuille.centre{padding:0;display:flex;flex-direction:column;align-items:center;justify-content:center}" +
@@ -427,7 +443,7 @@
   }
 
   g.LXBon = {
-    version: "20261031-5", MODELES: MODELES, OCCASIONS: OCCASIONS,
+    version: "20261123-1", MODELES: MODELES, OCCASIONS: OCCASIONS,
     modeleValide: modeleValide, palette: palette, contraste: contraste, css: css, poserCss: poserCss,
     carte: carte, a6: a6, documentImpression: documentImpression, imprimer: imprimer,
     occasionDepuisTheme: occasionDepuisTheme, qrSvg: qrSvg, esc: esc,
