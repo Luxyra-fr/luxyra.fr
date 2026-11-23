@@ -25,17 +25,18 @@
   if (!actif()) return;
 
   // Brume doree : bruit fractal (SVG feTurbulence) en trois couches qui derivent lentement.
-  function brume(graine, f1, f2, k, o) {
-    return 'url("data:image/svg+xml,' + encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' width='1400' height='320'><filter id='f' x='0' y='0' width='100%' height='100%'><feTurbulence type='fractalNoise' baseFrequency='" + f1 + " " + f2 + "' numOctaves='4' seed='" + graine + "' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.96  0 0 0 0 0.84  0 0 0 0 0.56  " + k + " 0 0 0 " + o + "'/></filter><rect width='100%' height='100%' filter='url(#f)'/></svg>") + '")';
+  function brume(graine, f1, f2, rvb, k, o) {
+    var c = rvb.split(" ");
+    return 'url("data:image/svg+xml,' + encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' width='1600' height='320'><filter id='f' x='0' y='0' width='100%' height='100%'><feTurbulence type='fractalNoise' baseFrequency='" + f1 + " " + f2 + "' numOctaves='3' seed='" + graine + "' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 " + c[0] + "  0 0 0 0 " + c[1] + "  0 0 0 0 " + c[2] + "  " + k + " 0 0 0 " + o + "'/></filter><rect width='100%' height='100%' filter='url(#f)'/></svg>") + '")';
   }
   var css = document.createElement("style");
   css.textContent =
-    "#lxBP{position:relative;overflow:hidden;background:radial-gradient(90% 160% at 50% 110%,#3a2c10 0%,#120e07 48%,#040404 100%);border-bottom:1px solid rgba(212,175,55,.55);color:#fff;font-family:Inter,Nunito,-apple-system,'Segoe UI',sans-serif;padding:20px 16px 20px;text-align:center}" +
-    "#lxBP .bm{position:absolute;left:0;top:-30%;width:100%;height:160%;background-repeat:repeat-x;background-size:1400px 100%;pointer-events:none;mix-blend-mode:screen;will-change:background-position}" +
-    "#lxBP .bm1{background-image:" + brume(7, 0.004, 0.018, 2.1, -0.86) + ";opacity:.55;filter:blur(7px);animation:lxBm1 46s linear infinite}" +
-    "#lxBP .bm2{background-image:" + brume(23, 0.007, 0.03, 2.4, -1.05) + ";opacity:.5;filter:blur(3px);animation:lxBm2 31s linear infinite}" +
-    "#lxBP .bm3{background-image:" + brume(41, 0.0025, 0.012, 1.8, -0.7) + ";opacity:.35;filter:blur(14px);animation:lxBm1 70s linear infinite reverse}" +
-    "@keyframes lxBm1{from{background-position:0 0}to{background-position:-1400px 0}}@keyframes lxBm2{from{background-position:-1400px 0}to{background-position:0 0}}" +
+    "#lxBP{position:relative;overflow:hidden;background:radial-gradient(70% 150% at 50% 120%,#2b2009 0%,#0d0a05 55%,#030303 100%);border-bottom:1px solid rgba(212,175,55,.55);color:#fff;font-family:Inter,Nunito,-apple-system,'Segoe UI',sans-serif;padding:20px 16px 20px;text-align:center}" +
+    "#lxBP .bm{position:absolute;left:0;top:-40%;width:100%;height:180%;background-repeat:repeat-x;background-size:1600px 100%;pointer-events:none;will-change:background-position}" +
+    "#lxBP .bm1{background-image:" + brume(7, 0.0016, 0.014, "0.93 0.78 0.42", 1.5, -0.72) + ";opacity:.36;filter:blur(16px);mix-blend-mode:screen;animation:lxBm1 80s linear infinite}" +
+    "#lxBP .bm2{background-image:" + brume(23, 0.0024, 0.022, "0.98 0.86 0.55", 1.7, -0.9) + ";opacity:.22;filter:blur(9px);mix-blend-mode:screen;animation:lxBm2 55s linear infinite}" +
+    "#lxBP .bm3{background-image:" + brume(41, 0.0012, 0.010, "0 0 0", 1.9, -0.7) + ";opacity:.75;filter:blur(18px);animation:lxBm1 110s linear infinite reverse}" +
+    "@keyframes lxBm1{from{background-position:0 0}to{background-position:-1600px 0}}@keyframes lxBm2{from{background-position:-1600px 0}to{background-position:0 0}}" +
     "@media(prefers-reduced-motion:reduce){#lxBP .bm{animation:none}}" +
     "#lxBP .t b,#lxBP .x{text-shadow:0 2px 14px rgba(0,0,0,.85)}" +
     "#lxBP .in{position:relative;z-index:2;max-width:1000px;margin:0 auto;display:flex;flex-direction:column;align-items:center;gap:8px}" +
@@ -57,7 +58,7 @@
   el.setAttribute("aria-label", "Offre " + C.titre1 + " " + C.titre2);
   var e = function (s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); };
   el.innerHTML =
-    '<div class="bm bm3"></div><div class="bm bm1"></div><div class="bm bm2"></div>' +
+    '<div class="bm bm1"></div><div class="bm bm3"></div><div class="bm bm2"></div>' +
     '<div class="in"><div class="t"><b>' + e(C.titre1) + '</b><i>' + e(C.titre2) + '</i></div>' +
     '<div class="r">' + e(C.remise) + '</div>' +
     '<div class="m"><div class="x">' + e(C.texte) + '</div><div class="d">' + e(C.dates) + '</div></div>' +
