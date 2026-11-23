@@ -39,6 +39,7 @@
     "#lxBP .d{font-size:11px;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:#f1cf6a;margin-top:2px}" +
     "#lxBP .a{display:inline-block;background:linear-gradient(180deg,#f6dc88,#c9a03a);color:#0a0a0a;font-weight:800;font-size:13px;letter-spacing:.04em;text-decoration:none;padding:10px 20px;border-radius:999px;white-space:nowrap;box-shadow:0 8px 20px -10px rgba(212,175,55,.9)}" +
     "#lxBP .m{display:flex;flex-direction:column;align-items:center}" +
+    "#lxBP .s{font-size:12px;color:#e9dfc6;text-decoration:none;white-space:nowrap}" +
     "@media(min-width:780px){#lxBP .in{flex-direction:row;justify-content:center;gap:26px}#lxBP .m{align-items:flex-start;text-align:left}}";
   document.head.appendChild(css);
 
@@ -51,7 +52,11 @@
     '<div class="in"><div class="t"><b>' + e(C.titre1) + '</b><i>' + e(C.titre2) + '</i></div>' +
     '<div class="r">' + e(C.remise) + '</div>' +
     '<div class="m"><div class="x">' + e(C.texte) + '</div><div class="d">' + e(C.dates) + '</div></div>' +
-    '<a class="a" href="tel:' + e(C.tel) + '">Appeler le ' + e(C.telAffiche) + '</a></div>';
+    '<div class="m" style="align-items:center;gap:5px"><a class="a" id="lxBPr" href="#reserver">Réserver en ligne</a>' +
+    '<a class="s" href="tel:' + e(C.tel) + '">ou par téléphone : ' + e(C.telAffiche) + '</a></div></div>';
+  el.querySelector("#lxBPr").addEventListener("click", function (ev) {
+    if (typeof window.goToBooking === "function") { ev.preventDefault(); try { window.goToBooking(); } catch (x) {} }
+  });
   function poser() { if (document.body && el.parentNode !== document.body) document.body.insertBefore(el, document.body.firstChild); }
   function battre() { if (!actif()) { if (el.parentNode) el.parentNode.removeChild(el); return; } if (!el.parentNode) poser(); }
   poser();
