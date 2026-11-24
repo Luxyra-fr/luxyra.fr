@@ -3,14 +3,15 @@
    Heure de Paris fixee (UTC+1 fin novembre / debut decembre). Disparait seul a l'ouverture. */
 (function () {
   "use strict";
-  var LX_OUV = { "o-r-studio": { resa: "2026-11-30T09:00:00+01:00", salon: "2026-12-07T13:30:00+01:00", tel: "0745332225" } };
+  var LX_OUV = { "o-r-studio": { resa: "2026-11-30T09:00:00+01:00", salon: "2026-12-07T13:30:00+01:00", tel: "0745332225",
+    promo: { fin: "2026-12-20T00:00:00+01:00", pct: "\u221210\u00a0%", texte: "sur toutes les prestations", dates: "du 7 au 19 d\u00e9cembre" } } };
   var DEMO = /[?&]apercu=ouverture(&|$)/.test(location.search);
   var slug = "";
   try { slug = String(window.__SALON_SLUG || new URLSearchParams(location.search).get("slug") || location.pathname.split("/")[1] || "").toLowerCase(); } catch (e) {}
   var CFG = LX_OUV[slug];
   if (!CFG) return;
   var telAff = CFG.tel.replace(/(\d\d)(?=\d)/g, "$1 ");
-  var T1 = Date.parse(CFG.resa), T2 = Date.parse(CFG.salon);
+  var T1 = Date.parse(CFG.resa), T2 = Date.parse(CFG.salon), T3 = CFG.promo ? Date.parse(CFG.promo.fin) : T2;
   var decalage = 0, simu = null, etat = "";
   var css = document.createElement("style");
   css.textContent =
@@ -29,6 +30,12 @@
     "#lxOuv .cta{display:inline-block;background:#c8a84e;color:#0a0a0a;font-weight:700;font-size:13px;letter-spacing:.08em;text-transform:uppercase;text-decoration:none;padding:12px 22px;border-radius:999px}" +
     "#lxOuv .att{display:inline-block;border:1px solid rgba(200,168,78,.5);color:#c8a84e;font-size:12px;letter-spacing:.06em;padding:10px 18px;border-radius:999px}" +
     "@media(min-width:760px){#lxOuv .in{flex-direction:row;justify-content:space-between;text-align:left;gap:22px}#lxOuv .g{flex:1}#lxOuv .m{display:flex;flex-direction:column;align-items:center;gap:6px}}" +
+    "#lxOuv.rb{padding-bottom:0}#lxOuv.rb .in{padding-bottom:14px}" +
+    "#lxOuv .rub{margin:0 -16px;background:linear-gradient(90deg,#8e000a,#e0101e 30%,#e0101e 70%,#8e000a);color:#fff;padding:9px 12px;display:flex;gap:6px 12px;align-items:center;justify-content:center;flex-wrap:wrap;border-top:1px solid #c8a84e}" +
+    "#lxOuv .rub b{font-family:'Playfair Display',Georgia,serif;font-weight:800;font-size:30px;line-height:1;white-space:nowrap}" +
+    "#lxOuv .rub span{font-family:'Cormorant Garamond',Georgia,serif;font-style:italic;font-weight:600;font-size:19px}" +
+    "#lxOuv .rub i{font-style:normal;font-size:11px;letter-spacing:.18em;text-transform:uppercase;font-weight:700;color:#ffe9a8;white-space:nowrap}" +
+    "@media(max-width:759px){#lxOuv .rub i{flex-basis:100%}}" +
     "#lxOuvDemo{position:fixed;left:50%;bottom:12px;transform:translateX(-50%);z-index:99999;background:rgba(245,240,232,.96);color:#0a0a0a;border-radius:999px;padding:5px;display:flex;gap:3px;font:500 12px Inter,sans-serif;white-space:nowrap;max-width:calc(100vw - 16px);overflow-x:auto;box-shadow:0 8px 30px rgba(0,0,0,.5)}" +
     "#lxOuvDemo b{padding:7px 4px 7px 12px;color:#8a6d1f}#lxOuvDemo button{border:0;background:transparent;font:inherit;padding:7px 11px;border-radius:999px;cursor:pointer;color:#0a0a0a}#lxOuvDemo button.on,#lxOuvDemo button:hover{background:#c8a84e}";
   document.head.appendChild(css);
@@ -41,7 +48,8 @@
     '<div class="m"><div class="lib" id="lxOuvL"></div><div class="cpt">' +
     '<div class="c"><b id="lxOJ">--</b><span>Jours</span></div><div class="c"><b id="lxOH">--</b><span>Heures</span></div>' +
     '<div class="c"><b id="lxOM">--</b><span>Min</span></div><div class="c"><b id="lxOS">--</b><span>Sec</span></div></div></div>' +
-    '<div id="lxOuvA"></div></div>';
+    '<div id="lxOuvA"></div></div>' +
+    (CFG.promo ? '<div class="rub" id="lxOuvP"><b>' + CFG.promo.pct + '</b><span>' + CFG.promo.texte + '</span><i>' + CFG.promo.dates + '</i></div>' : "");
   function poser() { if (document.body.firstChild !== el) document.body.insertBefore(el, document.body.firstChild); }
   poser(); setInterval(poser, 1000);
   var $ = function (i) { return document.getElementById(i); };
@@ -57,6 +65,16 @@
     if (n === etat) return; etat = n;
     if (n === "fin") { el.style.display = "none"; return; }
     el.style.display = "";
+    // 24/11 : offre d'ouverture (ruban rouge, proposition C validee) : visible avant l'ouverture et jusqu'a la fin de l'offre
+    el.classList.toggle("rb", !!CFG.promo);
+    var mm = el.querySelector(".m"); if (mm) mm.style.display = n === "promo" ? "none" : "";
+    el.querySelector(".sur").textContent = n === "promo" ? "Nouveau salon \u00b7 ouvert" : "Nouveau salon";
+    el.querySelector(".tit").innerHTML = n === "promo" ? "O\u2019R STUDIO <em>vous accueille</em>" : "Ouverture le <em>lundi 7 d\u00e9cembre</em> \u00e0 13h30";
+    if (n === "promo") {
+      $("lxOuvD").innerHTML = "Offre d\u2019ouverture <b>" + CFG.promo.dates + "</b>";
+      $("lxOuvA").innerHTML = '<a class="cta" href="tel:' + CFG.tel + '">Appeler le ' + telAff + '</a>';
+      return;
+    }
     $("lxOuvL").textContent = n === "avant" ? "Prise de rendez-vous dans" : "Ouverture du salon dans";
     $("lxOuvD").innerHTML = n === "avant"
       ? "Prise de rendez-vous par t\u00e9l\u00e9phone d\u00e8s le <b>lundi 30 novembre \u00e0 9h</b>"
@@ -67,7 +85,7 @@
   }
   function battre() {
     var t = maintenant();
-    if (t >= T2) { rendre("fin"); return; }
+    if (t >= T2) { rendre(CFG.promo && t < T3 ? "promo" : "fin"); return; }
     rendre(t < T1 ? "avant" : "resa");
     var r = Math.max(0, Math.floor(((t < T1 ? T1 : T2) - t) / 1000));
     $("lxOJ").textContent = deux(Math.floor(r / 86400)); $("lxOH").textContent = deux(Math.floor(r % 86400 / 3600));
@@ -75,9 +93,9 @@
   }
   if (DEMO) {
     var d = document.createElement("div"); d.id = "lxOuvDemo";
-    d.innerHTML = '<b>D\u00e9mo</b><button data-e="avant">Avant le 30/11</button><button data-e="resa">R\u00e9servations ouvertes</button><button data-e="j10">10 s avant</button><button data-e="fin">Le 7/12 \u00e0 13h30</button><button data-e="reel">Heure r\u00e9elle</button>';
+    d.innerHTML = '<b>D\u00e9mo</b><button data-e="avant">Avant le 30/11</button><button data-e="resa">R\u00e9servations ouvertes</button><button data-e="j10">10 s avant</button><button data-e="fin">Le 7/12 \u00e0 13h30</button><button data-e="pfin">Le 20/12</button><button data-e="reel">Heure r\u00e9elle</button>';
     document.body.appendChild(d);
-    var cibles = { avant: T1 - 9 * 86400e3, resa: T1 + 5000, j10: T2 - 10000, fin: T2 };
+    var cibles = { avant: T1 - 9 * 86400e3, resa: T1 + 5000, j10: T2 - 10000, fin: T2, pfin: T3 };
     d.addEventListener("click", function (ev) {
       var b = ev.target.closest("button"); if (!b) return; var k = b.getAttribute("data-e");
       simu = k === "reel" ? null : cibles[k] - Date.now();
